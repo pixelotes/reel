@@ -20,8 +20,8 @@ CREATE TABLE IF NOT EXISTS media (
     rating REAL
 );
 
--- Create the partial unique index separately
-CREATE UNIQUE INDEX IF NOT EXISTS idx_media_imdb_id_type ON media(imdb_id, type) WHERE imdb_id IS NOT NULL;
+-- Use tmdb_id for the unique constraint
+CREATE UNIQUE INDEX IF NOT EXISTS idx_media_tmdb_id_type ON media(tmdb_id, type) WHERE tmdb_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_media_status ON media(status);
 CREATE INDEX IF NOT EXISTS idx_media_type ON media(type);

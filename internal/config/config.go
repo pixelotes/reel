@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -17,13 +18,13 @@ type Config struct {
 	} `yaml:"app"`
 
 	Indexer struct {
-		Type   string `yaml:"type"` // New: 'scarf' is the only option for now
+		Type   string `yaml:"type"`
 		APIKey string `yaml:"api_key"`
 		URL    string `yaml:"url"`
 	} `yaml:"indexer"`
 
 	TorrentClient struct {
-		Type         string `yaml:"type"` // 'transmission' or 'qbittorrent'
+		Type         string `yaml:"type"`
 		Host         string `yaml:"host"`
 		Username     string `yaml:"username"`
 		Password     string `yaml:"password"`
@@ -31,14 +32,11 @@ type Config struct {
 	} `yaml:"torrent_client"`
 
 	Metadata struct {
-		// New: A list of providers to try in order
 		Providers []string `yaml:"providers"`
 		TMDB      struct {
 			APIKey string `yaml:"api_key"`
 		} `yaml:"tmdb"`
 		IMDB struct {
-			// IMDb doesn't have a public API, this is a placeholder
-			// for a potential future implementation (e.g., web scraping)
 			APIKey string `yaml:"api_key"`
 		} `yaml:"imdb"`
 		Language string `yaml:"language"`
@@ -57,46 +55,26 @@ type Config struct {
 }
 
 func Load(path string) (*Config, error) {
-	cfg := &Config{}
-	setDefaults(cfg)
+	// *** Check if the config file exists first ***
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		// *** Return a clear error if the file is not found ***
+		return nil, fmt.Errorf("config file not found at '%s'", path)
+	}
 
-	if _, err := os.Stat(path); err == nil {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
-		if err := yaml.Unmarshal(data, cfg); err != nil {
-			return nil, err
-		}
+	cfg := &Config{}
+
+	// No need to set defaults here anymore if the file is mandatory
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
 	loadFromEnv(cfg)
 	return cfg, nil
-}
-
-func setDefaults(cfg *Config) {
-	cfg.App.Port = 8081
-	cfg.App.DataPath = "./data"
-	cfg.App.UIEnabled = true
-	cfg.App.UIPassword = "password"
-	cfg.App.Debug = false
-
-	cfg.Indexer.Type = "scarf"
-	cfg.Indexer.URL = "http://localhost:8080"
-
-	cfg.TorrentClient.Type = "transmission"
-	cfg.TorrentClient.Host = "localhost:9091"
-	cfg.TorrentClient.DownloadPath = "/downloads/media"
-
-	cfg.Metadata.Providers = []string{"tmdb"} // Default to TMDB
-	cfg.Metadata.Language = "en"
-
-	cfg.Database.Path = "./data/reel.db"
-
-	cfg.Automation.SearchInterval = "1h"
-	cfg.Automation.MaxConcurrentDownloads = 3
-	cfg.Automation.QualityPreferences = []string{"1080p", "720p"}
-	cfg.Automation.MinSeeders = 5
 }
 
 func loadFromEnv(cfg *Config) {

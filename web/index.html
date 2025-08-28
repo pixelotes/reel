@@ -132,13 +132,15 @@
 
                 <div id="metadata-results" class="search-results"></div>
 
+                <input type="hidden" name="tmdb_id" id="tmdb-id-input">
+
                 <div class="form-row">
                     <input type="text" name="title" id="title-input" placeholder="Title" required>
                     <input type="number" name="year" id="year-input" placeholder="Year" min="1900" max="2030">
                 </div>
 
                 <div class="form-row">
-                    <input type="text" name="imdb_id" id="imdb-input" placeholder="IMDb ID (optional)">
+                    <input type="text" name="tmdb_id_display" id="tmdb-input-display" placeholder="TMDB ID" disabled>
                     <select name="language" id="language-select">
                         <option value="en">English</option>
                         <option value="es">Spanish</option>
@@ -339,7 +341,7 @@
                             type: formData.get('type'),
                             title: formData.get('title'),
                             year: parseInt(formData.get('year')),
-                            imdb_id: formData.get('imdb_id'),
+                            tmdb_id: parseInt(formData.get('tmdb_id')),
                             language: formData.get('language'),
                             min_quality: formData.get('min_quality'),
                             max_quality: formData.get('max_quality')
@@ -407,9 +409,8 @@
             window.selectMetadataItem = function(item) {
                 document.getElementById('title-input').value = item.title;
                 document.getElementById('year-input').value = item.year;
-                if (item.imdb_id) {
-                    document.getElementById('imdb-input').value = item.imdb_id;
-                }
+                document.getElementById('tmdb-id-input').value = item.id;
+                document.getElementById('tmdb-input-display').value = item.id;
                 document.getElementById('metadata-results').innerHTML = '';
             };
 
@@ -486,7 +487,7 @@
                             <p><strong>Language:</strong> ${media.language.toUpperCase()}</p>
                             <p><strong>Quality Range:</strong> ${media.min_quality} - ${media.max_quality}</p>
                             <p><strong>Status:</strong> <span class="media-status status-${media.status}">${media.status}</span></p>
-                            ${media.imdb_id ? `<p><strong>IMDb:</strong> <a href="https://imdb.com/title/${media.imdb_id}" target="_blank">${media.imdb_id}</a></p>` : ''}
+                            ${media.tmdb_id ? `<p><strong>TMDB:</strong> <a href="https://www.themoviedb.org/movie/${media.tmdb_id}" target="_blank">${media.tmdb_id}</a></p>` : ''}
                             ${media.torrent_name ? `<p><strong>Torrent:</strong> ${media.torrent_name}</p>` : ''}
                             <p><strong>Added:</strong> ${new Date(media.added_at).toLocaleString()}</p>
                             ${media.completed_at ? `<p><strong>Completed:</strong> ${new Date(media.completed_at).toLocaleString()}</p>` : ''}

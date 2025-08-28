@@ -22,6 +22,7 @@ func main() {
 	// Load configuration
 	cfg, err := config.Load(*configPath)
 	if err != nil {
+		// *** This line will now catch the error and terminate the app ***
 		log.Fatal("Failed to load config:", err)
 	}
 

@@ -3,9 +3,12 @@ package metadata
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -13,6 +16,21 @@ type TMDBClient struct {
 	apiKey     string
 	language   string
 	httpClient *http.Client
+}
+
+// Define a struct that matches the TMDB API's JSON response
+type tmdbSearchResponse struct {
+	Page    int `json:"page"`
+	Results []struct {
+		ID          int     `json:"id"`
+		Title       string  `json:"title"`
+		ReleaseDate string  `json:"release_date"`
+		Overview    string  `json:"overview"`
+		PosterPath  string  `json:"poster_path"`
+		VoteAverage float64 `json:"vote_average"`
+	} `json:"results"`
+	TotalPages   int `json:"total_pages"`
+	TotalResults int `json:"total_results"`
 }
 
 func NewTMDBClient(apiKey, language string) *TMDBClient {
@@ -36,22 +54,40 @@ func (t *TMDBClient) SearchMovie(title string, year int) (*MovieResult, error) {
 
 	searchURL := fmt.Sprintf("https://api.themoviedb.org/3/search/movie?%s", params.Encode())
 
-	resp, err := t.httpClient.Get(searchURL)
+	// --- Start Logging ---
+	maskedKey := t.apiKey
+	if len(maskedKey) > 8 {
+		maskedKey = maskedKey[:4] + "..." + maskedKey[len(maskedKey)-4:]
+	}
+	log.Printf("TMDB Request URL: %s", searchURL)
+	log.Printf("TMDB API Key: %s", maskedKey)
+	// --- End Logging ---
+
+	req, err := http.NewRequest("GET", searchURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create TMDB request: %w", err)
+	}
+	req.Header.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36")
+
+	resp, err := t.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search TMDB: %w", err)
 	}
 	defer resp.Body.Close()
 
-	var searchResp struct {
-		Results []struct {
-			ID          int     `json:"id"`
-			Title       string  `json:"title"`
-			ReleaseDate string  `json:"release_date"`
-			Overview    string  `json:"overview"`
-			PosterPath  string  `json:"poster_path"`
-			VoteAverage float64 `json:"vote_average"`
-		} `json:"results"`
+	// --- Start Logging ---
+	log.Printf("TMDB Response Status Code: %d", resp.StatusCode)
+	bodyBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read TMDB response body: %w", err)
 	}
+	log.Printf("TMDB Response Body: %s", string(bodyBytes))
+	// --- End Logging ---
+
+	// Re-create a reader for the JSON decoder since the original has been consumed
+	resp.Body = ioutil.NopCloser(strings.NewReader(string(bodyBytes)))
+
+	var searchResp tmdbSearchResponse
 
 	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
 		return nil, fmt.Errorf("failed to decode TMDB response: %w", err)
@@ -75,7 +111,7 @@ func (t *TMDBClient) SearchMovie(title string, year int) (*MovieResult, error) {
 	}
 
 	return &MovieResult{
-		ID:        strconv.Itoa(result.ID), // Convert int ID to string
+		ID:        strconv.Itoa(result.ID),
 		Title:     result.Title,
 		Year:      movieYear,
 		Overview:  result.Overview,

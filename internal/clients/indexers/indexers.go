@@ -4,7 +4,7 @@ import "time"
 
 // Client is the interface for all indexer providers.
 type Client interface {
-	SearchMovies(query string, imdbID string) ([]IndexerResult, error)
+	SearchMovies(query string, tmdbID string) ([]IndexerResult, error)
 	HealthCheck() (bool, error)
 }
 
@@ -17,4 +17,5 @@ type IndexerResult struct {
 	DownloadURL string
 	PublishDate time.Time
 	Indexer     string
+	Score       int
 }
