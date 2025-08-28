@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎬 Reel</title>
+    <style>
+        :root {
+            --bg-color: #1e1e1e; --text-color: #d4d4d4; --primary-color: #007acc;
+            --border-color: #333; --header-bg: #252526; --table-header-bg: #333;
+            --table-row-hover: #2a2d2e; --success-color: #4ec9b0; --error-color: #f44747;
+            --warning-color: #ffcc02; --info-color: #75beff;
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: var(--bg-color); color: var(--text-color); margin: 0; }
+        main { max-width: 1200px; margin: auto; padding: 2rem; }
+        a { color: var(--primary-color); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        input, select, button, textarea { padding: 0.75rem; border-radius: 4px; border: 1px solid var(--border-color); background-color: var(--header-bg); color: var(--text-color); font-size: 1rem; }
+        button { background-color: var(--primary-color); border-color: var(--primary-color); cursor: pointer; font-weight: bold; }
+        button:hover { opacity: 0.9; }
+        button:disabled { background-color: #555; cursor: not-allowed; }
+        button.secondary { background-color: var(--header-bg); color: var(--text-color); }
+        button.danger { background-color: var(--error-color); border-color: var(--error-color); }
+
+        #login-screen { display: flex; align-items: center; justify-content: center; height: 100vh; }
+        #login-form { display: flex; flex-direction: column; gap: 1rem; padding: 2rem; background: var(--header-bg); border-radius: 8px; }
+
+        #app-container { display: none; }
+        nav { display: flex; gap: 1rem; border-bottom: 1px solid var(--border-color); margin-bottom: 2rem; }
+        nav button { background: none; border: none; padding: 1rem; font-size: 1rem; cursor: pointer; color: var(--text-color); border-bottom: 2px solid transparent; }
+        nav button.active { border-bottom-color: var(--primary-color); }
+        .page { display: none; }
+        .page.active { display: block; }
+
+        /* Media Grid Styles */
+        .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+        .media-card { background: var(--header-bg); border-radius: 8px; overflow: hidden; position: relative; }
+        .media-poster { width: 100%; height: 200px; background: var(--border-color); background-size: cover; background-position: center; position: relative; }
+        .media-poster::after { content: '🎬'; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 3rem; opacity: 0.3; }
+        .media-info { padding: 1rem; }
+        .media-title { font-weight: bold; font-size: 1.1rem; margin-bottom: 0.5rem; }
+        .media-meta { font-size: 0.9rem; color: #aaa; margin-bottom: 0.5rem; }
+        .media-status { display: inline-block; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: bold; text-transform: uppercase; }
+        .status-pending { background-color: var(--warning-color); color: #000; }
+        .status-searching { background-color: var(--info-color); color: #000; }
+        .status-downloading { background-color: var(--primary-color); color: #fff; }
+        .status-downloaded { background-color: var(--success-color); color: #000; }
+        .status-failed { background-color: var(--error-color); color: #fff; }
+        .progress-bar { width: 100%; height: 4px; background: var(--border-color); margin-top: 0.5rem; border-radius: 2px; overflow: hidden; }
+        .progress-fill { height: 100%; background: var(--success-color); transition: width 0.3s ease; }
+
+        /* Add Media Form */
+        #add-media-form { background: var(--header-bg); padding: 2rem; border-radius: 8px; margin-bottom: 2rem; }
+        #add-media-form .form-row { display: flex; gap: 1rem; margin-bottom: 1rem; }
+        #add-media-form .form-row input, #add-media-form .form-row select { flex: 1; }
+        #add-media-form .form-row.full-width { flex-direction: column; }
+        #add-media-form textarea { min-height: 100px; resize: vertical; }
+
+        /* Search Results */
+        .search-results { margin-top: 1rem; }
+        .search-result { display: flex; gap: 1rem; padding: 1rem; background: var(--table-row-hover); border-radius: 4px; margin-bottom: 0.5rem; cursor: pointer; }
+        .search-result:hover { background: var(--border-color); }
+        .search-result img { width: 60px; height: 90px; object-fit: cover; border-radius: 4px; }
+        .search-result-info { flex: 1; }
+        .search-result-title { font-weight: bold; }
+        .search-result-meta { font-size: 0.9rem; color: #aaa; }
+
+        /* Modal Styles */
+        .modal-backdrop { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.6); align-items: center; justify-content: center; }
+        .modal-content { background-color: var(--header-bg); margin: auto; padding: 2rem; border: 1px solid var(--border-color); width: 80%; max-width: 600px; border-radius: 8px; position: relative; max-height: 80vh; overflow-y: auto; }
+        .modal-close { color: #aaa; position: absolute; top: 1rem; right: 1.5rem; font-size: 28px; font-weight: bold; cursor: pointer; }
+        .modal-close:hover, .modal-close:focus { color: var(--text-color); }
+
+        /* Filter Bar */
+        .filter-bar { display: flex; gap: 1rem; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; }
+        .filter-bar select, .filter-bar input { min-width: 150px; }
+    </style>
+</head>
+<body>
+    <div id="login-screen">
+        <form id="login-form">
+            <h2>🎬 Reel Login</h2>
+            <input type="password" id="password-input" placeholder="Password" required>
+            <button type="submit">Login</button>
+            <p id="login-error" style="color:var(--error-color); text-align:center;"></p>
+        </form>
+    </div>
+
+    <main id="app-container">
+        <nav id="nav-buttons">
+            <button data-page="media-page" class="active">Media</button>
+            <button data-page="add-page">Add Media</button>
+            <button data-page="settings-page">Settings</button>
+        </nav>
+
+        <div id="media-page" class="page active">
+            <div class="filter-bar">
+                <select id="status-filter">
+                    <option value="all">All Status</option>
+                    <option value="pending">Pending</option>
+                    <option value="searching">Searching</option>
+                    <option value="downloading">Downloading</option>
+                    <option value="downloaded">Downloaded</option>
+                    <option value="failed">Failed</option>
+                </select>
+                <select id="type-filter">
+                    <option value="all">All Types</option>
+                    <option value="movie">Movies</option>
+                    <option value="tvshow">TV Shows</option>
+                </select>
+                <input type="search" id="search-filter" placeholder="Search titles...">
+                <button id="refresh-btn">🔄 Refresh</button>
+            </div>
+            <div id="media-grid" class="media-grid"></div>
+        </div>
+
+        <div id="add-page" class="page">
+            <form id="add-media-form">
+                <h2>Add New Media</h2>
+                
+                <div class="form-row">
+                    <select name="type" id="media-type" required>
+                        <option value="movie">Movie</option>
+                        <option value="tvshow">TV Show</option>
+                    </select>
+                </div>
+
+                <div class="form-row">
+                    <input type="text" name="search-query" id="search-query" placeholder="Search by title..." required>
+                    <button type="button" id="search-metadata-btn">Search</button>
+                </div>
+
+                <div id="metadata-results" class="search-results"></div>
+
+                <div class="form-row">
+                    <input type="text" name="title" id="title-input" placeholder="Title" required>
+                    <input type="number" name="year" id="year-input" placeholder="Year" min="1900" max="2030">
+                </div>
+
+                <div class="form-row">
+                    <input type="text" name="imdb_id" id="imdb-input" placeholder="IMDb ID (optional)">
+                    <select name="language" id="language-select">
+                        <option value="en">English</option>
+                        <option value="es">Spanish</option>
+                        <option value="fr">French</option>
+                        <option value="de">German</option>
+                        <option value="it">Italian</option>
+                        <option value="pt">Portuguese</option>
+                    </select>
+                </div>
+
+                <div class="form-row">
+                    <select name="min_quality" id="min-quality" required>
+                        <option value="480p">480p</option>
+                        <option value="720p" selected>720p</option>
+                        <option value="1080p">1080p</option>
+                        <option value="2160p">2160p (4K)</option>
+                    </select>
+                    <select name="max_quality" id="max-quality" required>
+                        <option value="720p">720p</option>
+                        <option value="1080p" selected>1080p</option>
+                        <option value="2160p">2160p (4K)</option>
+                    </select>
+                </div>
+
+                <button type="submit">Add to Library</button>
+                <p id="add-status" style="text-align:center; margin-top:1rem;"></p>
+            </form>
+        </div>
+
+        <div id="settings-page" class="page">
+            <h2>Settings</h2>
+            <div style="background: var(--header-bg); padding: 2rem; border-radius: 8px;">
+                <h3>Configuration</h3>
+                <p>Settings are currently managed via configuration file or environment variables.</p>
+                <p>Current configuration will be editable via this interface in a future update.</p>
+                
+                <h4>Current Status</h4>
+                <div id="system-status">
+                    <p><strong>Indexer Connection:</strong> <span id="indexer-status">Checking...</span></p>
+                    <p><strong>Torrent Client:</strong> <span id="torrent-status">Checking...</span></p>
+                    <p><strong>Metadata Provider:</strong> <span id="metadata-status">Checking...</span></p>
+                </div>
+
+                <h4>Quick Actions</h4>
+                <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+                    <button id="test-indexer-btn">Test Indexer Connection</button>
+                    <button id="test-torrent-btn">Test Torrent Client</button>
+                    <button id="clear-failed-btn" class="danger">Clear Failed Items</button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div id="media-modal" class="modal-backdrop">
+        <div class="modal-content">
+            <span class="modal-close">&times;</span>
+            <div id="media-detail-content"></div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // App State
+            const state = {
+                sessionToken: '',
+                allMedia: [],
+                filteredMedia: [],
+            };
+
+            // DOM Elements
+            const loginScreen = document.getElementById('login-screen');
+            const appContainer = document.getElementById('app-container');
+            const loginForm = document.getElementById('login-form');
+            const mediaGrid = document.getElementById('media-grid');
+            const addMediaForm = document.getElementById('add-media-form');
+
+            // Authentication
+            loginForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const passwordInput = document.getElementById('password-input');
+                const loginError = document.getElementById('login-error');
+                loginError.textContent = '';
+                
+                try {
+                    const response = await fetch('/api/v1/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password: passwordInput.value })
+                    });
+                    
+                    if (!response.ok) throw new Error('Incorrect password');
+                    
+                    const { token } = await response.json();
+                    state.sessionToken = token;
+                    loginScreen.style.display = 'none';
+                    appContainer.style.display = 'block';
+                    initializeApp();
+                } catch (error) {
+                    loginError.textContent = error.message;
+                }
+            });
+
+            // App Initialization
+            function initializeApp() {
+                setupNavigation();
+                setupFilters();
+                setupAddMediaForm();
+                setupModal();
+                loadMedia();
+                checkSystemStatus();
+            }
+
+            function setupNavigation() {
+                document.getElementById('nav-buttons').addEventListener('click', (e) => {
+                    if (e.target.tagName === 'BUTTON') {
+                        const pageId = e.target.dataset.page;
+                        document.querySelector('#nav-buttons .active').classList.remove('active');
+                        e.target.classList.add('active');
+                        document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === pageId));
+                        
+                        if (pageId === 'media-page') {
+                            loadMedia();
+                        }
+                    }
+                });
+            }
+
+            function setupFilters() {
+                const statusFilter = document.getElementById('status-filter');
+                const typeFilter = document.getElementById('type-filter');
+                const searchFilter = document.getElementById('search-filter');
+                const refreshBtn = document.getElementById('refresh-btn');
+
+                [statusFilter, typeFilter, searchFilter].forEach(filter => {
+                    filter.addEventListener('change', filterMedia);
+                    filter.addEventListener('input', filterMedia);
+                });
+
+                refreshBtn.addEventListener('click', loadMedia);
+            }
+
+            function setupAddMediaForm() {
+                const searchBtn = document.getElementById('search-metadata-btn');
+                searchBtn.addEventListener('click', searchMetadata);
+                
+                addMediaForm.addEventListener('submit', addMedia);
+            }
+
+            function setupModal() {
+                const modal = document.getElementById('media-modal');
+                const closeBtn = modal.querySelector('.modal-close');
+                
+                closeBtn.addEventListener('click', () => modal.style.display = 'none');
+                window.addEventListener('click', (e) => {
+                    if (e.target === modal) modal.style.display = 'none';
+                });
+            }
+
+            // API Functions
+            async function fetchWithAuth(url, options = {}) {
+                const headers = { ...options.headers };
+                headers['Authorization'] = `Bearer ${state.sessionToken}`;
+                if (options.body && typeof options.body === 'object') {
+                    headers['Content-Type'] = 'application/json';
+                    options.body = JSON.stringify(options.body);
+                }
+                
+                const response = await fetch(url, { ...options, headers });
+                if (response.status === 401) {
+                    window.location.reload();
+                }
+                return response;
+            }
+
+            async function loadMedia() {
+                try {
+                    const response = await fetchWithAuth('/api/v1/media');
+                    if (response.ok) {
+                        state.allMedia = await response.json();
+                        filterMedia();
+                    }
+                } catch (error) {
+                    console.error('Failed to load media:', error);
+                }
+            }
+
+            async function addMedia(e) {
+                e.preventDefault();
+                const formData = new FormData(e.target);
+                const statusEl = document.getElementById('add-status');
+                
+                statusEl.textContent = 'Adding media...';
+                
+                try {
+                    const response = await fetchWithAuth('/api/v1/media', {
+                        method: 'POST',
+                        body: {
+                            type: formData.get('type'),
+                            title: formData.get('title'),
+                            year: parseInt(formData.get('year')),
+                            imdb_id: formData.get('imdb_id'),
+                            language: formData.get('language'),
+                            min_quality: formData.get('min_quality'),
+                            max_quality: formData.get('max_quality')
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        statusEl.textContent = 'Media added successfully!';
+                        statusEl.style.color = 'var(--success-color)';
+                        e.target.reset();
+                        document.getElementById('metadata-results').innerHTML = '';
+                        loadMedia(); // Refresh media list
+                    } else {
+                        const error = await response.json();
+                        throw new Error(error.error || 'Failed to add media');
+                    }
+                } catch (error) {
+                    statusEl.textContent = `Error: ${error.message}`;
+                    statusEl.style.color = 'var(--error-color)';
+                }
+            }
+
+            async function searchMetadata() {
+                const query = document.getElementById('search-query').value;
+                const type = document.getElementById('media-type').value;
+                const resultsContainer = document.getElementById('metadata-results');
+                
+                if (!query) return;
+                
+                resultsContainer.innerHTML = '<p>Searching...</p>';
+                
+                try {
+                    const response = await fetchWithAuth(`/api/v1/search-metadata?q=${encodeURIComponent(query)}&type=${type}`);
+                    if (response.ok) {
+                        const results = await response.json();
+                        displayMetadataResults(results);
+                    } else {
+						const error = await response.json();
+                        resultsContainer.innerHTML = `<p style="color:var(--error-color)">Search failed: ${error.error}</p>`;
+                    }
+                } catch (error) {
+                    resultsContainer.innerHTML = '<p style="color:var(--error-color)">Search error</p>';
+                }
+            }
+
+            function displayMetadataResults(results) {
+                const container = document.getElementById('metadata-results');
+                
+                if (!results || results.length === 0) {
+                    container.innerHTML = '<p>No results found</p>';
+                    return;
+                }
+                
+                container.innerHTML = results.map(item => `
+                    <div class="search-result" onclick="selectMetadataItem(${JSON.stringify(item).replace(/"/g, '&quot;')})">
+                        ${item.poster_url ? `<img src="${item.poster_url}" alt="${item.title}">` : '<div style="width:60px;height:90px;background:var(--border-color);border-radius:4px;"></div>'}
+                        <div class="search-result-info">
+                            <div class="search-result-title">${item.title}</div>
+                            <div class="search-result-meta">${item.year} • ${item.overview ? item.overview.substring(0, 100) + '...' : 'No description'}</div>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            window.selectMetadataItem = function(item) {
+                document.getElementById('title-input').value = item.title;
+                document.getElementById('year-input').value = item.year;
+                if (item.imdb_id) {
+                    document.getElementById('imdb-input').value = item.imdb_id;
+                }
+                document.getElementById('metadata-results').innerHTML = '';
+            };
+
+            async function checkSystemStatus() {
+                try {
+                    const response = await fetchWithAuth('/api/v1/status');
+                    if (response.ok) {
+                        const status = await response.json();
+                        document.getElementById('indexer-status').textContent = status.indexer ? 'Connected' : 'Disconnected';
+                        document.getElementById('torrent-status').textContent = status.torrent_client ? 'Connected' : 'Disconnected';
+                        document.getElementById('metadata-status').textContent = status.metadata ? 'Connected' : 'Disconnected';
+                    }
+                } catch (error) {
+                    console.error('Failed to check system status:', error);
+                }
+            }
+
+            function filterMedia() {
+                const statusFilter = document.getElementById('status-filter').value;
+                const typeFilter = document.getElementById('type-filter').value;
+                const searchFilter = document.getElementById('search-filter').value.toLowerCase();
+                
+                state.filteredMedia = state.allMedia.filter(media => {
+                    if (statusFilter !== 'all' && media.status !== statusFilter) return false;
+                    if (typeFilter !== 'all' && media.type !== typeFilter) return false;
+                    if (searchFilter && !media.title.toLowerCase().includes(searchFilter)) return false;
+                    return true;
+                });
+                
+                renderMediaGrid();
+            }
+
+            function renderMediaGrid() {
+                if (state.filteredMedia.length === 0) {
+                    mediaGrid.innerHTML = '<p style="text-align:center; padding:2rem; color:#aaa;">No media found. Add some media to get started!</p>';
+                    return;
+                }
+                
+                mediaGrid.innerHTML = state.filteredMedia.map(media => {
+                    const progressWidth = media.status === 'downloading' ? (media.progress * 100) : 0;
+                    
+                    return `
+                        <div class="media-card" onclick="showMediaDetails(${media.id})">
+                            <div class="media-poster" style="${media.poster_url ? `background-image: url('${media.poster_url}')` : ''}"></div>
+                            <div class="media-info">
+                                <div class="media-title">${media.title}</div>
+                                <div class="media-meta">${media.year} • ${media.language.toUpperCase()} • ${media.min_quality}-${media.max_quality}</div>
+                                <span class="media-status status-${media.status}">${media.status}</span>
+                                ${media.status === 'downloading' ? `
+                                    <div class="progress-bar">
+                                        <div class="progress-fill" style="width: ${progressWidth}%"></div>
+                                    </div>
+                                    <div style="font-size: 0.8rem; margin-top: 0.25rem;">${Math.round(progressWidth)}%</div>
+                                ` : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            window.showMediaDetails = function(mediaId) {
+                const media = state.allMedia.find(m => m.id === mediaId);
+                if (!media) return;
+                
+                const modal = document.getElementById('media-modal');
+                const content = document.getElementById('media-detail-content');
+                
+                content.innerHTML = `
+                    <h2>${media.title} (${media.year})</h2>
+                    <div style="display: flex; gap: 2rem; margin-bottom: 2rem;">
+                        ${media.poster_url ? `<img src="${media.poster_url}" alt="${media.title}" style="width: 200px; border-radius: 8px;">` : ''}
+                        <div style="flex: 1;">
+                            <p><strong>Type:</strong> ${media.type === 'movie' ? 'Movie' : 'TV Show'}</p>
+                            <p><strong>Language:</strong> ${media.language.toUpperCase()}</p>
+                            <p><strong>Quality Range:</strong> ${media.min_quality} - ${media.max_quality}</p>
+                            <p><strong>Status:</strong> <span class="media-status status-${media.status}">${media.status}</span></p>
+                            ${media.imdb_id ? `<p><strong>IMDb:</strong> <a href="https://imdb.com/title/${media.imdb_id}" target="_blank">${media.imdb_id}</a></p>` : ''}
+                            ${media.torrent_name ? `<p><strong>Torrent:</strong> ${media.torrent_name}</p>` : ''}
+                            <p><strong>Added:</strong> ${new Date(media.added_at).toLocaleString()}</p>
+                            ${media.completed_at ? `<p><strong>Completed:</strong> ${new Date(media.completed_at).toLocaleString()}</p>` : ''}
+                        </div>
+                    </div>
+                    ${media.overview ? `<p><strong>Overview:</strong></p><p>${media.overview}</p>` : ''}
+                    <div style="display: flex; gap: 1rem; margin-top: 2rem;">
+                        ${media.status === 'failed' || media.status === 'pending' ? `<button onclick="retryMedia(${media.id})">🔄 Retry</button>` : ''}
+                        <button onclick="deleteMedia(${media.id})" class="danger">🗑️ Delete</button>
+                    </div>
+                `;
+                
+                modal.style.display = 'flex';
+            };
+
+            window.retryMedia = async function(mediaId) {
+                try {
+                    const response = await fetchWithAuth(`/api/v1/media/${mediaId}/retry`, { method: 'POST' });
+                    if (response.ok) {
+                        loadMedia();
+                        document.getElementById('media-modal').style.display = 'none';
+                    }
+                } catch (error) {
+                    console.error('Failed to retry media:', error);
+                }
+            };
+
+            window.deleteMedia = async function(mediaId) {
+                if (!confirm('Are you sure you want to delete this media item?')) return;
+                
+                try {
+                    const response = await fetchWithAuth(`/api/v1/media/${mediaId}`, { method: 'DELETE' });
+                    if (response.ok) {
+                        loadMedia();
+                        document.getElementById('media-modal').style.display = 'none';
+                    }
+                } catch (error) {
+                    console.error('Failed to delete media:', error);
+                }
+            };
+
+            // Settings page functionality
+            document.getElementById('test-indexer-btn').addEventListener('click', async () => {
+                const btn = document.getElementById('test-indexer-btn');
+                btn.textContent = 'Testing...';
+                btn.disabled = true;
+                
+                try {
+                    const response = await fetchWithAuth('/api/v1/test/indexer');
+                    const result = await response.json();
+                    btn.textContent = result.ok ? '✅ Connected' : '❌ Failed';
+                } catch (error) {
+                    btn.textContent = '❌ Error';
+                } finally {
+                    setTimeout(() => {
+                        btn.textContent = 'Test Indexer Connection';
+                        btn.disabled = false;
+                    }, 2000);
+                }
+            });
+
+            document.getElementById('test-torrent-btn').addEventListener('click', async () => {
+                const btn = document.getElementById('test-torrent-btn');
+                btn.textContent = 'Testing...';
+                btn.disabled = true;
+                
+                try {
+                    const response = await fetchWithAuth('/api/v1/test/torrent');
+                    const result = await response.json();
+                    btn.textContent = result.ok ? '✅ Connected' : '❌ Failed';
+                } catch (error) {
+                    btn.textContent = '❌ Error';
+                } finally {
+                    setTimeout(() => {
+                        btn.textContent = 'Test Torrent Client';
+                        btn.disabled = false;
+                    }, 2000);
+                }
+            });
+
+            document.getElementById('clear-failed-btn').addEventListener('click', async () => {
+                if (!confirm('Clear all failed media items?')) return;
+                
+                try {
+                    const response = await fetchWithAuth('/api/v1/media/clear-failed', { method: 'POST' });
+                    if (response.ok) {
+                        loadMedia();
+                    }
+                } catch (error) {
+                    console.error('Failed to clear failed items:', error);
+                }
+            });
+        });
+    </script>
+</body>
+</html>

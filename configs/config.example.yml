@@ -1,0 +1,38 @@
+app:
+  port: 8081
+  data_path: "./data"
+  ui_enabled: true
+  ui_password: "changeme"
+  debug: false
+  jwt_secret: "your-very-secure-jwt-secret-key-here"
+
+indexer:
+  type: "scarf"
+  url: "http://localhost:8080"
+  api_key: "your_scarf_api_key_here"
+
+torrent_client:
+  type: "transmission" # or "qbittorrent"
+  host: "localhost:9091" # e.g., localhost:8080 for qbittorrent
+  username: ""
+  password: ""
+  download_path: "/downloads/media"
+
+metadata:
+  providers: ["tmdb", "imdb"] # Order of preference
+  language: "en"
+  tmdb:
+    api_key: "your_tmdb_api_key_here"
+  imdb:
+    api_key: "" # Placeholder for future use
+
+database:
+  path: "./data/reel.db"
+
+automation:
+  search_interval: "1h"
+  max_concurrent_downloads: 3
+  quality_preferences:
+    - "1080p"
+    - "720p"
+  min_seeders: 5
