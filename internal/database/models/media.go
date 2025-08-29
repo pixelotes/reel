@@ -22,6 +22,8 @@ const (
 	StatusDownloaded  MediaStatus = "downloaded"
 	StatusFailed      MediaStatus = "failed"
 	StatusSkipped     MediaStatus = "skipped"
+	StatusMonitoring  MediaStatus = "monitoring"
+	StatusTBA         MediaStatus = "tba"
 )
 
 type Media struct {
@@ -380,4 +382,86 @@ func (r *MediaRepository) GetTVShowByMediaID(mediaID int) (*TVShow, error) {
 	}
 
 	return &show, nil
+}
+
+// UpdateEpisodeDownloadInfo updates a specific episode's download information
+func (r *MediaRepository) UpdateEpisodeDownloadInfo(mediaID int, seasonNumber int, episodeNumber int, status MediaStatus, hash, torrentName *string) error {
+	// First get the TV show ID from media
+	var tvShowID sql.NullInt64
+	err := r.db.QueryRow("SELECT tv_show_id FROM media WHERE id = ?", mediaID).Scan(&tvShowID)
+	if err != nil {
+		return fmt.Errorf("failed to get TV show ID: %w", err)
+	}
+
+	if !tvShowID.Valid {
+		return fmt.Errorf("media is not a TV show")
+	}
+
+	// Get the season ID
+	var seasonID int
+	err = r.db.QueryRow("SELECT id FROM seasons WHERE show_id = ? AND season_number = ?",
+		tvShowID.Int64, seasonNumber).Scan(&seasonID)
+	if err != nil {
+		return fmt.Errorf("season not found: %w", err)
+	}
+
+	// Update the specific episode
+	_, err = r.db.Exec(`
+		UPDATE episodes 
+		SET status = ? 
+		WHERE season_id = ? AND episode_number = ?`,
+		status, seasonID, episodeNumber)
+
+	if err != nil {
+		return fmt.Errorf("failed to update episode status: %w", err)
+	}
+
+	// Also update the main media record with the download info (for tracking purposes)
+	if hash != nil && torrentName != nil {
+		_, err = r.db.Exec(`
+			UPDATE media 
+			SET torrent_hash = ?, torrent_name = ?, status = ?
+			WHERE id = ?`,
+			*hash, *torrentName, StatusDownloading, mediaID)
+		if err != nil {
+			return fmt.Errorf("failed to update media download info: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// GetEpisodeByDetails gets a specific episode by media ID, season, and episode number
+func (r *MediaRepository) GetEpisodeByDetails(mediaID int, seasonNumber int, episodeNumber int) (*Episode, error) {
+	// First get the TV show ID from media
+	var tvShowID sql.NullInt64
+	err := r.db.QueryRow("SELECT tv_show_id FROM media WHERE id = ?", mediaID).Scan(&tvShowID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get TV show ID: %w", err)
+	}
+
+	if !tvShowID.Valid {
+		return nil, fmt.Errorf("media is not a TV show")
+	}
+
+	// Get the episode
+	var episode Episode
+	query := `
+		SELECT e.id, e.season_id, e.episode_number, e.title, e.air_date, e.status
+		FROM episodes e
+		JOIN seasons s ON e.season_id = s.id
+		WHERE s.show_id = ? AND s.season_number = ? AND e.episode_number = ?`
+
+	err = r.db.QueryRow(query, tvShowID.Int64, seasonNumber, episodeNumber).Scan(
+		&episode.ID, &episode.SeasonID, &episode.EpisodeNumber,
+		&episode.Title, &episode.AirDate, &episode.Status)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("episode S%02dE%02d not found", seasonNumber, episodeNumber)
+		}
+		return nil, err
+	}
+
+	return &episode, nil
 }

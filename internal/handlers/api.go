@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -274,4 +275,135 @@ func (h *APIHandler) GetTVShowDetails(w http.ResponseWriter, r *http.Request) {
 func generateJWTToken(password string) string {
 	// Simple token generation - implement proper JWT in production
 	return "simple-token-" + password
+}
+
+func (h *APIHandler) EpisodeSearch(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	mediaID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+
+	seasonStr := vars["season"]
+	episodeStr := vars["episode"]
+
+	season, err := strconv.Atoi(seasonStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid season number")
+		return
+	}
+
+	episode, err := strconv.Atoi(episodeStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid episode number")
+		return
+	}
+
+	h.logger.Info(fmt.Sprintf("Manual episode search requested for media %d S%02dE%02d", mediaID, season, episode))
+
+	results, err := h.manager.PerformEpisodeSearch(mediaID, season, episode)
+	if err != nil {
+		h.logger.Error("Episode search failed:", err)
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	h.logger.Info(fmt.Sprintf("Episode search completed: found %d results", len(results)))
+	respondJSON(w, http.StatusOK, results)
+}
+
+// Manual download for a specific episode
+func (h *APIHandler) EpisodeDownload(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	mediaID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+
+	seasonStr := vars["season"]
+	episodeStr := vars["episode"]
+
+	season, err := strconv.Atoi(seasonStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid season number")
+		return
+	}
+
+	episode, err := strconv.Atoi(episodeStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid episode number")
+		return
+	}
+
+	var req indexers.IndexerResult
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	h.logger.Info(fmt.Sprintf("Manual episode download requested for media %d S%02dE%02d: %s",
+		mediaID, season, episode, req.Title))
+
+	if err := h.manager.StartEpisodeDownload(mediaID, season, episode, req); err != nil {
+		h.logger.Error("Episode download failed:", err)
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	h.logger.Info("Episode download started successfully")
+	respondJSON(w, http.StatusOK, map[string]string{"status": "download started"})
+}
+
+// Get episode details
+func (h *APIHandler) GetEpisodeDetails(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	mediaID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+
+	seasonStr := vars["season"]
+	episodeStr := vars["episode"]
+
+	season, err := strconv.Atoi(seasonStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid season number")
+		return
+	}
+
+	episode, err := strconv.Atoi(episodeStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid episode number")
+		return
+	}
+
+	// You'll need to implement this method in MediaRepository if you want episode details
+	// For now, we'll just return the episode info from the TV show details
+	show, err := h.manager.GetTVShowDetails(mediaID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if show == nil {
+		respondError(w, http.StatusNotFound, "TV show not found")
+		return
+	}
+
+	// Find the specific episode
+	for _, s := range show.Seasons {
+		if s.SeasonNumber == season {
+			for _, e := range s.Episodes {
+				if e.EpisodeNumber == episode {
+					respondJSON(w, http.StatusOK, e)
+					return
+				}
+			}
+		}
+	}
+
+	respondError(w, http.StatusNotFound, "Episode not found")
 }

@@ -56,7 +56,10 @@ func (s *Server) Start() error {
 	protected.HandleFunc("/status", s.apiHandler.GetSystemStatus).Methods("GET")
 	protected.HandleFunc("/test/indexer", s.apiHandler.TestIndexer).Methods("GET")
 	protected.HandleFunc("/test/torrent", s.apiHandler.TestTorrent).Methods("GET")
-
+	// Episode-specific routes
+	protected.HandleFunc("/media/{id}/season/{season}/episode/{episode}/search", s.apiHandler.EpisodeSearch).Methods("GET")
+	protected.HandleFunc("/media/{id}/season/{season}/episode/{episode}/download", s.apiHandler.EpisodeDownload).Methods("POST")
+	protected.HandleFunc("/media/{id}/season/{season}/episode/{episode}/details", s.apiHandler.GetEpisodeDetails).Methods("GET")
 	// Web UI (if enabled)
 	if s.config.App.UIEnabled {
 		router.PathPrefix("/").Handler(http.FileServer(http.FS(web.Files)))

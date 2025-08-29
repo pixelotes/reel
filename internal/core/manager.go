@@ -278,7 +278,10 @@ func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, 
 
 			for _, ep := range episodes {
 				status := models.StatusPending
-				if seasonNum < startSeason || (seasonNum == startSeason && ep.EpisodeNumber < startEpisode) {
+				airDate, _ := time.Parse("2006-01-02", ep.AirDate)
+				if airDate.After(time.Now()) {
+					status = models.StatusTBA
+				} else if seasonNum < startSeason || (seasonNum == startSeason && ep.EpisodeNumber < startEpisode) {
 					status = models.StatusSkipped
 				}
 				episode := &models.Episode{
@@ -714,5 +717,76 @@ func (m *Manager) StartDownload(id int, torrent indexers.IndexerResult) error {
 		m.logger.Error("Failed to update media status after adding torrent:", err)
 		return err
 	}
+	return nil
+}
+
+// PerformEpisodeSearch performs a manual search for a specific episode
+func (m *Manager) PerformEpisodeSearch(mediaID int, seasonNumber int, episodeNumber int) ([]indexers.IndexerResult, error) {
+	media, err := m.mediaRepo.GetByID(mediaID)
+	if err != nil {
+		return nil, err
+	}
+	if media == nil {
+		return nil, fmt.Errorf("media not found")
+	}
+
+	if media.Type != models.MediaTypeTVShow {
+		return nil, fmt.Errorf("media is not a TV show")
+	}
+
+	// Perform search with specific season/episode
+	results, err := m.performSearch(media, seasonNumber, episodeNumber)
+	if err != nil {
+		return nil, err
+	}
+
+	// Score and sort results
+	for i := range results {
+		results[i].Score = getQualityScore(results[i].Title)
+		results[i].Score += results[i].Seeders
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	m.logger.Info(fmt.Sprintf("Found %d results for %s S%02dE%02d",
+		len(results), media.Title, seasonNumber, episodeNumber))
+
+	return results, nil
+}
+
+// StartEpisodeDownload starts downloading a specific episode with a chosen torrent
+func (m *Manager) StartEpisodeDownload(mediaID int, seasonNumber int, episodeNumber int, torrent indexers.IndexerResult) error {
+	media, err := m.mediaRepo.GetByID(mediaID)
+	if err != nil {
+		return err
+	}
+	if media == nil {
+		return fmt.Errorf("media not found")
+	}
+
+	if media.Type != models.MediaTypeTVShow {
+		return fmt.Errorf("media is not a TV show")
+	}
+
+	m.logger.Info(fmt.Sprintf("🚀 Starting manual download for %s S%02dE%02d: %s",
+		media.Title, seasonNumber, episodeNumber, torrent.Title))
+
+	// Start the torrent download
+	hash, err := m.torrentClient.AddTorrent(torrent.DownloadURL, m.config.TorrentClient.DownloadPath)
+	if err != nil {
+		m.logger.Error("Failed to add episode torrent to client:", err)
+		return err
+	}
+
+	m.logger.Info("✅ Episode torrent successfully sent to download client! Hash:", hash)
+
+	// Update the specific episode status in database
+	if err := m.mediaRepo.UpdateEpisodeDownloadInfo(mediaID, seasonNumber, episodeNumber, models.StatusDownloading, &hash, &torrent.Title); err != nil {
+		m.logger.Error("Failed to update episode status after adding torrent:", err)
+		return err
+	}
+
 	return nil
 }
