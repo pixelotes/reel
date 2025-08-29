@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"reel/internal/clients/indexers"
 	"reel/internal/core"
 	"reel/internal/database/models"
 	"reel/internal/utils"
@@ -70,7 +71,7 @@ func (h *APIHandler) AddMedia(w http.ResponseWriter, r *http.Request) {
 		Type         string `json:"type"`
 		Title        string `json:"title"`
 		Year         int    `json:"year"`
-		TMDBId       int    `json:"tmdb_id"`
+		TMDBId       int    `json:"tmdb_id"` // Changed from IMDBId
 		Language     string `json:"language"`
 		MinQuality   string `json:"min_quality"`
 		MaxQuality   string `json:"max_quality"`
@@ -83,6 +84,7 @@ func (h *APIHandler) AddMedia(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mediaType := models.MediaType(req.Type)
+	// Pass TMDBId to the manager
 	media, err := h.manager.AddMedia(mediaType, req.TMDBId, req.Title, req.Year,
 		req.Language, req.MinQuality, req.MaxQuality, req.AutoDownload)
 	if err != nil {
@@ -171,6 +173,45 @@ func (h *APIHandler) ClearFailed(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "Failed to clear failed media")
 		return
 	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *APIHandler) ManualSearch(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+
+	results, err := h.manager.PerformSearch(id)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, results)
+}
+
+func (h *APIHandler) ManualDownload(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+
+	var req indexers.IndexerResult
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if err := h.manager.StartDownload(id, req); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 

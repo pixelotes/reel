@@ -65,9 +65,14 @@
         .search-result-title { font-weight: bold; }
         .search-result-meta { font-size: 0.9rem; color: #aaa; }
 
+        /* Manual Search Results */
+        .manual-search-result { display: grid; grid-template-columns: 1fr auto auto auto auto auto; gap: 1rem; align-items: center; padding: 0.75rem; border-bottom: 1px solid var(--border-color); }
+        .manual-search-result:last-child { border-bottom: none; }
+        .manual-search-title { font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
         /* Modal Styles */
         .modal-backdrop { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.6); align-items: center; justify-content: center; }
-        .modal-content { background-color: var(--header-bg); margin: auto; padding: 2rem; border: 1px solid var(--border-color); width: 80%; max-width: 600px; border-radius: 8px; position: relative; max-height: 80vh; overflow-y: auto; }
+        .modal-content { background-color: var(--header-bg); margin: auto; padding: 2rem; border: 1px solid var(--border-color); width: 80%; max-width: 900px; border-radius: 8px; position: relative; max-height: 80vh; overflow-y: auto; }
         .modal-close { color: #aaa; position: absolute; top: 1rem; right: 1.5rem; font-size: 28px; font-weight: bold; cursor: pointer; }
         .modal-close:hover, .modal-close:focus { color: var(--text-color); }
 
@@ -533,6 +538,7 @@
                     ${media.overview ? `<p><strong>Overview:</strong></p><p>${media.overview}</p>` : ''}
                     <div style="display: flex; gap: 1rem; margin-top: 2rem;">
                         ${media.status === 'failed' || media.status === 'pending' ? `<button onclick="retryMedia(${media.id})">🔄 Retry</button>` : ''}
+                        <button onclick="manualSearch(${media.id})">🔍 Manual Search</button>
                         <button onclick="deleteMedia(${media.id})" class="danger">🗑️ Delete</button>
                     </div>
                 `;
@@ -564,6 +570,79 @@
                     }
                 } catch (error) {
                     console.error('Failed to delete media:', error);
+                }
+            };
+
+            window.manualSearch = async function(mediaId) {
+                const content = document.getElementById('media-detail-content');
+                content.innerHTML = '<h2>Searching for torrents...</h2>';
+                
+                try {
+                    const response = await fetchWithAuth(`/api/v1/media/${mediaId}/search`);
+                    if (response.ok) {
+                        const results = await response.json();
+                        displayManualSearchResults(mediaId, results);
+                    } else {
+                        throw new Error('Search failed');
+                    }
+                } catch (error) {
+                    content.innerHTML = `<h2 style="color:var(--error-color)">${error.message}</h2>`;
+                }
+            };
+
+            function formatBytes(bytes, decimals = 2) {
+                if (bytes === 0) return '0 Bytes';
+                const k = 1024;
+                const dm = decimals < 0 ? 0 : decimals;
+                const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+            }
+
+            function displayManualSearchResults(mediaId, results) {
+                const content = document.getElementById('media-detail-content');
+                if (results.length === 0) {
+                    content.innerHTML = '<h2>No results found</h2>';
+                    return;
+                }
+                
+                const resultsHtml = results.map(r => `
+                    <div class="manual-search-result">
+                        <div class="manual-search-title" title="${r.Title}">${r.Title}</div>
+                        <div><strong>${formatBytes(r.Size)}</strong></div>
+                        <div><strong>${r.Score}</strong></div>
+                        <div><strong>${r.Seeders}</strong></div>
+                        <div><strong>${r.Leechers}</strong></div>
+                        <button onclick='startManualDownload(${mediaId}, ${JSON.stringify(r).replace(/"/g, "&quot;")})'>Download</button>
+                    </div>
+                `).join('');
+                
+                content.innerHTML = `
+                    <h2>Manual Search Results</h2>
+                    <div style="font-size:0.8rem; margin-bottom:1rem; display:grid; grid-template-columns: 1fr auto auto auto auto auto; gap: 1rem; padding: 0.75rem;">
+                        <strong>Title</strong><strong>Size</strong><strong>Score</strong><strong>Seeders</strong><strong>Leechers</strong><strong>Link</strong><span></span>
+                    </div>
+                    ${resultsHtml}
+                `;
+            }
+
+            window.startManualDownload = async function(mediaId, result) {
+                const content = document.getElementById('media-detail-content');
+                content.innerHTML = '<h2>Sending to download client...</h2>';
+
+                try {
+                    const response = await fetchWithAuth(`/api/v1/media/${mediaId}/download`, {
+                        method: 'POST',
+                        body: result
+                    });
+                    if (response.ok) {
+                        document.getElementById('media-modal').style.display = 'none';
+                        loadMedia();
+                    } else {
+                        throw new Error('Failed to start download');
+                    }
+                } catch (error) {
+                     content.innerHTML = `<h2 style="color:var(--error-color)">${error.message}</h2>`;
                 }
             };
 

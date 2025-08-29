@@ -191,23 +191,15 @@ func (m *Manager) AddMedia(mediaType models.MediaType, tmdbID int, title string,
 }
 
 func (m *Manager) searchAndDownload(media *models.Media) {
-	m.logger.Info("🔍 Starting search for:", media.Title)
+	m.logger.Info("🔍 Starting automatic search for:", media.Title)
 	m.mediaRepo.UpdateStatus(media.ID, models.StatusSearching)
 
-	query := fmt.Sprintf("%s %d", media.Title, media.Year)
-	tmdbIDStr := ""
-	if media.TMDBId != nil {
-		tmdbIDStr = strconv.Itoa(*media.TMDBId)
-	}
-
-	results, err := m.indexerClient.SearchMovies(query, tmdbIDStr)
+	results, err := m.performSearch(media)
 	if err != nil {
 		m.logger.Error("Search failed for", media.Title, ":", err)
 		m.mediaRepo.UpdateStatus(media.ID, models.StatusFailed)
 		return
 	}
-
-	m.logger.Info(fmt.Sprintf("Found %d results for %s", len(results), media.Title))
 
 	bestTorrent := m.selectBestTorrent(media, results)
 	if bestTorrent == nil {
@@ -216,21 +208,7 @@ func (m *Manager) searchAndDownload(media *models.Media) {
 		return
 	}
 
-	// --- Send to Download Client ---
-	m.logger.Info("🚀 Sending to download client:", m.config.TorrentClient.Type)
-	hash, err := m.torrentClient.AddTorrent(bestTorrent.DownloadURL, m.config.TorrentClient.DownloadPath)
-	if err != nil {
-		m.logger.Error("Failed to add torrent to client:", err)
-		m.mediaRepo.UpdateStatus(media.ID, models.StatusFailed)
-		return
-	}
-
-	m.logger.Info("✅ Torrent successfully sent to download client! Hash:", hash)
-
-	// --- Update Media Status ---
-	if err := m.mediaRepo.UpdateDownloadInfo(media.ID, models.StatusDownloading, &hash, &bestTorrent.Title); err != nil {
-		m.logger.Error("Failed to update media status after adding torrent:", err)
-	}
+	m.StartDownload(media.ID, *bestTorrent)
 }
 
 func (m *Manager) selectBestTorrent(media *models.Media, results []indexers.IndexerResult) *indexers.IndexerResult {
@@ -425,4 +403,63 @@ func (m *Manager) TestIndexerConnection() bool {
 func (m *Manager) TestTorrentConnection() bool {
 	// A basic test, a better one would ping the client
 	return m.torrentClient != nil
+}
+
+func (m *Manager) performSearch(media *models.Media) ([]indexers.IndexerResult, error) {
+	query := fmt.Sprintf("%s %d", media.Title, media.Year)
+	tmdbIDStr := ""
+	if media.TMDBId != nil {
+		tmdbIDStr = strconv.Itoa(*media.TMDBId)
+	}
+
+	results, err := m.indexerClient.SearchMovies(query, tmdbIDStr)
+	if err != nil {
+		return nil, err
+	}
+	m.logger.Info(fmt.Sprintf("Found %d results for %s", len(results), media.Title))
+	return results, nil
+}
+
+func (m *Manager) PerformSearch(id int) ([]indexers.IndexerResult, error) {
+	media, err := m.mediaRepo.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if media == nil {
+		return nil, fmt.Errorf("media not found")
+	}
+
+	results, err := m.performSearch(media)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range results {
+		results[i].Score = getQualityScore(results[i].Title)
+		results[i].Score += results[i].Seeders
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	return results, nil
+}
+
+func (m *Manager) StartDownload(id int, torrent indexers.IndexerResult) error {
+	m.logger.Info("🚀 Sending to download client:", m.config.TorrentClient.Type)
+	hash, err := m.torrentClient.AddTorrent(torrent.DownloadURL, m.config.TorrentClient.DownloadPath)
+	if err != nil {
+		m.logger.Error("Failed to add torrent to client:", err)
+		m.mediaRepo.UpdateStatus(id, models.StatusFailed)
+		return err
+	}
+
+	m.logger.Info("✅ Torrent successfully sent to download client! Hash:", hash)
+
+	if err := m.mediaRepo.UpdateDownloadInfo(id, models.StatusDownloading, &hash, &torrent.Title); err != nil {
+		m.logger.Error("Failed to update media status after adding torrent:", err)
+		return err
+	}
+	return nil
 }
