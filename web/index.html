@@ -34,7 +34,7 @@
 
         /* Media Grid Styles */
         .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
-        .media-card { background: var(--header-bg); border-radius: 8px; overflow: hidden; position: relative; }
+        .media-card { background: var(--header-bg); border-radius: 8px; overflow: hidden; position: relative; cursor: pointer; }
         .media-poster { width: 100%; height: 200px; background: var(--border-color); background-size: cover; background-position: center; position: relative; }
         .media-poster::after { content: '🎬'; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 3rem; opacity: 0.3; }
         .media-info { padding: 1rem; }
@@ -46,6 +46,7 @@
         .status-downloading { background-color: var(--primary-color); color: #fff; }
         .status-downloaded { background-color: var(--success-color); color: #000; }
         .status-failed { background-color: var(--error-color); color: #fff; }
+        .status-skipped { background-color: var(--border-color); color: var(--text-color); }
         .progress-bar { width: 100%; height: 4px; background: var(--border-color); margin-top: 0.5rem; border-radius: 2px; overflow: hidden; }
         .progress-fill { height: 100%; background: var(--success-color); transition: width 0.3s ease; }
 
@@ -79,6 +80,11 @@
         /* Filter Bar */
         .filter-bar { display: flex; gap: 1rem; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; }
         .filter-bar select, .filter-bar input { min-width: 150px; }
+        
+        /* TV Show Details */
+        .season-details summary { cursor: pointer; font-weight: bold; margin: 1rem 0 0.5rem; }
+        .episode-list { display: flex; flex-direction: column; gap: 0.5rem; margin-left: 1rem; }
+        .episode-item { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 1rem; }
     </style>
 </head>
 <body>
@@ -137,15 +143,19 @@
 
                 <div id="metadata-results" class="search-results"></div>
 
-                <input type="hidden" name="tmdb_id" id="tmdb-id-input">
+                <input type="hidden" name="id" id="id-input">
 
                 <div class="form-row">
                     <input type="text" name="title" id="title-input" placeholder="Title" required>
                     <input type="number" name="year" id="year-input" placeholder="Year" min="1900" max="2030">
                 </div>
 
+                <div id="tv-show-options" class="form-row" style="display: none;">
+                    <select name="start_season" id="start-season-select"></select>
+                    <select name="start_episode" id="start-episode-select"></select>
+                </div>
+
                 <div class="form-row">
-                    <input type="text" name="tmdb_id_display" id="tmdb-input-display" placeholder="TMDB ID" disabled>
                     <select name="language" id="language-select">
                         <option value="en">English</option>
                         <option value="es">Spanish</option>
@@ -242,6 +252,8 @@
             const loginForm = document.getElementById('login-form');
             const mediaGrid = document.getElementById('media-grid');
             const addMediaForm = document.getElementById('add-media-form');
+            const mediaTypeSelect = document.getElementById('media-type');
+            const tvShowOptions = document.getElementById('tv-show-options');
 
             // Authentication
             loginForm.addEventListener('submit', async (e) => {
@@ -312,8 +324,10 @@
             function setupAddMediaForm() {
                 const searchBtn = document.getElementById('search-metadata-btn');
                 searchBtn.addEventListener('click', searchMetadata);
-                
                 addMediaForm.addEventListener('submit', addMedia);
+                mediaTypeSelect.addEventListener('change', () => {
+                    tvShowOptions.style.display = mediaTypeSelect.value === 'tvshow' ? 'flex' : 'none';
+                });
             }
 
             function setupModal() {
@@ -370,18 +384,25 @@
                 statusEl.textContent = 'Adding media...';
                 
                 try {
+                    const body = {
+                        type: formData.get('type'),
+                        title: formData.get('title'),
+                        year: parseInt(formData.get('year')),
+                        id: formData.get('id'),
+                        language: formData.get('language'),
+                        min_quality: minQuality,
+                        max_quality: maxQuality,
+                        auto_download: document.getElementById('auto-download-checkbox').checked,
+                    };
+                    
+                    if (body.type === 'tvshow') {
+                        body.start_season = parseInt(formData.get('start_season'));
+                        body.start_episode = parseInt(formData.get('start_episode'));
+                    }
+
                     const response = await fetchWithAuth('/api/v1/media', {
                         method: 'POST',
-                        body: {
-                            type: formData.get('type'),
-                            title: formData.get('title'),
-                            year: parseInt(formData.get('year')),
-                            tmdb_id: parseInt(formData.get('tmdb_id')),
-                            language: formData.get('language'),
-                            min_quality: minQuality,
-                            max_quality: maxQuality,
-                            auto_download: document.getElementById('auto-download-checkbox').checked,
-                        }
+                        body: body
                     });
                     
                     if (response.ok) {
@@ -389,7 +410,6 @@
                         statusEl.style.color = 'var(--success-color)';
                         e.target.reset();
                         document.getElementById('metadata-results').innerHTML = '';
-                        loadMedia(); // Refresh media list
                     } else {
                         const error = await response.json();
                         throw new Error(error.error || 'Failed to add media');
@@ -432,7 +452,7 @@
                 }
                 
                 container.innerHTML = results.map(item => `
-                    <div class="search-result" onclick="selectMetadataItem(${JSON.stringify(item).replace(/"/g, '&quot;')})">
+                    <div class="search-result" onclick="selectMetadataItem(this, ${JSON.stringify(item).replace(/"/g, '&quot;')})">
                         ${item.poster_url ? `<img src="${item.poster_url}" alt="${item.title}">` : '<div style="width:60px;height:90px;background:var(--border-color);border-radius:4px;"></div>'}
                         <div class="search-result-info">
                             <div class="search-result-title">${item.title}</div>
@@ -442,13 +462,42 @@
                 `).join('');
             }
 
-            window.selectMetadataItem = function(item) {
+            window.selectMetadataItem = function(element, item) {
                 document.getElementById('title-input').value = item.title;
                 document.getElementById('year-input').value = item.year;
-                document.getElementById('tmdb-id-input').value = item.id;
-                document.getElementById('tmdb-input-display').value = item.id;
+                document.getElementById('id-input').value = item.id;
                 document.getElementById('metadata-results').innerHTML = '';
+
+                if (mediaTypeSelect.value === 'tvshow') {
+                    populateTVEpisodeSelectors(item.seasons);
+                }
             };
+            
+            function populateTVEpisodeSelectors(seasons) {
+                const seasonSelect = document.getElementById('start-season-select');
+                const episodeSelect = document.getElementById('start-episode-select');
+                seasonSelect.innerHTML = '';
+                episodeSelect.innerHTML = '';
+
+                const seasonNumbers = Object.keys(seasons).map(Number).sort((a,b) => a - b);
+                
+                for (const seasonNum of seasonNumbers) {
+                    seasonSelect.innerHTML += `<option value="${seasonNum}">Season ${seasonNum}</option>`;
+                }
+                
+                function updateEpisodes() {
+                    const selectedSeason = seasonSelect.value;
+                    episodeSelect.innerHTML = '';
+                    if (seasons[selectedSeason]) {
+                        seasons[selectedSeason].forEach(ep => {
+                            episodeSelect.innerHTML += `<option value="${ep.episode_number}">Episode ${ep.episode_number} - ${ep.title}</option>`;
+                        });
+                    }
+                }
+                
+                seasonSelect.addEventListener('change', updateEpisodes);
+                updateEpisodes();
+            }
 
             async function checkSystemStatus() {
                 try {
@@ -480,39 +529,75 @@
             }
 
             function renderMediaGrid() {
+                if (!state.allMedia) {
+                    mediaGrid.innerHTML = '<p style="text-align:center; padding:2rem; color:#aaa;">Loading media...</p>';
+                    return
+                }
+
                 if (state.filteredMedia.length === 0) {
                     mediaGrid.innerHTML = '<p style="text-align:center; padding:2rem; color:#aaa;">No media found. Add some media to get started!</p>';
                     return;
                 }
                 
-                mediaGrid.innerHTML = state.filteredMedia.map(media => {
-                    const progressWidth = media.status === 'downloading' ? (media.progress * 100) : 0;
-                    
-                    return `
-                        <div class="media-card" onclick="showMediaDetails(${media.id})">
-                            <div class="media-poster" style="${media.poster_url ? `background-image: url('${media.poster_url}')` : ''}"></div>
-                            <div class="media-info">
-                                <div class="media-title">${media.title}</div>
-                                <div class="media-meta">${media.year} • ${media.language.toUpperCase()} • ${media.min_quality}-${media.max_quality}</div>
-                                <span class="media-status status-${media.status}">${media.status}</span>
-                                ${media.status === 'downloading' ? `
-                                    <div class="progress-bar">
-                                        <div class="progress-fill" style="width: ${progressWidth}%"></div>
-                                    </div>
-                                    <div style="font-size: 0.8rem; margin-top: 0.25rem;">${Math.round(progressWidth)}%</div>
-                                ` : ''}
-                            </div>
+                mediaGrid.innerHTML = state.filteredMedia.map(media => `
+                    <div class="media-card" data-media-id="${media.id}">
+                        <div class="media-poster" style="${media.poster_url ? `background-image: url('${media.poster_url}')` : ''}"></div>
+                        <div class="media-info">
+                            <div class="media-title">${media.title}</div>
+                            <div class="media-meta">${media.year} • ${media.type.charAt(0).toUpperCase() + media.type.slice(1)}</div>
+                            <span class="media-status status-${media.status}">${media.status}</span>
+                            ${media.status === 'downloading' ? `
+                                <div class="progress-bar">
+                                    <div class="progress-fill" style="width: ${media.progress * 100}%"></div>
+                                </div>
+                                <div style="font-size: 0.8rem; margin-top: 0.25rem;">${Math.round(media.progress * 100)}%</div>
+                            ` : ''}
                         </div>
-                    `;
-                }).join('');
+                    </div>
+                `).join('');
+
+                // Add event listeners after rendering
+                document.querySelectorAll('.media-card').forEach(card => {
+                    card.addEventListener('click', () => {
+                        const mediaId = card.dataset.mediaId;
+                        showMediaDetails(parseInt(mediaId));
+                    });
+                });
             }
 
-            window.showMediaDetails = function(mediaId) {
+            async function showMediaDetails(mediaId) {
                 const media = state.allMedia.find(m => m.id === mediaId);
                 if (!media) return;
                 
                 const modal = document.getElementById('media-modal');
                 const content = document.getElementById('media-detail-content');
+                content.innerHTML = '<h2>Loading...</h2>';
+                modal.style.display = 'flex';
+
+                let tvShowDetailsHtml = '';
+                if (media.type === 'tvshow') {
+                    const response = await fetchWithAuth(`/api/v1/media/${mediaId}/tv-details`);
+                    if (response.ok) {
+                        const show = await response.json();
+                        tvShowDetailsHtml = `
+                            <h4>Seasons</h4>
+                            ${show.seasons.map(season => `
+                                <details class="season-details">
+                                    <summary>Season ${season.season_number} <button onclick="manualSeasonSearch(${media.id}, ${season.season_number})" class="secondary" style="font-size: 0.8rem; padding: 0.2rem 0.4rem; float: right;">Search Pack</button></summary>
+                                    <div class="episode-list">
+                                        ${season.episodes.map(ep => `
+                                            <div class="episode-item">
+                                                <span>${ep.episode_number}. ${ep.title}</span>
+                                                <span class="media-status status-${ep.status}">${ep.status}</span>
+                                                <button onclick="manualEpisodeSearch(${media.id}, ${season.season_number}, ${ep.episode_number})" class="secondary" style="font-size: 0.8rem; padding: 0.2rem 0.4rem;">🔍</button>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                </details>
+                            `).join('')}
+                        `;
+                    }
+                }
                 
                 content.innerHTML = `
                     <h2>${media.title} (${media.year})</h2>
@@ -529,21 +614,19 @@
                                 </div>
                                 <p><strong>Progress:</strong> ${Math.round(media.progress * 100)}%</p>
                             ` : ''}
-                            ${media.tmdb_id ? `<p><strong>TMDB:</strong> <a href="https://www.themoviedb.org/movie/${media.tmdb_id}" target="_blank">${media.tmdb_id}</a></p>` : ''}
+                            ${media.tmdb_id ? `<p><strong>TMDB/TVmaze ID:</strong> ${media.tmdb_id}</p>` : ''}
                             ${media.torrent_name ? `<p><strong>Torrent:</strong> ${media.torrent_name}</p>` : ''}
                             <p><strong>Added:</strong> ${new Date(media.added_at).toLocaleString()}</p>
                             ${media.completed_at ? `<p><strong>Completed:</strong> ${new Date(media.completed_at).toLocaleString()}</p>` : ''}
                         </div>
                     </div>
-                    ${media.overview ? `<p><strong>Overview:</strong></p><p>${media.overview}</p>` : ''}
+                    ${media.overview ? `<p><strong>Overview:</strong></p><div style="max-height: 100px; overflow-y: auto;">${media.overview}</div>` : ''}
+                    ${tvShowDetailsHtml}
                     <div style="display: flex; gap: 1rem; margin-top: 2rem;">
                         ${media.status === 'failed' || media.status === 'pending' ? `<button onclick="retryMedia(${media.id})">🔄 Retry</button>` : ''}
-                        <button onclick="manualSearch(${media.id})">🔍 Manual Search</button>
                         <button onclick="deleteMedia(${media.id})" class="danger">🗑️ Delete</button>
                     </div>
                 `;
-                
-                modal.style.display = 'flex';
             };
 
             window.retryMedia = async function(mediaId) {
@@ -573,77 +656,12 @@
                 }
             };
 
-            window.manualSearch = async function(mediaId) {
-                const content = document.getElementById('media-detail-content');
-                content.innerHTML = '<h2>Searching for torrents...</h2>';
-                
-                try {
-                    const response = await fetchWithAuth(`/api/v1/media/${mediaId}/search`);
-                    if (response.ok) {
-                        const results = await response.json();
-                        displayManualSearchResults(mediaId, results);
-                    } else {
-                        throw new Error('Search failed');
-                    }
-                } catch (error) {
-                    content.innerHTML = `<h2 style="color:var(--error-color)">${error.message}</h2>`;
-                }
+            window.manualEpisodeSearch = function(mediaId, season, episode) {
+                alert(`Manual search for episode S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')} is not implemented yet.`);
             };
 
-            function formatBytes(bytes, decimals = 2) {
-                if (bytes === 0) return '0 Bytes';
-                const k = 1024;
-                const dm = decimals < 0 ? 0 : decimals;
-                const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
-                const i = Math.floor(Math.log(bytes) / Math.log(k));
-                return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
-            }
-
-            function displayManualSearchResults(mediaId, results) {
-                const content = document.getElementById('media-detail-content');
-                if (results.length === 0) {
-                    content.innerHTML = '<h2>No results found</h2>';
-                    return;
-                }
-                
-                const resultsHtml = results.map(r => `
-                    <div class="manual-search-result">
-                        <div class="manual-search-title" title="${r.Title}">${r.Title}</div>
-                        <div><strong>${formatBytes(r.Size)}</strong></div>
-                        <div><strong>${r.Score}</strong></div>
-                        <div><strong>${r.Seeders}</strong></div>
-                        <div><strong>${r.Leechers}</strong></div>
-                        <button onclick='startManualDownload(${mediaId}, ${JSON.stringify(r).replace(/"/g, "&quot;")})'>Download</button>
-                    </div>
-                `).join('');
-                
-                content.innerHTML = `
-                    <h2>Manual Search Results</h2>
-                    <div style="font-size:0.8rem; margin-bottom:1rem; display:grid; grid-template-columns: 1fr auto auto auto auto auto; gap: 1rem; padding: 0.75rem;">
-                        <strong>Title</strong><strong>Size</strong><strong>Score</strong><strong>Seeders</strong><strong>Leechers</strong><strong>Link</strong><span></span>
-                    </div>
-                    ${resultsHtml}
-                `;
-            }
-
-            window.startManualDownload = async function(mediaId, result) {
-                const content = document.getElementById('media-detail-content');
-                content.innerHTML = '<h2>Sending to download client...</h2>';
-
-                try {
-                    const response = await fetchWithAuth(`/api/v1/media/${mediaId}/download`, {
-                        method: 'POST',
-                        body: result
-                    });
-                    if (response.ok) {
-                        document.getElementById('media-modal').style.display = 'none';
-                        loadMedia();
-                    } else {
-                        throw new Error('Failed to start download');
-                    }
-                } catch (error) {
-                     content.innerHTML = `<h2 style="color:var(--error-color)">${error.message}</h2>`;
-                }
+            window.manualSeasonSearch = function(mediaId, season) {
+                alert(`Manual search for season ${season} pack is not implemented yet.`);
             };
 
             // Settings page functionality

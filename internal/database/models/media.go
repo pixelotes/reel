@@ -27,7 +27,7 @@ type Media struct {
 	ID           int         `json:"id" db:"id"`
 	Type         MediaType   `json:"type" db:"type"`
 	IMDBId       string      `json:"imdb_id,omitempty" db:"imdb_id"`
-	TMDBId       *int        `json:"tmdb_id" db:"tm_db_id"`
+	TMDBId       *int        `json:"tmdb_id,omitempty" db:"tmdb_id"`
 	TVShowID     *int        `json:"tv_show_id,omitempty" db:"tv_show_id"`
 	Title        string      `json:"title" db:"title"`
 	Year         int         `json:"year" db:"year"`
@@ -97,6 +97,59 @@ func (r *MediaRepository) Create(media *Media) error {
 	return nil
 }
 
+func scanMedia(row interface {
+	Scan(dest ...interface{}) error
+}) (*Media, error) {
+	var m Media
+	var tmdbID, tvShowID sql.NullInt64
+	var imdbID, torrentHash, torrentName, downloadPath, overview, posterURL sql.NullString
+	var completedAt sql.NullTime
+	var rating sql.NullFloat64
+
+	err := row.Scan(&m.ID, &m.Type, &imdbID, &tmdbID, &m.Title, &m.Year, &m.Language,
+		&m.MinQuality, &m.MaxQuality, &m.Status, &torrentHash, &torrentName,
+		&downloadPath, &m.Progress, &m.AddedAt, &completedAt,
+		&overview, &posterURL, &rating, &m.AutoDownload, &tvShowID)
+	if err != nil {
+		return nil, err
+	}
+
+	if imdbID.Valid {
+		m.IMDBId = imdbID.String
+	}
+	if tmdbID.Valid {
+		val := int(tmdbID.Int64)
+		m.TMDBId = &val
+	}
+	if tvShowID.Valid {
+		val := int(tvShowID.Int64)
+		m.TVShowID = &val
+	}
+	if torrentHash.Valid {
+		m.TorrentHash = &torrentHash.String
+	}
+	if torrentName.Valid {
+		m.TorrentName = &torrentName.String
+	}
+	if downloadPath.Valid {
+		m.DownloadPath = &downloadPath.String
+	}
+	if completedAt.Valid {
+		m.CompletedAt = &completedAt.Time
+	}
+	if overview.Valid {
+		m.Overview = &overview.String
+	}
+	if posterURL.Valid {
+		m.PosterURL = &posterURL.String
+	}
+	if rating.Valid {
+		m.Rating = &rating.Float64
+	}
+
+	return &m, nil
+}
+
 func (r *MediaRepository) GetByID(id int) (*Media, error) {
 	query := `
         SELECT id, type, imdb_id, tmdb_id, title, year, language, min_quality, max_quality,
@@ -105,20 +158,14 @@ func (r *MediaRepository) GetByID(id int) (*Media, error) {
         FROM media WHERE id = ?
     `
 	row := r.db.QueryRow(query, id)
-
-	var m Media
-	err := row.Scan(&m.ID, &m.Type, &m.IMDBId, &m.TMDBId, &m.Title, &m.Year, &m.Language,
-		&m.MinQuality, &m.MaxQuality, &m.Status, &m.TorrentHash, &m.TorrentName,
-		&m.DownloadPath, &m.Progress, &m.AddedAt, &m.CompletedAt,
-		&m.Overview, &m.PosterURL, &m.Rating, &m.AutoDownload, &m.TVShowID)
-
+	media, err := scanMedia(row)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // Return nil if no media found
 		}
 		return nil, err
 	}
-	return &m, nil
+	return media, nil
 }
 
 func (r *MediaRepository) GetAll() ([]Media, error) {
@@ -136,15 +183,11 @@ func (r *MediaRepository) GetAll() ([]Media, error) {
 
 	var mediaList []Media
 	for rows.Next() {
-		var m Media
-		err := rows.Scan(&m.ID, &m.Type, &m.IMDBId, &m.TMDBId, &m.Title, &m.Year, &m.Language,
-			&m.MinQuality, &m.MaxQuality, &m.Status, &m.TorrentHash, &m.TorrentName,
-			&m.DownloadPath, &m.Progress, &m.AddedAt, &m.CompletedAt,
-			&m.Overview, &m.PosterURL, &m.Rating, &m.AutoDownload, &m.TVShowID)
+		media, err := scanMedia(rows)
 		if err != nil {
 			return nil, err
 		}
-		mediaList = append(mediaList, m)
+		mediaList = append(mediaList, *media)
 	}
 	return mediaList, nil
 }
@@ -164,15 +207,11 @@ func (r *MediaRepository) GetByStatus(status MediaStatus) ([]Media, error) {
 
 	var mediaList []Media
 	for rows.Next() {
-		var m Media
-		err := rows.Scan(&m.ID, &m.Type, &m.IMDBId, &m.TMDBId, &m.Title, &m.Year, &m.Language,
-			&m.MinQuality, &m.MaxQuality, &m.Status, &m.TorrentHash, &m.TorrentName,
-			&m.DownloadPath, &m.Progress, &m.AddedAt, &m.CompletedAt,
-			&m.Overview, &m.PosterURL, &m.Rating, &m.AutoDownload, &m.TVShowID)
+		media, err := scanMedia(rows)
 		if err != nil {
 			return nil, err
 		}
-		mediaList = append(mediaList, m)
+		mediaList = append(mediaList, *media)
 	}
 	return mediaList, nil
 }
