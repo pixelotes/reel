@@ -329,39 +329,54 @@ func (r *MediaRepository) GetTVShowByMediaID(mediaID int) (*TVShow, error) {
 		return nil, err
 	}
 
-	// Get seasons
+	// Get all seasons first (collect into slice)
 	seasonRows, err := r.db.Query("SELECT id, season_number FROM seasons WHERE show_id = ? ORDER BY season_number", show.ID)
 	if err != nil {
 		return nil, err
 	}
-	defer seasonRows.Close()
+
+	type seasonData struct {
+		ID           int
+		SeasonNumber int
+	}
+	var seasons []seasonData
 
 	for seasonRows.Next() {
-		var s Season
-		s.ShowID = show.ID
+		var s seasonData
 		if err := seasonRows.Scan(&s.ID, &s.SeasonNumber); err != nil {
+			seasonRows.Close()
 			return nil, err
 		}
+		seasons = append(seasons, s)
+	}
+	seasonRows.Close() // Close before starting new queries
 
-		// Get episodes for each season
-		episodeRows, err := r.db.Query("SELECT id, episode_number, title, air_date, status FROM episodes WHERE season_id = ? ORDER BY episode_number", s.ID)
+	// Now process each season
+	for _, seasonInfo := range seasons {
+		season := Season{
+			ID:           seasonInfo.ID,
+			ShowID:       show.ID,
+			SeasonNumber: seasonInfo.SeasonNumber,
+		}
+
+		// Get episodes for this season
+		episodeRows, err := r.db.Query("SELECT id, episode_number, title, air_date, status FROM episodes WHERE season_id = ? ORDER BY episode_number", season.ID)
 		if err != nil {
 			return nil, err
 		}
 
 		for episodeRows.Next() {
 			var e Episode
-			e.SeasonID = s.ID
+			e.SeasonID = season.ID
 			if err := episodeRows.Scan(&e.ID, &e.EpisodeNumber, &e.Title, &e.AirDate, &e.Status); err != nil {
-				episodeRows.Close() // Ensure closure on scan error
+				episodeRows.Close()
 				return nil, err
 			}
-			s.Episodes = append(s.Episodes, e)
+			season.Episodes = append(season.Episodes, e)
 		}
-		// This is the critical fix: Close the inner loop's rows explicitly.
 		episodeRows.Close()
 
-		show.Seasons = append(show.Seasons, s)
+		show.Seasons = append(show.Seasons, season)
 	}
 
 	return &show, nil
