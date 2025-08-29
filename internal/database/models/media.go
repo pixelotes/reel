@@ -20,13 +20,15 @@ const (
 	StatusDownloading MediaStatus = "downloading"
 	StatusDownloaded  MediaStatus = "downloaded"
 	StatusFailed      MediaStatus = "failed"
+	StatusSkipped     MediaStatus = "skipped"
 )
 
 type Media struct {
 	ID           int         `json:"id" db:"id"`
 	Type         MediaType   `json:"type" db:"type"`
 	IMDBId       string      `json:"imdb_id,omitempty" db:"imdb_id"`
-	TMDBId       *int        `json:"tmdb_id" db:"tmdb_id"`
+	TMDBId       *int        `json:"tmdb_id" db:"tm_db_id"`
+	TVShowID     *int        `json:"tv_show_id,omitempty" db:"tv_show_id"`
 	Title        string      `json:"title" db:"title"`
 	Year         int         `json:"year" db:"year"`
 	Language     string      `json:"language" db:"language"`
@@ -45,6 +47,29 @@ type Media struct {
 	AutoDownload bool        `json:"auto_download" db:"auto_download"`
 }
 
+type TVShow struct {
+	ID       int      `json:"id"`
+	Status   string   `json:"status"`
+	TVmazeID string   `json:"tvmaze_id"`
+	Seasons  []Season `json:"seasons"`
+}
+
+type Season struct {
+	ID           int       `json:"id"`
+	ShowID       int       `json:"show_id"`
+	SeasonNumber int       `json:"season_number"`
+	Episodes     []Episode `json:"episodes"`
+}
+
+type Episode struct {
+	ID            int         `json:"id"`
+	SeasonID      int         `json:"season_id"`
+	EpisodeNumber int         `json:"episode_number"`
+	Title         string      `json:"title"`
+	AirDate       string      `json:"air_date"`
+	Status        MediaStatus `json:"status"`
+}
+
 type MediaRepository struct {
 	db *sql.DB
 }
@@ -56,12 +81,12 @@ func NewMediaRepository(db *sql.DB) *MediaRepository {
 func (r *MediaRepository) Create(media *Media) error {
 	query := `
         INSERT INTO media (type, imdb_id, tmdb_id, title, year, language, min_quality, max_quality, 
-                          status, overview, poster_url, rating, auto_download)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          status, overview, poster_url, rating, auto_download, tv_show_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
 	result, err := r.db.Exec(query, media.Type, media.IMDBId, media.TMDBId, media.Title,
 		media.Year, media.Language, media.MinQuality, media.MaxQuality, media.Status,
-		media.Overview, media.PosterURL, media.Rating, media.AutoDownload)
+		media.Overview, media.PosterURL, media.Rating, media.AutoDownload, media.TVShowID)
 	if err != nil {
 		return err
 	}
@@ -76,7 +101,7 @@ func (r *MediaRepository) GetByID(id int) (*Media, error) {
 	query := `
         SELECT id, type, imdb_id, tmdb_id, title, year, language, min_quality, max_quality,
                status, torrent_hash, torrent_name, download_path, progress, added_at, completed_at,
-               overview, poster_url, rating, auto_download
+               overview, poster_url, rating, auto_download, tv_show_id
         FROM media WHERE id = ?
     `
 	row := r.db.QueryRow(query, id)
@@ -85,7 +110,7 @@ func (r *MediaRepository) GetByID(id int) (*Media, error) {
 	err := row.Scan(&m.ID, &m.Type, &m.IMDBId, &m.TMDBId, &m.Title, &m.Year, &m.Language,
 		&m.MinQuality, &m.MaxQuality, &m.Status, &m.TorrentHash, &m.TorrentName,
 		&m.DownloadPath, &m.Progress, &m.AddedAt, &m.CompletedAt,
-		&m.Overview, &m.PosterURL, &m.Rating, &m.AutoDownload)
+		&m.Overview, &m.PosterURL, &m.Rating, &m.AutoDownload, &m.TVShowID)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -100,7 +125,7 @@ func (r *MediaRepository) GetAll() ([]Media, error) {
 	query := `
         SELECT id, type, imdb_id, tmdb_id, title, year, language, min_quality, max_quality,
                status, torrent_hash, torrent_name, download_path, progress, added_at, completed_at,
-               overview, poster_url, rating, auto_download
+               overview, poster_url, rating, auto_download, tv_show_id
         FROM media ORDER BY added_at DESC
     `
 	rows, err := r.db.Query(query)
@@ -115,7 +140,7 @@ func (r *MediaRepository) GetAll() ([]Media, error) {
 		err := rows.Scan(&m.ID, &m.Type, &m.IMDBId, &m.TMDBId, &m.Title, &m.Year, &m.Language,
 			&m.MinQuality, &m.MaxQuality, &m.Status, &m.TorrentHash, &m.TorrentName,
 			&m.DownloadPath, &m.Progress, &m.AddedAt, &m.CompletedAt,
-			&m.Overview, &m.PosterURL, &m.Rating, &m.AutoDownload)
+			&m.Overview, &m.PosterURL, &m.Rating, &m.AutoDownload, &m.TVShowID)
 		if err != nil {
 			return nil, err
 		}
@@ -128,7 +153,7 @@ func (r *MediaRepository) GetByStatus(status MediaStatus) ([]Media, error) {
 	query := `
         SELECT id, type, imdb_id, tmdb_id, title, year, language, min_quality, max_quality,
                status, torrent_hash, torrent_name, download_path, progress, added_at, completed_at,
-               overview, poster_url, rating, auto_download
+               overview, poster_url, rating, auto_download, tv_show_id
         FROM media WHERE status = ? ORDER BY added_at DESC
     `
 	rows, err := r.db.Query(query, status)
@@ -143,7 +168,7 @@ func (r *MediaRepository) GetByStatus(status MediaStatus) ([]Media, error) {
 		err := rows.Scan(&m.ID, &m.Type, &m.IMDBId, &m.TMDBId, &m.Title, &m.Year, &m.Language,
 			&m.MinQuality, &m.MaxQuality, &m.Status, &m.TorrentHash, &m.TorrentName,
 			&m.DownloadPath, &m.Progress, &m.AddedAt, &m.CompletedAt,
-			&m.Overview, &m.PosterURL, &m.Rating, &m.AutoDownload)
+			&m.Overview, &m.PosterURL, &m.Rating, &m.AutoDownload, &m.TVShowID)
 		if err != nil {
 			return nil, err
 		}
@@ -173,4 +198,87 @@ func (r *MediaRepository) UpdateProgress(id int, status MediaStatus, progress fl
 func (r *MediaRepository) Delete(id int) error {
 	_, err := r.db.Exec("DELETE FROM media WHERE id = ?", id)
 	return err
+}
+
+// --- TV Show Specific Functions ---
+
+func (r *MediaRepository) CreateTVShow(show *TVShow) error {
+	res, err := r.db.Exec("INSERT INTO tv_shows (status, tvmaze_id) VALUES (?, ?)", show.Status, show.TVmazeID)
+	if err != nil {
+		return err
+	}
+	id, _ := res.LastInsertId()
+	show.ID = int(id)
+	return nil
+}
+
+func (r *MediaRepository) CreateSeason(season *Season) error {
+	res, err := r.db.Exec("INSERT INTO seasons (show_id, season_number) VALUES (?, ?)", season.ShowID, season.SeasonNumber)
+	if err != nil {
+		return err
+	}
+	id, _ := res.LastInsertId()
+	season.ID = int(id)
+	return nil
+}
+
+func (r *MediaRepository) CreateEpisode(episode *Episode) error {
+	res, err := r.db.Exec("INSERT INTO episodes (season_id, episode_number, title, air_date, status) VALUES (?, ?, ?, ?, ?)",
+		episode.SeasonID, episode.EpisodeNumber, episode.Title, episode.AirDate, episode.Status)
+	if err != nil {
+		return err
+	}
+	id, _ := res.LastInsertId()
+	episode.ID = int(id)
+	return nil
+}
+
+func (r *MediaRepository) GetTVShowByMediaID(mediaID int) (*TVShow, error) {
+	var show TVShow
+	// First, get the tv_show_id from the media table
+	var tvShowID int
+	err := r.db.QueryRow("SELECT tv_show_id FROM media WHERE id = ?", mediaID).Scan(&tvShowID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Now get the show details
+	err = r.db.QueryRow("SELECT id, status, tvmaze_id FROM tv_shows WHERE id = ?", tvShowID).Scan(&show.ID, &show.Status, &show.TVmazeID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get seasons
+	rows, err := r.db.Query("SELECT id, season_number FROM seasons WHERE show_id = ? ORDER BY season_number", show.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var s Season
+		s.ShowID = show.ID
+		if err := rows.Scan(&s.ID, &s.SeasonNumber); err != nil {
+			return nil, err
+		}
+
+		// Get episodes for each season
+		eRows, err := r.db.Query("SELECT id, episode_number, title, air_date, status FROM episodes WHERE season_id = ? ORDER BY episode_number", s.ID)
+		if err != nil {
+			return nil, err
+		}
+		defer eRows.Close()
+
+		for eRows.Next() {
+			var e Episode
+			e.SeasonID = s.ID
+			if err := eRows.Scan(&e.ID, &e.EpisodeNumber, &e.Title, &e.AirDate, &e.Status); err != nil {
+				return nil, err
+			}
+			s.Episodes = append(s.Episodes, e)
+		}
+		show.Seasons = append(show.Seasons, s)
+	}
+
+	return &show, nil
 }
