@@ -42,6 +42,7 @@ type Media struct {
 	Overview     *string     `json:"overview,omitempty" db:"overview"`
 	PosterURL    *string     `json:"poster_url,omitempty" db:"poster_url"`
 	Rating       *float64    `json:"rating,omitempty" db:"rating"`
+	AutoDownload bool        `json:"auto_download" db:"auto_download"`
 }
 
 type MediaRepository struct {

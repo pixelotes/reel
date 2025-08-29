@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS media (
     completed_at DATETIME,
     overview TEXT,
     poster_url TEXT,
-    rating REAL
+    rating REAL,
+    auto_download BOOLEAN DEFAULT TRUE
 );
 
 -- Use tmdb_id for the unique constraint

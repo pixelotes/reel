@@ -67,13 +67,14 @@ func (h *APIHandler) GetMedia(w http.ResponseWriter, r *http.Request) {
 // Add new media
 func (h *APIHandler) AddMedia(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Type       string `json:"type"`
-		Title      string `json:"title"`
-		Year       int    `json:"year"`
-		TMDBId     int    `json:"tmdb_id"` // Changed from IMDBId
-		Language   string `json:"language"`
-		MinQuality string `json:"min_quality"`
-		MaxQuality string `json:"max_quality"`
+		Type         string `json:"type"`
+		Title        string `json:"title"`
+		Year         int    `json:"year"`
+		TMDBId       int    `json:"tmdb_id"`
+		Language     string `json:"language"`
+		MinQuality   string `json:"min_quality"`
+		MaxQuality   string `json:"max_quality"`
+		AutoDownload bool   `json:"auto_download"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -82,9 +83,8 @@ func (h *APIHandler) AddMedia(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mediaType := models.MediaType(req.Type)
-	// Pass TMDBId to the manager
 	media, err := h.manager.AddMedia(mediaType, req.TMDBId, req.Title, req.Year,
-		req.Language, req.MinQuality, req.MaxQuality)
+		req.Language, req.MinQuality, req.MaxQuality, req.AutoDownload)
 	if err != nil {
 		h.logger.Error("Failed to add media:", err)
 		respondError(w, http.StatusBadRequest, err.Error())

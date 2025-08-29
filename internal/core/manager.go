@@ -120,7 +120,7 @@ func (m *Manager) startSearchQueueWorker() {
 	}
 }
 
-func (m *Manager) AddMedia(mediaType models.MediaType, tmdbID int, title string, year int, language, minQuality, maxQuality string) (*models.Media, error) {
+func (m *Manager) AddMedia(mediaType models.MediaType, tmdbID int, title string, year int, language, minQuality, maxQuality string, autoDownload bool) (*models.Media, error) {
 	var overview, posterURL *string
 	var rating *float64
 
@@ -142,25 +142,30 @@ func (m *Manager) AddMedia(mediaType models.MediaType, tmdbID int, title string,
 	}
 
 	media := &models.Media{
-		Type:       mediaType,
-		TMDBId:     &tmdbID,
-		Title:      title,
-		Year:       year,
-		Language:   language,
-		MinQuality: minQuality,
-		MaxQuality: maxQuality,
-		Status:     models.StatusPending,
-		Overview:   overview,
-		PosterURL:  posterURL,
-		Rating:     rating,
+		Type:         mediaType,
+		TMDBId:       &tmdbID,
+		Title:        title,
+		Year:         year,
+		Language:     language,
+		MinQuality:   minQuality,
+		MaxQuality:   maxQuality,
+		Status:       models.StatusPending,
+		Overview:     overview,
+		PosterURL:    posterURL,
+		Rating:       rating,
+		AutoDownload: autoDownload,
 	}
 
 	if err := m.mediaRepo.Create(media); err != nil {
 		return nil, fmt.Errorf("failed to create media: %w", err)
 	}
 
-	m.logger.Info("Added new media:", media.Title, ". It will be searched for shortly.")
-	// The scheduler will automatically pick up this "pending" media
+	m.logger.Info("Added new media:", media.Title)
+	if autoDownload {
+		m.logger.Info("It will be searched for shortly.")
+		m.searchQueue <- media
+	}
+
 	return media, nil
 }
 
@@ -242,6 +247,12 @@ func (m *Manager) selectBestTorrent(results []indexers.IndexerResult) *indexers.
 	})
 
 	bestTorrent := eligibleTorrents[0]
+	m.logger.Info(fmt.Sprintf("🏆 Best torrent found: %s (Score: %d)", bestTorrent.Title, bestTorrent.Score))
+
+	for i := 1; i < len(eligibleTorrents) && i < 3; i++ {
+		m.logger.Info(fmt.Sprintf("  - Runner-up: %s (Score: %d)", eligibleTorrents[i].Title, eligibleTorrents[i].Score))
+	}
+
 	return &bestTorrent
 }
 
@@ -271,16 +282,40 @@ func (m *Manager) processPendingMedia() {
 	}
 
 	if len(pendingMedia) > 0 {
-		m.logger.Info(fmt.Sprintf("Adding %d pending media items to the search queue.", len(pendingMedia)))
+		m.logger.Info(fmt.Sprintf("Processing %d pending media items.", len(pendingMedia)))
 		for i := range pendingMedia {
-			mediaCopy := pendingMedia[i]
-			m.searchQueue <- &mediaCopy
+			if pendingMedia[i].AutoDownload {
+				mediaCopy := pendingMedia[i]
+				m.searchQueue <- &mediaCopy
+			}
 		}
 	}
 }
 
 func (m *Manager) updateDownloadStatus() {
-	// Logic for monitoring downloads will go here in the next step
+	downloadingMedia, err := m.mediaRepo.GetByStatus(models.StatusDownloading)
+	if err != nil {
+		m.logger.Error("Failed to get downloading media:", err)
+		return
+	}
+
+	for _, media := range downloadingMedia {
+		if media.TorrentHash != nil {
+			status, err := m.torrentClient.GetTorrentStatus(*media.TorrentHash)
+			if err != nil {
+				m.logger.Error("Failed to get torrent status for", media.Title, ":", err)
+				continue
+			}
+
+			media.Progress = status.Progress
+			if status.IsCompleted {
+				media.Status = models.StatusDownloaded
+				now := time.Now()
+				media.CompletedAt = &now
+			}
+			m.mediaRepo.Update(&media)
+		}
+	}
 }
 
 func (m *Manager) DeleteMedia(id int) error {
