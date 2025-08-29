@@ -71,11 +71,13 @@ func (h *APIHandler) AddMedia(w http.ResponseWriter, r *http.Request) {
 		Type         string `json:"type"`
 		Title        string `json:"title"`
 		Year         int    `json:"year"`
-		TMDBId       int    `json:"tmdb_id"` // Changed from IMDBId
+		ID           string `json:"id"`
 		Language     string `json:"language"`
 		MinQuality   string `json:"min_quality"`
 		MaxQuality   string `json:"max_quality"`
 		AutoDownload bool   `json:"auto_download"`
+		StartSeason  int    `json:"start_season"`
+		StartEpisode int    `json:"start_episode"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -84,9 +86,8 @@ func (h *APIHandler) AddMedia(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mediaType := models.MediaType(req.Type)
-	// Pass TMDBId to the manager
-	media, err := h.manager.AddMedia(mediaType, req.TMDBId, req.Title, req.Year,
-		req.Language, req.MinQuality, req.MaxQuality, req.AutoDownload)
+	media, err := h.manager.AddMedia(mediaType, req.ID, req.Title, req.Year,
+		req.Language, req.MinQuality, req.MaxQuality, req.AutoDownload, req.StartSeason, req.StartEpisode)
 	if err != nil {
 		h.logger.Error("Failed to add media:", err)
 		respondError(w, http.StatusBadRequest, err.Error())
@@ -213,6 +214,23 @@ func (h *APIHandler) ManualDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func (h *APIHandler) GetTVShowDetails(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+
+	show, err := h.manager.GetTVShowDetails(id)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, show)
 }
 
 func generateJWTToken(password string) string {
