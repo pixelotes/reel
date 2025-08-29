@@ -2,6 +2,7 @@ package models
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 )
 
@@ -84,16 +85,29 @@ func (r *MediaRepository) Create(media *Media) error {
                           status, overview, poster_url, rating, auto_download, tv_show_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
+
+	fmt.Printf("DEBUG: Creating media - Title: %s, Type: %s, TMDB ID: %v, TV Show ID: %v\n",
+		media.Title, media.Type, media.TMDBId, media.TVShowID)
+
 	result, err := r.db.Exec(query, media.Type, media.IMDBId, media.TMDBId, media.Title,
 		media.Year, media.Language, media.MinQuality, media.MaxQuality, media.Status,
 		media.Overview, media.PosterURL, media.Rating, media.AutoDownload, media.TVShowID)
+
 	if err != nil {
+		fmt.Printf("ERROR: Insert failed: %v\n", err)
+		fmt.Printf("ERROR: Query was: %s\n", query)
+		fmt.Printf("ERROR: Values were: %v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v\n",
+			media.Type, media.IMDBId, media.TMDBId, media.Title, media.Year, media.Language,
+			media.MinQuality, media.MaxQuality, media.Status, media.Overview, media.PosterURL,
+			media.Rating, media.AutoDownload, media.TVShowID)
 		return err
 	}
 
 	id, _ := result.LastInsertId()
 	media.ID = int(id)
 	media.AddedAt = time.Now()
+
+	fmt.Printf("DEBUG: Media created successfully with ID: %d\n", media.ID)
 	return nil
 }
 
@@ -175,20 +189,41 @@ func (r *MediaRepository) GetAll() ([]Media, error) {
                overview, poster_url, rating, auto_download, tv_show_id
         FROM media ORDER BY added_at DESC
     `
+
+	fmt.Printf("DEBUG: Executing GetAll query: %s\n", query)
+
 	rows, err := r.db.Query(query)
 	if err != nil {
+		fmt.Printf("ERROR: Query failed: %v\n", err)
 		return nil, err
 	}
 	defer rows.Close()
 
 	var mediaList []Media
+	rowCount := 0
+
 	for rows.Next() {
+		rowCount++
+		fmt.Printf("DEBUG: Processing row %d\n", rowCount)
+
 		media, err := scanMedia(rows)
 		if err != nil {
+			fmt.Printf("ERROR: Failed to scan row %d: %v\n", rowCount, err)
 			return nil, err
 		}
+
+		fmt.Printf("DEBUG: Scanned media - ID: %d, Title: %s, Type: %s, TV Show ID: %v\n",
+			media.ID, media.Title, media.Type, media.TVShowID)
+
 		mediaList = append(mediaList, *media)
 	}
+
+	if err = rows.Err(); err != nil {
+		fmt.Printf("ERROR: Rows iteration error: %v\n", err)
+		return nil, err
+	}
+
+	fmt.Printf("DEBUG: GetAll returning %d media items\n", len(mediaList))
 	return mediaList, nil
 }
 
@@ -275,47 +310,57 @@ func (r *MediaRepository) CreateEpisode(episode *Episode) error {
 func (r *MediaRepository) GetTVShowByMediaID(mediaID int) (*TVShow, error) {
 	var show TVShow
 	// First, get the tv_show_id from the media table
-	var tvShowID int
+	var tvShowID sql.NullInt64
 	err := r.db.QueryRow("SELECT tv_show_id FROM media WHERE id = ?", mediaID).Scan(&tvShowID)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // No media entry found
+		}
 		return nil, err
 	}
 
+	if !tvShowID.Valid {
+		return nil, nil // Not a TV show, return nil without error
+	}
+
 	// Now get the show details
-	err = r.db.QueryRow("SELECT id, status, tvmaze_id FROM tv_shows WHERE id = ?", tvShowID).Scan(&show.ID, &show.Status, &show.TVmazeID)
+	err = r.db.QueryRow("SELECT id, status, tvmaze_id FROM tv_shows WHERE id = ?", tvShowID.Int64).Scan(&show.ID, &show.Status, &show.TVmazeID)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get seasons
-	rows, err := r.db.Query("SELECT id, season_number FROM seasons WHERE show_id = ? ORDER BY season_number", show.ID)
+	seasonRows, err := r.db.Query("SELECT id, season_number FROM seasons WHERE show_id = ? ORDER BY season_number", show.ID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer seasonRows.Close()
 
-	for rows.Next() {
+	for seasonRows.Next() {
 		var s Season
 		s.ShowID = show.ID
-		if err := rows.Scan(&s.ID, &s.SeasonNumber); err != nil {
+		if err := seasonRows.Scan(&s.ID, &s.SeasonNumber); err != nil {
 			return nil, err
 		}
 
 		// Get episodes for each season
-		eRows, err := r.db.Query("SELECT id, episode_number, title, air_date, status FROM episodes WHERE season_id = ? ORDER BY episode_number", s.ID)
+		episodeRows, err := r.db.Query("SELECT id, episode_number, title, air_date, status FROM episodes WHERE season_id = ? ORDER BY episode_number", s.ID)
 		if err != nil {
 			return nil, err
 		}
-		defer eRows.Close()
 
-		for eRows.Next() {
+		for episodeRows.Next() {
 			var e Episode
 			e.SeasonID = s.ID
-			if err := eRows.Scan(&e.ID, &e.EpisodeNumber, &e.Title, &e.AirDate, &e.Status); err != nil {
+			if err := episodeRows.Scan(&e.ID, &e.EpisodeNumber, &e.Title, &e.AirDate, &e.Status); err != nil {
+				episodeRows.Close() // Ensure closure on scan error
 				return nil, err
 			}
 			s.Episodes = append(s.Episodes, e)
 		}
+		// This is the critical fix: Close the inner loop's rows explicitly.
+		episodeRows.Close()
+
 		show.Seasons = append(show.Seasons, s)
 	}
 

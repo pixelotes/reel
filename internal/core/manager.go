@@ -182,17 +182,37 @@ func (m *Manager) startSearchQueueWorker() {
 }
 
 func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, year int, language, minQuality, maxQuality string, autoDownload bool, startSeason, startEpisode int) (*models.Media, error) {
+	m.logger.Info("=== STARTING AddMedia FUNCTION ===")
+	m.logger.Info("Parameters - Type:", mediaType, "ID:", id, "Title:", title, "Year:", year)
+
 	var overview, posterURL *string
 	var rating *float64
 	var tvShowData *metadata.TVShowResult
+	var metadataID *int
 
+	m.logger.Info("Looking for metadata providers for type:", mediaType)
 	providers := m.metadataClients[mediaType]
+	m.logger.Info("Found", len(providers), "metadata providers")
+
 	if len(providers) > 0 {
 		client := providers[0]
+		m.logger.Info("Using first metadata provider")
+
 		if mediaType == models.MediaTypeMovie {
+			m.logger.Info("Processing movie metadata...")
 			movieData, err := client.SearchMovie(title, year)
-			if err == nil && movieData != nil {
-				id = movieData.ID
+			if err != nil {
+				m.logger.Error("Movie metadata search failed:", err)
+			} else if movieData != nil {
+				m.logger.Info("Movie metadata found - ID:", movieData.ID, "Title:", movieData.Title)
+				// Parse TMDB ID
+				if tmdbID, parseErr := strconv.Atoi(movieData.ID); parseErr == nil {
+					metadataID = &tmdbID
+					m.logger.Info("Parsed TMDB ID:", *metadataID)
+				} else {
+					m.logger.Error("Failed to parse TMDB ID:", movieData.ID, "Error:", parseErr)
+				}
+
 				overview = &movieData.Overview
 				posterURL = &movieData.PosterURL
 				rating = &movieData.Rating
@@ -202,12 +222,18 @@ func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, 
 				if year == 0 {
 					year = movieData.Year
 				}
+				m.logger.Info("Movie data processed successfully")
+			} else {
+				m.logger.Info("No movie metadata found")
 			}
 		} else if mediaType == models.MediaTypeTVShow {
+			m.logger.Info("Processing TV show metadata...")
 			var err error
 			tvShowData, err = client.SearchTVShow(title)
-			if err == nil && tvShowData != nil {
-				id = tvShowData.ID
+			if err != nil {
+				m.logger.Error("TV show metadata search failed:", err)
+			} else if tvShowData != nil {
+				m.logger.Info("TV show metadata found - ID:", tvShowData.ID, "Title:", tvShowData.Title)
 				overview = &tvShowData.Overview
 				posterURL = &tvShowData.PosterURL
 				rating = &tvShowData.Rating
@@ -217,26 +243,39 @@ func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, 
 				if year == 0 {
 					year = tvShowData.Year
 				}
+				m.logger.Info("TV show data processed successfully")
+			} else {
+				m.logger.Info("No TV show metadata found")
 			}
 		}
 	}
 
 	var tvShowID *int
 	if mediaType == models.MediaTypeTVShow && tvShowData != nil {
+		m.logger.Info("Creating TV show database entries...")
 		show := &models.TVShow{
 			Status:   tvShowData.Status,
 			TVmazeID: tvShowData.ID,
 		}
+
+		m.logger.Info("Creating TV show record...")
 		if err := m.mediaRepo.CreateTVShow(show); err != nil {
+			m.logger.Error("CRITICAL: Failed to create TV show:", err)
 			return nil, fmt.Errorf("failed to create tv show: %w", err)
 		}
+		m.logger.Info("TV show created with ID:", show.ID)
 		tvShowID = &show.ID
 
+		m.logger.Info("Creating", len(tvShowData.Seasons), "seasons...")
 		for seasonNum, episodes := range tvShowData.Seasons {
+			m.logger.Info("Creating season", seasonNum, "with", len(episodes), "episodes")
 			season := &models.Season{ShowID: show.ID, SeasonNumber: seasonNum}
 			if err := m.mediaRepo.CreateSeason(season); err != nil {
+				m.logger.Error("CRITICAL: Failed to create season:", seasonNum, "Error:", err)
 				return nil, fmt.Errorf("failed to create season: %w", err)
 			}
+			m.logger.Info("Season", seasonNum, "created with ID:", season.ID)
+
 			for _, ep := range episodes {
 				status := models.StatusPending
 				if seasonNum < startSeason || (seasonNum == startSeason && ep.EpisodeNumber < startEpisode) {
@@ -250,16 +289,18 @@ func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, 
 					Status:        status,
 				}
 				if err := m.mediaRepo.CreateEpisode(episode); err != nil {
+					m.logger.Error("CRITICAL: Failed to create episode:", ep.EpisodeNumber, "Error:", err)
 					return nil, fmt.Errorf("failed to create episode: %w", err)
 				}
 			}
 		}
+		m.logger.Info("All TV show data created successfully")
 	}
 
-	tmdbID, _ := strconv.Atoi(id)
+	m.logger.Info("Creating main media record...")
 	media := &models.Media{
 		Type:         mediaType,
-		TMDBId:       &tmdbID,
+		TMDBId:       metadataID,
 		TVShowID:     tvShowID,
 		Title:        title,
 		Year:         year,
@@ -273,16 +314,28 @@ func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, 
 		AutoDownload: autoDownload,
 	}
 
+	m.logger.Info("About to create media record - TMDB ID:", metadataID, "TV Show ID:", tvShowID)
+
 	if err := m.mediaRepo.Create(media); err != nil {
+		m.logger.Error("CRITICAL: Failed to create media entry:", err)
+		m.logger.Error("Media details - Title:", media.Title, "Type:", media.Type, "TMDB ID:", media.TMDBId, "TV Show ID:", media.TVShowID)
 		return nil, fmt.Errorf("failed to create media: %w", err)
 	}
 
-	m.logger.Info("Added new media:", media.Title)
+	m.logger.Info("=== MEDIA CREATED SUCCESSFULLY ===")
+	m.logger.Info("Media ID:", media.ID, "Title:", media.Title, "Type:", media.Type)
+
 	if autoDownload {
-		m.logger.Info("It will be searched for shortly.")
-		m.searchQueue <- *media
+		m.logger.Info("Adding to search queue...")
+		select {
+		case m.searchQueue <- *media:
+			m.logger.Info("Added to search queue successfully")
+		default:
+			m.logger.Error("Search queue is full!")
+		}
 	}
 
+	m.logger.Info("=== AddMedia FUNCTION COMPLETED ===")
 	return media, nil
 }
 
@@ -398,7 +451,16 @@ func (m *Manager) selectBestTorrent(media *models.Media, results []indexers.Inde
 }
 
 func (m *Manager) GetAllMedia() ([]models.Media, error) {
-	return m.mediaRepo.GetAll()
+	m.logger.Info("=== Manager.GetAllMedia called ===")
+
+	result, err := m.mediaRepo.GetAll()
+	if err != nil {
+		m.logger.Error("Manager.GetAllMedia: Repository error:", err)
+		return nil, err
+	}
+
+	m.logger.Info("Manager.GetAllMedia: Retrieved", len(result), "items from repository")
+	return result, nil
 }
 
 func (m *Manager) StartScheduler() {

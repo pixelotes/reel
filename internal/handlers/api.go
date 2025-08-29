@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"reel/internal/clients/indexers"
 	"reel/internal/core"
@@ -56,13 +57,24 @@ func (h *APIHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 // Get all media
 func (h *APIHandler) GetMedia(w http.ResponseWriter, r *http.Request) {
+	h.logger.Info("=== GetMedia API called ===")
+
 	media, err := h.manager.GetAllMedia()
 	if err != nil {
+		h.logger.Error("CRITICAL: Failed to fetch media from manager:", err)
 		respondError(w, http.StatusInternalServerError, "Failed to fetch media")
 		return
 	}
 
+	h.logger.Info("GetMedia: Retrieved", len(media), "media items from manager")
+
+	// Log each media item for debugging
+	for i, m := range media {
+		h.logger.Info("Media", i, "- ID:", m.ID, "Title:", m.Title, "Type:", m.Type, "TV Show ID:", m.TVShowID)
+	}
+
 	respondJSON(w, http.StatusOK, media)
+	h.logger.Info("GetMedia: Response sent successfully")
 }
 
 // Add new media
@@ -81,19 +93,45 @@ func (h *APIHandler) AddMedia(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error("Failed to decode add media request:", err)
 		respondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
+	// Log the request for debugging
+	h.logger.Info("Adding media request:", req.Type, req.Title, req.Year)
+
+	// Validate required fields
+	if req.Type == "" || req.Title == "" {
+		h.logger.Error("Missing required fields - Type:", req.Type, "Title:", req.Title)
+		respondError(w, http.StatusBadRequest, "Type and Title are required")
+		return
+	}
+
 	mediaType := models.MediaType(req.Type)
+
+	// Add detailed logging before the database operation
+	h.logger.Info("Creating media with type:", mediaType, "title:", req.Title)
+
 	media, err := h.manager.AddMedia(mediaType, req.ID, req.Title, req.Year,
 		req.Language, req.MinQuality, req.MaxQuality, req.AutoDownload, req.StartSeason, req.StartEpisode)
+
 	if err != nil {
-		h.logger.Error("Failed to add media:", err)
+		// Log the full error details
+		h.logger.Error("Failed to add media - Title:", req.Title, "Error:", err)
+
+		// Check if it's a database constraint error
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") ||
+			strings.Contains(err.Error(), "unique constraint") {
+			respondError(w, http.StatusConflict, "Media already exists in library")
+			return
+		}
+
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
+	h.logger.Info("Successfully added media:", media.Title, "ID:", media.ID)
 	respondJSON(w, http.StatusCreated, media)
 }
 

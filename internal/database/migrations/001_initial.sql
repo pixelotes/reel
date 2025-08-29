@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS media (
     language TEXT NOT NULL DEFAULT 'en',
     min_quality TEXT NOT NULL DEFAULT '720p',
     max_quality TEXT NOT NULL DEFAULT '1080p',
-    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'searching', 'downloading', 'downloaded', 'failed')),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'searching', 'downloading', 'downloaded', 'failed', 'skipped')),
     torrent_hash TEXT,
     torrent_name TEXT,
     download_path TEXT,
