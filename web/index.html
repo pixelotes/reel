@@ -153,14 +153,19 @@
 
                 <div class="form-row">
                     <select name="min_quality" id="min-quality" required>
+                        <option value="360p">360p</option>
                         <option value="480p">480p</option>
                         <option value="720p" selected>720p</option>
                         <option value="1080p">1080p</option>
+                        <option value="1440p">1440p</option>
                         <option value="2160p">2160p (4K)</option>
                     </select>
                     <select name="max_quality" id="max-quality" required>
+                        <option value="360p">360p</option>
+                        <option value="480p">480p</option>
                         <option value="720p">720p</option>
                         <option value="1080p" selected>1080p</option>
+                        <option value="1440p">1440p</option>
                         <option value="2160p">2160p (4K)</option>
                     </select>
                 </div>
@@ -215,6 +220,15 @@
                 sessionToken: '',
                 allMedia: [],
                 filteredMedia: [],
+            };
+
+            const RESOLUTION_RANK = {
+                "360p":  0,
+                "480p":  1,
+                "720p":  2,
+                "1080p": 3,
+                "1440p": 4,
+                "2160p": 5,
             };
 
             // DOM Elements
@@ -339,6 +353,14 @@
                 e.preventDefault();
                 const formData = new FormData(e.target);
                 const statusEl = document.getElementById('add-status');
+                const minQuality = formData.get('min_quality');
+                const maxQuality = formData.get('max_quality');
+
+                if (RESOLUTION_RANK[minQuality] > RESOLUTION_RANK[maxQuality]) {
+                    statusEl.textContent = 'Error: Minimum quality cannot be higher than maximum quality.';
+                    statusEl.style.color = 'var(--error-color)';
+                    return;
+                }
                 
                 statusEl.textContent = 'Adding media...';
                 
@@ -351,8 +373,8 @@
                             year: parseInt(formData.get('year')),
                             tmdb_id: parseInt(formData.get('tmdb_id')),
                             language: formData.get('language'),
-                            min_quality: formData.get('min_quality'),
-                            max_quality: formData.get('max_quality'),
+                            min_quality: minQuality,
+                            max_quality: maxQuality,
                             auto_download: document.getElementById('auto-download-checkbox').checked,
                         }
                     });

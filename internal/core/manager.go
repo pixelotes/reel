@@ -18,9 +18,9 @@ import (
 	"reel/internal/utils"
 )
 
-// --- Quality Scoring Logic (Adapted from janitorr.py) ---
+// --- Quality Scoring Logic ---
 var QUALITY_SCORES = map[string]int{
-	// Resolution
+	// Resolution - These are now synonyms, the rank will be used for filtering
 	"4k": 8, "2160p": 8, "uhd": 8,
 	"1440p": 6, "2k": 6,
 	"1080p": 5, "fhd": 5,
@@ -43,6 +43,27 @@ var QUALITY_SCORES = map[string]int{
 	"repack": 1, "proper": 1, "extended": 1, "uncut": 1, "directors": 1,
 	"hdr": 2, "hdr10": 2, "dolbyvision": 3, "dv": 3, "imax": 2,
 }
+
+var RESOLUTION_SYNONYMS = map[string][]string{
+	"2160p": {"2160p", "4k", "uhd"},
+	"1440p": {"1440p", "2k"},
+	"1080p": {"1080p", "fhd"},
+	"720p":  {"720p", "hd"},
+	"480p":  {"480p", "sd"},
+	"360p":  {"360p"},
+}
+
+var RESOLUTION_RANK = map[string]int{
+	"360p":  0,
+	"480p":  1,
+	"720p":  2,
+	"1080p": 3,
+	"1440p": 4,
+	"2160p": 5,
+}
+
+// Ordered from highest to lowest for matching
+var SUPPORTED_RESOLUTIONS = []string{"2160p", "1440p", "1080p", "720p", "480p", "360p"}
 
 func getQualityScore(title string) int {
 	score := 0
@@ -171,8 +192,7 @@ func (m *Manager) AddMedia(mediaType models.MediaType, tmdbID int, title string,
 
 func (m *Manager) searchAndDownload(media *models.Media) {
 	m.logger.Info("🔍 Starting search for:", media.Title)
-	media.Status = models.StatusSearching
-	m.mediaRepo.Update(media)
+	m.mediaRepo.UpdateStatus(media.ID, models.StatusSearching)
 
 	query := fmt.Sprintf("%s %d", media.Title, media.Year)
 	tmdbIDStr := ""
@@ -183,51 +203,64 @@ func (m *Manager) searchAndDownload(media *models.Media) {
 	results, err := m.indexerClient.SearchMovies(query, tmdbIDStr)
 	if err != nil {
 		m.logger.Error("Search failed for", media.Title, ":", err)
-		media.Status = models.StatusFailed
-		m.mediaRepo.Update(media)
+		m.mediaRepo.UpdateStatus(media.ID, models.StatusFailed)
 		return
 	}
 
 	m.logger.Info(fmt.Sprintf("Found %d results for %s", len(results), media.Title))
 
-	bestTorrent := m.selectBestTorrent(results)
+	bestTorrent := m.selectBestTorrent(media, results)
 	if bestTorrent == nil {
 		m.logger.Info("No suitable torrent found for:", media.Title)
-		media.Status = models.StatusFailed
-		m.mediaRepo.Update(media)
+		m.mediaRepo.UpdateStatus(media.ID, models.StatusFailed)
 		return
 	}
-
-	m.logger.Info("🏆 Best torrent found:", bestTorrent.Title)
 
 	// --- Send to Download Client ---
 	m.logger.Info("🚀 Sending to download client:", m.config.TorrentClient.Type)
 	hash, err := m.torrentClient.AddTorrent(bestTorrent.DownloadURL, m.config.TorrentClient.DownloadPath)
 	if err != nil {
 		m.logger.Error("Failed to add torrent to client:", err)
-		media.Status = models.StatusFailed
-		m.mediaRepo.Update(media)
+		m.mediaRepo.UpdateStatus(media.ID, models.StatusFailed)
 		return
 	}
 
 	m.logger.Info("✅ Torrent successfully sent to download client! Hash:", hash)
 
 	// --- Update Media Status ---
-	media.Status = models.StatusDownloading
-	media.TorrentHash = &hash
-	media.TorrentName = &bestTorrent.Title
-	if err := m.mediaRepo.Update(media); err != nil {
+	if err := m.mediaRepo.UpdateDownloadInfo(media.ID, models.StatusDownloading, &hash, &bestTorrent.Title); err != nil {
 		m.logger.Error("Failed to update media status after adding torrent:", err)
 	}
 }
 
-func (m *Manager) selectBestTorrent(results []indexers.IndexerResult) *indexers.IndexerResult {
-	if len(results) == 0 {
+func (m *Manager) selectBestTorrent(media *models.Media, results []indexers.IndexerResult) *indexers.IndexerResult {
+	minRank := RESOLUTION_RANK[media.MinQuality]
+	maxRank := RESOLUTION_RANK[media.MaxQuality]
+
+	var qualityFilteredTorrents []indexers.IndexerResult
+	for _, r := range results {
+		lowerTitle := strings.ToLower(r.Title)
+		for _, res := range SUPPORTED_RESOLUTIONS {
+			synonyms := RESOLUTION_SYNONYMS[res]
+			for _, s := range synonyms {
+				if strings.Contains(lowerTitle, strings.ToLower(s)) {
+					rank := RESOLUTION_RANK[res]
+					if rank >= minRank && rank <= maxRank {
+						qualityFilteredTorrents = append(qualityFilteredTorrents, r)
+					}
+					goto nextTorrent // Found a resolution, move to the next torrent
+				}
+			}
+		}
+	nextTorrent:
+	}
+
+	if len(qualityFilteredTorrents) == 0 {
 		return nil
 	}
 
 	var eligibleTorrents []indexers.IndexerResult
-	for _, r := range results {
+	for _, r := range qualityFilteredTorrents {
 		if r.Seeders >= m.config.Automation.MinSeeders {
 			eligibleTorrents = append(eligibleTorrents, r)
 		}
@@ -247,10 +280,11 @@ func (m *Manager) selectBestTorrent(results []indexers.IndexerResult) *indexers.
 	})
 
 	bestTorrent := eligibleTorrents[0]
-	m.logger.Info(fmt.Sprintf("🏆 Best torrent found: %s (Score: %d)", bestTorrent.Title, bestTorrent.Score))
+	m.logger.Info(fmt.Sprintf("🏆 Best torrent found: %s (Score: %d, Seeders: %d, Leechers: %d)", bestTorrent.Title, bestTorrent.Score, bestTorrent.Seeders, bestTorrent.Leechers))
 
 	for i := 1; i < len(eligibleTorrents) && i < 3; i++ {
-		m.logger.Info(fmt.Sprintf("  - Runner-up: %s (Score: %d)", eligibleTorrents[i].Title, eligibleTorrents[i].Score))
+		runnerUp := eligibleTorrents[i]
+		m.logger.Info(fmt.Sprintf("  - Runner-up: %s (Score: %d, Seeders: %d, Leechers: %d)", runnerUp.Title, runnerUp.Score, runnerUp.Seeders, runnerUp.Leechers))
 	}
 
 	return &bestTorrent
@@ -262,7 +296,7 @@ func (m *Manager) GetAllMedia() ([]models.Media, error) {
 
 func (m *Manager) StartScheduler() {
 	m.scheduler.AddFunc("@every 30m", m.processPendingMedia)
-	m.scheduler.AddFunc("@every 10m", m.updateDownloadStatus)
+	m.scheduler.AddFunc("@every 10s", m.updateDownloadStatus)
 	m.scheduler.Start()
 	m.logger.Info("Scheduler started. Performing initial search for pending media.")
 	go m.processPendingMedia()
@@ -307,13 +341,14 @@ func (m *Manager) updateDownloadStatus() {
 				continue
 			}
 
-			media.Progress = status.Progress
+			newStatus := models.StatusDownloading
+			var completedAt *time.Time
 			if status.IsCompleted {
-				media.Status = models.StatusDownloaded
+				newStatus = models.StatusDownloaded
 				now := time.Now()
-				media.CompletedAt = &now
+				completedAt = &now
 			}
-			m.mediaRepo.Update(&media)
+			m.mediaRepo.UpdateProgress(media.ID, newStatus, status.Progress, completedAt)
 		}
 	}
 }
@@ -323,7 +358,7 @@ func (m *Manager) DeleteMedia(id int) error {
 }
 
 func (m *Manager) RetryMedia(id int) error {
-	media, err := m.mediaRepo.GetByID(id) // You'll need to implement GetByID in your repository
+	media, err := m.mediaRepo.GetByID(id)
 	if err != nil {
 		return err
 	}
@@ -331,9 +366,8 @@ func (m *Manager) RetryMedia(id int) error {
 		return fmt.Errorf("media with id %d not found", id)
 	}
 
-	if media.Status == models.StatusFailed {
-		media.Status = models.StatusPending
-		if err := m.mediaRepo.Update(media); err != nil {
+	if media.Status == models.StatusFailed || media.Status == models.StatusPending {
+		if err := m.mediaRepo.UpdateStatus(media.ID, models.StatusPending); err != nil {
 			return err
 		}
 		m.searchQueue <- media

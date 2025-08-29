@@ -56,12 +56,12 @@ func NewMediaRepository(db *sql.DB) *MediaRepository {
 func (r *MediaRepository) Create(media *Media) error {
 	query := `
         INSERT INTO media (type, imdb_id, tmdb_id, title, year, language, min_quality, max_quality, 
-                          status, overview, poster_url, rating)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          status, overview, poster_url, rating, auto_download)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
 	result, err := r.db.Exec(query, media.Type, media.IMDBId, media.TMDBId, media.Title,
 		media.Year, media.Language, media.MinQuality, media.MaxQuality, media.Status,
-		media.Overview, media.PosterURL, media.Rating)
+		media.Overview, media.PosterURL, media.Rating, media.AutoDownload)
 	if err != nil {
 		return err
 	}
@@ -72,12 +72,11 @@ func (r *MediaRepository) Create(media *Media) error {
 	return nil
 }
 
-// --- New Function ---
 func (r *MediaRepository) GetByID(id int) (*Media, error) {
 	query := `
         SELECT id, type, imdb_id, tmdb_id, title, year, language, min_quality, max_quality,
                status, torrent_hash, torrent_name, download_path, progress, added_at, completed_at,
-               overview, poster_url, rating
+               overview, poster_url, rating, auto_download
         FROM media WHERE id = ?
     `
 	row := r.db.QueryRow(query, id)
@@ -86,7 +85,7 @@ func (r *MediaRepository) GetByID(id int) (*Media, error) {
 	err := row.Scan(&m.ID, &m.Type, &m.IMDBId, &m.TMDBId, &m.Title, &m.Year, &m.Language,
 		&m.MinQuality, &m.MaxQuality, &m.Status, &m.TorrentHash, &m.TorrentName,
 		&m.DownloadPath, &m.Progress, &m.AddedAt, &m.CompletedAt,
-		&m.Overview, &m.PosterURL, &m.Rating)
+		&m.Overview, &m.PosterURL, &m.Rating, &m.AutoDownload)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -101,7 +100,7 @@ func (r *MediaRepository) GetAll() ([]Media, error) {
 	query := `
         SELECT id, type, imdb_id, tmdb_id, title, year, language, min_quality, max_quality,
                status, torrent_hash, torrent_name, download_path, progress, added_at, completed_at,
-               overview, poster_url, rating
+               overview, poster_url, rating, auto_download
         FROM media ORDER BY added_at DESC
     `
 	rows, err := r.db.Query(query)
@@ -116,7 +115,7 @@ func (r *MediaRepository) GetAll() ([]Media, error) {
 		err := rows.Scan(&m.ID, &m.Type, &m.IMDBId, &m.TMDBId, &m.Title, &m.Year, &m.Language,
 			&m.MinQuality, &m.MaxQuality, &m.Status, &m.TorrentHash, &m.TorrentName,
 			&m.DownloadPath, &m.Progress, &m.AddedAt, &m.CompletedAt,
-			&m.Overview, &m.PosterURL, &m.Rating)
+			&m.Overview, &m.PosterURL, &m.Rating, &m.AutoDownload)
 		if err != nil {
 			return nil, err
 		}
@@ -129,7 +128,7 @@ func (r *MediaRepository) GetByStatus(status MediaStatus) ([]Media, error) {
 	query := `
         SELECT id, type, imdb_id, tmdb_id, title, year, language, min_quality, max_quality,
                status, torrent_hash, torrent_name, download_path, progress, added_at, completed_at,
-               overview, poster_url, rating
+               overview, poster_url, rating, auto_download
         FROM media WHERE status = ? ORDER BY added_at DESC
     `
 	rows, err := r.db.Query(query, status)
@@ -144,7 +143,7 @@ func (r *MediaRepository) GetByStatus(status MediaStatus) ([]Media, error) {
 		err := rows.Scan(&m.ID, &m.Type, &m.IMDBId, &m.TMDBId, &m.Title, &m.Year, &m.Language,
 			&m.MinQuality, &m.MaxQuality, &m.Status, &m.TorrentHash, &m.TorrentName,
 			&m.DownloadPath, &m.Progress, &m.AddedAt, &m.CompletedAt,
-			&m.Overview, &m.PosterURL, &m.Rating)
+			&m.Overview, &m.PosterURL, &m.Rating, &m.AutoDownload)
 		if err != nil {
 			return nil, err
 		}
@@ -153,14 +152,21 @@ func (r *MediaRepository) GetByStatus(status MediaStatus) ([]Media, error) {
 	return mediaList, nil
 }
 
-func (r *MediaRepository) Update(media *Media) error {
-	query := `
-        UPDATE media SET status = ?, torrent_hash = ?, torrent_name = ?, download_path = ?,
-                        progress = ?, completed_at = ?
-        WHERE id = ?
-    `
-	_, err := r.db.Exec(query, media.Status, media.TorrentHash, media.TorrentName,
-		media.DownloadPath, media.Progress, media.CompletedAt, media.ID)
+func (r *MediaRepository) UpdateStatus(id int, status MediaStatus) error {
+	query := `UPDATE media SET status = ? WHERE id = ?`
+	_, err := r.db.Exec(query, status, id)
+	return err
+}
+
+func (r *MediaRepository) UpdateDownloadInfo(id int, status MediaStatus, hash, name *string) error {
+	query := `UPDATE media SET status = ?, torrent_hash = ?, torrent_name = ? WHERE id = ?`
+	_, err := r.db.Exec(query, status, hash, name, id)
+	return err
+}
+
+func (r *MediaRepository) UpdateProgress(id int, status MediaStatus, progress float64, completedAt *time.Time) error {
+	query := `UPDATE media SET status = ?, progress = ?, completed_at = ? WHERE id = ?`
+	_, err := r.db.Exec(query, status, progress, completedAt, id)
 	return err
 }
 
