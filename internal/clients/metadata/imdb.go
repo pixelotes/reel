@@ -24,3 +24,7 @@ func (c *IMDBClient) SearchMovie(title string, year int) (*MovieResult, error) {
 
 	return nil, fmt.Errorf("IMDb search not implemented")
 }
+
+func (c *IMDBClient) SearchTVShow(title string) (*TVShowResult, error) {
+	return nil, fmt.Errorf("IMDb TV show search not implemented")
+}

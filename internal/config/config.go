@@ -17,12 +17,6 @@ type Config struct {
 		JWTSecret  string `yaml:"jwt_secret"`
 	} `yaml:"app"`
 
-	Indexer struct {
-		Type   string `yaml:"type"`
-		APIKey string `yaml:"api_key"`
-		URL    string `yaml:"url"`
-	} `yaml:"indexer"`
-
 	TorrentClient struct {
 		Type         string `yaml:"type"`
 		Host         string `yaml:"host"`
@@ -32,15 +26,47 @@ type Config struct {
 	} `yaml:"torrent_client"`
 
 	Metadata struct {
-		Providers []string `yaml:"providers"`
-		TMDB      struct {
+		Language string `yaml:"language"`
+		TMDB     struct {
 			APIKey string `yaml:"api_key"`
 		} `yaml:"tmdb"`
 		IMDB struct {
 			APIKey string `yaml:"api_key"`
 		} `yaml:"imdb"`
-		Language string `yaml:"language"`
+		TVmaze struct {
+			APIKey string `yaml:"api_key"`
+		} `yaml:"tvmaze"`
+		AniDB struct {
+			APIKey string `yaml:"api_key"`
+		} `yaml:"anidb"`
 	} `yaml:"metadata"`
+
+	Movies struct {
+		Providers []string `yaml:"providers"`
+		Sources   []struct {
+			Type   string `yaml:"type"`
+			URL    string `yaml:"url"`
+			APIKey string `yaml:"api_key"`
+		} `yaml:"sources"`
+	} `yaml:"movies"`
+
+	TVShows struct {
+		Providers []string `yaml:"providers"`
+		Sources   []struct {
+			Type   string `yaml:"type"`
+			URL    string `yaml:"url"`
+			APIKey string `yaml:"api_key"`
+		} `yaml:"sources"`
+	} `yaml:"tv-shows"`
+
+	Anime struct {
+		Providers []string `yaml:"providers"`
+		Sources   []struct {
+			Type   string `yaml:"type"`
+			URL    string `yaml:"url"`
+			APIKey string `yaml:"api_key"`
+		} `yaml:"sources"`
+	} `yaml:"anime"`
 
 	Database struct {
 		Path string `yaml:"path"`
@@ -55,15 +81,11 @@ type Config struct {
 }
 
 func Load(path string) (*Config, error) {
-	// *** Check if the config file exists first ***
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		// *** Return a clear error if the file is not found ***
 		return nil, fmt.Errorf("config file not found at '%s'", path)
 	}
 
 	cfg := &Config{}
-
-	// No need to set defaults here anymore if the file is mandatory
 
 	data, err := os.ReadFile(path)
 	if err != nil {

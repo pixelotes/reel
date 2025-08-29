@@ -6,11 +6,6 @@ app:
   debug: false
   jwt_secret: "your-very-secure-jwt-secret-key-here"
 
-indexer:
-  type: "scarf"
-  url: "http://localhost:8080"
-  api_key: "your_scarf_api_key_here"
-
 torrent_client:
   type: "transmission" # or "qbittorrent"
   host: "localhost:9091" # e.g., localhost:8080 for qbittorrent
@@ -19,12 +14,38 @@ torrent_client:
   download_path: "/downloads/media"
 
 metadata:
-  providers: ["tmdb", "imdb"] # Order of preference
   language: "en"
   tmdb:
     api_key: "your_tmdb_api_key_here"
   imdb:
     api_key: "" # Placeholder for future use
+  tvmaze:
+    api_key: "" # No key needed for basic use
+  anidb:
+    api_key: "" # Placeholder for future use
+
+movies:
+  providers: ["tmdb", "imdb"] # Order of preference
+  sources:
+    - type: "scarf"
+      url: "http://localhost:8080/torznab/movies"
+      api_key: "your_scarf_api_key_here"
+    - type: "rss"
+      url: "https://example.com/rss.xml"
+
+tv-shows:
+  providers: ["tvmaze"]
+  sources:
+    - type: "scarf"
+      url: "http://localhost:8080/torznab/tv"
+      api_key: "your_scarf_api_key_here"
+
+anime:
+  providers: ["anidb"]
+  sources:
+    - type: "scarf"
+      url: "http://localhost:8080/torznab/anime"
+      api_key: "your_scarf_api_key_here"
 
 database:
   path: "./data/reel.db"

@@ -119,3 +119,7 @@ func (t *TMDBClient) SearchMovie(title string, year int) (*MovieResult, error) {
 		Rating:    result.VoteAverage,
 	}, nil
 }
+
+func (t *TMDBClient) SearchTVShow(title string) (*TVShowResult, error) {
+	return nil, fmt.Errorf("TMDB TV show search not implemented")
+}

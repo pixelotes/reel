@@ -79,9 +79,9 @@ func getQualityScore(title string) int {
 type Manager struct {
 	config          *config.Config
 	mediaRepo       *models.MediaRepository
-	indexerClient   indexers.Client
+	indexerClients  map[models.MediaType][]indexers.Client
+	metadataClients map[models.MediaType][]metadata.Client
 	torrentClient   torrent.TorrentClient
-	metadataClients []metadata.Client
 	logger          *utils.Logger
 	scheduler       *cron.Cron
 	searchQueue     chan *models.Media
@@ -89,25 +89,71 @@ type Manager struct {
 
 func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 	m := &Manager{
-		config:      cfg,
-		mediaRepo:   models.NewMediaRepository(db),
-		logger:      logger,
-		scheduler:   cron.New(),
-		searchQueue: make(chan *models.Media, 100),
+		config:          cfg,
+		mediaRepo:       models.NewMediaRepository(db),
+		logger:          logger,
+		scheduler:       cron.New(),
+		searchQueue:     make(chan *models.Media, 100),
+		indexerClients:  make(map[models.MediaType][]indexers.Client),
+		metadataClients: make(map[models.MediaType][]metadata.Client),
 	}
 
-	// Setup Indexer based on config
-	switch cfg.Indexer.Type {
-	case "scarf":
-		timeout, _ := time.ParseDuration("30s")
-		m.indexerClient = indexers.NewScarfClient(cfg.Indexer.URL, cfg.Indexer.APIKey, timeout)
-	case "jackett":
-		m.indexerClient = indexers.NewJackettClient(cfg.Indexer.URL, cfg.Indexer.APIKey)
-	default:
-		logger.Fatal("Unsupported indexer type:", cfg.Indexer.Type)
+	// --- Initialize Clients based on new Config Structure ---
+
+	// Helper function to initialize metadata providers
+	initMetadataProvider := func(provider string) metadata.Client {
+		switch provider {
+		case "tmdb":
+			return metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language)
+		case "imdb":
+			return metadata.NewIMDBClient(cfg.Metadata.IMDB.APIKey)
+		case "tvmaze":
+			return metadata.NewTVmazeClient()
+		}
+		return nil
 	}
 
-	// Setup Torrent Client
+	// Helper function to initialize indexer sources
+	initIndexerClient := func(source struct {
+		Type   string `yaml:"type"`
+		URL    string `yaml:"url"`
+		APIKey string `yaml:"api_key"`
+	}) indexers.Client {
+		switch source.Type {
+		case "scarf":
+			timeout, _ := time.ParseDuration("30s")
+			return indexers.NewScarfClient(source.URL, source.APIKey, timeout)
+		case "jackett":
+			return indexers.NewJackettClient(source.URL, source.APIKey)
+		}
+		return nil
+	}
+
+	// Initialize Movie Clients
+	for _, providerName := range cfg.Movies.Providers {
+		if client := initMetadataProvider(providerName); client != nil {
+			m.metadataClients[models.MediaTypeMovie] = append(m.metadataClients[models.MediaTypeMovie], client)
+		}
+	}
+	for _, source := range cfg.Movies.Sources {
+		if client := initIndexerClient(source); client != nil {
+			m.indexerClients[models.MediaTypeMovie] = append(m.indexerClients[models.MediaTypeMovie], client)
+		}
+	}
+
+	// Initialize TV Show Clients
+	for _, providerName := range cfg.TVShows.Providers {
+		if client := initMetadataProvider(providerName); client != nil {
+			m.metadataClients[models.MediaTypeTVShow] = append(m.metadataClients[models.MediaTypeTVShow], client)
+		}
+	}
+	for _, source := range cfg.TVShows.Sources {
+		if client := initIndexerClient(source); client != nil {
+			m.indexerClients[models.MediaTypeTVShow] = append(m.indexerClients[models.MediaTypeTVShow], client)
+		}
+	}
+
+	// Setup Torrent Client (this remains global)
 	switch cfg.TorrentClient.Type {
 	case "transmission":
 		m.torrentClient = torrent.NewTransmissionClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password)
@@ -115,16 +161,6 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		m.torrentClient = torrent.NewQBittorrentClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password)
 	default:
 		logger.Fatal("Unsupported torrent client type:", cfg.TorrentClient.Type)
-	}
-
-	// Setup Metadata Clients based on config order
-	for _, provider := range cfg.Metadata.Providers {
-		switch provider {
-		case "tmdb":
-			m.metadataClients = append(m.metadataClients, metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language))
-		case "imdb":
-			m.metadataClients = append(m.metadataClients, metadata.NewIMDBClient(cfg.Metadata.IMDB.APIKey))
-		}
 	}
 
 	go m.startSearchQueueWorker()
@@ -145,19 +181,35 @@ func (m *Manager) AddMedia(mediaType models.MediaType, tmdbID int, title string,
 	var overview, posterURL *string
 	var rating *float64
 
-	// Simplified metadata fetch
-	if len(m.metadataClients) > 0 {
-		client := m.metadataClients[0]
-		movieData, err := client.SearchMovie(title, year)
-		if err == nil && movieData != nil {
-			overview = &movieData.Overview
-			posterURL = &movieData.PosterURL
-			rating = &movieData.Rating
-			if title == "" {
-				title = movieData.Title
+	// Simplified metadata fetch using the correct provider for the media type
+	providers := m.metadataClients[mediaType]
+	if len(providers) > 0 {
+		client := providers[0] // Use the first provider in the list
+		if mediaType == models.MediaTypeMovie {
+			movieData, err := client.SearchMovie(title, year)
+			if err == nil && movieData != nil {
+				overview = &movieData.Overview
+				posterURL = &movieData.PosterURL
+				rating = &movieData.Rating
+				if title == "" {
+					title = movieData.Title
+				}
+				if year == 0 {
+					year = movieData.Year
+				}
 			}
-			if year == 0 {
-				year = movieData.Year
+		} else if mediaType == models.MediaTypeTVShow {
+			tvData, err := client.SearchTVShow(title)
+			if err == nil && tvData != nil {
+				overview = &tvData.Overview
+				posterURL = &tvData.PosterURL
+				rating = &tvData.Rating
+				if title == "" {
+					title = tvData.Title
+				}
+				if year == 0 {
+					year = tvData.Year
+				}
 			}
 		}
 	}
@@ -378,18 +430,28 @@ func (m *Manager) ClearFailedMedia() error {
 	return nil
 }
 
-func (m *Manager) SearchMetadata(query string, mediaType string) ([]*metadata.MovieResult, error) {
+func (m *Manager) SearchMetadata(query string, mediaType string) ([]interface{}, error) {
+	providers := m.metadataClients[models.MediaType(mediaType)]
+	if len(providers) == 0 {
+		return nil, fmt.Errorf("no metadata provider configured for '%s'", mediaType)
+	}
+
+	client := providers[0] // Use first provider
 	if mediaType == string(models.MediaTypeMovie) {
-		if len(m.metadataClients) > 0 {
-			client := m.metadataClients[0]
-			result, err := client.SearchMovie(query, 0)
-			if err == nil && result != nil {
-				return []*metadata.MovieResult{result}, nil
-			}
+		result, err := client.SearchMovie(query, 0)
+		if err != nil {
 			return nil, err
 		}
+		return []interface{}{result}, nil
+	} else if mediaType == string(models.MediaTypeTVShow) {
+		result, err := client.SearchTVShow(query)
+		if err != nil {
+			return nil, err
+		}
+		return []interface{}{result}, nil
 	}
-	return nil, fmt.Errorf("no metadata provider configured for '%s'", mediaType)
+
+	return nil, fmt.Errorf("unsupported media type for metadata search: %s", mediaType)
 }
 
 func (m *Manager) GetSystemStatus() map[string]bool {
@@ -397,19 +459,22 @@ func (m *Manager) GetSystemStatus() map[string]bool {
 	return map[string]bool{
 		"indexer":        true,
 		"torrent_client": true,
-		"metadata":       len(m.metadataClients) > 0,
+		"metadata":       true,
 	}
 }
 
 func (m *Manager) TestIndexerConnection() bool {
-	if m.indexerClient == nil {
-		return false
+	// A basic test, a better one would ping the client
+	for _, clients := range m.indexerClients {
+		for _, client := range clients {
+			ok, err := client.HealthCheck()
+			if err != nil || !ok {
+				m.logger.Error("Indexer health check failed:", err)
+				return false
+			}
+		}
 	}
-	ok, err := m.indexerClient.HealthCheck()
-	if err != nil {
-		m.logger.Error("Indexer health check failed:", err)
-	}
-	return ok
+	return true
 }
 
 func (m *Manager) TestTorrentConnection() bool {
@@ -418,18 +483,29 @@ func (m *Manager) TestTorrentConnection() bool {
 }
 
 func (m *Manager) performSearch(media *models.Media) ([]indexers.IndexerResult, error) {
+	clients := m.indexerClients[media.Type]
+	if len(clients) == 0 {
+		return nil, fmt.Errorf("no indexer sources configured for media type: %s", media.Type)
+	}
+
 	query := fmt.Sprintf("%s %d", media.Title, media.Year)
 	tmdbIDStr := ""
 	if media.TMDBId != nil {
 		tmdbIDStr = strconv.Itoa(*media.TMDBId)
 	}
 
-	results, err := m.indexerClient.SearchMovies(query, tmdbIDStr)
-	if err != nil {
-		return nil, err
+	var allResults []indexers.IndexerResult
+	for _, client := range clients {
+		results, err := client.SearchMovies(query, tmdbIDStr)
+		if err != nil {
+			m.logger.Error("Search failed for indexer:", err)
+			continue // Don't fail the whole search if one indexer is down
+		}
+		allResults = append(allResults, results...)
 	}
-	m.logger.Info(fmt.Sprintf("Found %d results for %s", len(results), media.Title))
-	return results, nil
+
+	m.logger.Info(fmt.Sprintf("Found %d total results for %s", len(allResults), media.Title))
+	return allResults, nil
 }
 
 func (m *Manager) PerformSearch(id int) ([]indexers.IndexerResult, error) {
