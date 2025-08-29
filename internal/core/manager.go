@@ -290,14 +290,22 @@ func (m *Manager) processPendingMedia() {
 	pendingMedia, err := m.mediaRepo.GetByStatus(models.StatusPending)
 	if err != nil {
 		m.logger.Error("Failed to get pending media:", err)
+		// Don't return here, we still want to process failed media
+	}
+
+	failedMedia, err := m.mediaRepo.GetByStatus(models.StatusFailed)
+	if err != nil {
+		m.logger.Error("Failed to get failed media:", err)
 		return
 	}
 
-	if len(pendingMedia) > 0 {
-		m.logger.Info(fmt.Sprintf("Processing %d pending media items.", len(pendingMedia)))
-		for i := range pendingMedia {
-			if pendingMedia[i].AutoDownload {
-				mediaCopy := pendingMedia[i]
+	mediaToProcess := append(pendingMedia, failedMedia...)
+
+	if len(mediaToProcess) > 0 {
+		m.logger.Info(fmt.Sprintf("Processing %d pending and failed media items.", len(mediaToProcess)))
+		for i := range mediaToProcess {
+			if mediaToProcess[i].AutoDownload {
+				mediaCopy := mediaToProcess[i]
 				m.searchQueue <- &mediaCopy
 			}
 		}
@@ -316,6 +324,10 @@ func (m *Manager) updateDownloadStatus() {
 			status, err := m.torrentClient.GetTorrentStatus(*media.TorrentHash)
 			if err != nil {
 				m.logger.Error("Failed to get torrent status for", media.Title, ":", err)
+				// Mark as failed
+				if err := m.mediaRepo.UpdateStatus(media.ID, models.StatusFailed); err != nil {
+					m.logger.Error("Failed to update media status to failed for", media.Title, ":", err)
+				}
 				continue
 			}
 
