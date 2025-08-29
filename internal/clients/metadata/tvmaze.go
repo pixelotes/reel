@@ -12,21 +12,29 @@ type TVmazeClient struct {
 	httpClient *http.Client
 }
 
-type tvmazeSearchResponse struct {
-	Score float64 `json:"score"`
-	Show  struct {
-		ID        int    `json:"id"`
-		Name      string `json:"name"`
-		Premiered string `json:"premiered"`
-		Summary   string `json:"summary"`
-		Image     struct {
-			Medium   string `json:"medium"`
-			Original string `json:"original"`
-		} `json:"image"`
-		Rating struct {
-			Average float64 `json:"average"`
-		} `json:"rating"`
-	} `json:"show"`
+type tvmazeShow struct {
+	ID        int    `json:"id"`
+	Name      string `json:"name"`
+	Premiered string `json:"premiered"`
+	Status    string `json:"status"`
+	Summary   string `json:"summary"`
+	Image     struct {
+		Original string `json:"original"`
+	} `json:"image"`
+	Rating struct {
+		Average float64 `json:"average"`
+	} `json:"rating"`
+	Embedded struct {
+		Episodes []tvmazeEpisode `json:"episodes"`
+	} `json:"_embedded"`
+}
+
+type tvmazeEpisode struct {
+	ID      int    `json:"id"`
+	Season  int    `json:"season"`
+	Number  int    `json:"number"`
+	Name    string `json:"name"`
+	Airdate string `json:"airdate"`
 }
 
 func NewTVmazeClient() *TVmazeClient {
@@ -42,7 +50,7 @@ func (t *TVmazeClient) SearchMovie(title string, year int) (*MovieResult, error)
 }
 
 func (t *TVmazeClient) SearchTVShow(title string) (*TVShowResult, error) {
-	searchURL := fmt.Sprintf("https://api.tvmaze.com/singlesearch/shows?q=%s", url.QueryEscape(title))
+	searchURL := fmt.Sprintf("https://api.tvmaze.com/singlesearch/shows?q=%s&embed=episodes", url.QueryEscape(title))
 
 	req, err := http.NewRequest("GET", searchURL, nil)
 	if err != nil {
@@ -56,37 +64,47 @@ func (t *TVmazeClient) SearchTVShow(title string) (*TVShowResult, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		// TVmaze returns 404 for not found, which is not a server error
 		if resp.StatusCode == http.StatusNotFound {
 			return nil, fmt.Errorf("no TV show results found on TVmaze for '%s'", title)
 		}
 		return nil, fmt.Errorf("TVmaze search failed with status: %d", resp.StatusCode)
 	}
 
-	var searchResp tvmazeSearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+	var showData tvmazeShow
+	if err := json.NewDecoder(resp.Body).Decode(&showData); err != nil {
 		return nil, fmt.Errorf("failed to decode TVmaze response: %w", err)
 	}
 
-	show := searchResp.Show
 	showYear := 0
-	if show.Premiered != "" {
-		if premiereTime, err := time.Parse("2006-01-02", show.Premiered); err == nil {
+	if showData.Premiered != "" {
+		if premiereTime, err := time.Parse("2006-01-02", showData.Premiered); err == nil {
 			showYear = premiereTime.Year()
 		}
 	}
 
 	posterURL := ""
-	if show.Image.Original != "" {
-		posterURL = show.Image.Original
+	if showData.Image.Original != "" {
+		posterURL = showData.Image.Original
 	}
 
-	return &TVShowResult{
-		ID:        fmt.Sprintf("%d", show.ID),
-		Title:     show.Name,
+	result := &TVShowResult{
+		ID:        fmt.Sprintf("%d", showData.ID),
+		Title:     showData.Name,
 		Year:      showYear,
-		Overview:  show.Summary,
+		Overview:  showData.Summary,
 		PosterURL: posterURL,
-		Rating:    show.Rating.Average,
-	}, nil
+		Rating:    showData.Rating.Average,
+		Status:    showData.Status,
+		Seasons:   make(map[int][]Episode),
+	}
+
+	for _, ep := range showData.Embedded.Episodes {
+		result.Seasons[ep.Season] = append(result.Seasons[ep.Season], Episode{
+			EpisodeNumber: ep.Number,
+			Title:         ep.Name,
+			AirDate:       ep.Airdate,
+		})
+	}
+
+	return result, nil
 }
