@@ -77,6 +77,7 @@ type Config struct {
 		MaxConcurrentDownloads int      `yaml:"max_concurrent_downloads"`
 		QualityPreferences     []string `yaml:"quality_preferences"`
 		MinSeeders             int      `yaml:"min_seeders"`
+		RejectCommon           []string `yaml:"reject-common"`
 	} `yaml:"automation"`
 }
 

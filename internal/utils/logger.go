@@ -11,6 +11,10 @@ type Logger struct {
 	fatalLogger *log.Logger
 }
 
+func (l *Logger) Debug(s string, param2 string, title string) {
+	panic("unimplemented")
+}
+
 func NewLogger(debug bool) *Logger {
 	infoLogger := log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
 	errorLogger := log.New(os.Stderr, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)

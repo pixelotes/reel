@@ -3,7 +3,6 @@ package core
 import (
 	"database/sql"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -82,6 +81,7 @@ type Manager struct {
 	indexerClients  map[models.MediaType][]indexers.Client
 	metadataClients map[models.MediaType][]metadata.Client
 	torrentClient   torrent.TorrentClient
+	torrentSelector *TorrentSelector
 	logger          *utils.Logger
 	scheduler       *cron.Cron
 	searchQueue     chan models.Media
@@ -91,6 +91,7 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 	m := &Manager{
 		config:          cfg,
 		mediaRepo:       models.NewMediaRepository(db),
+		torrentSelector: NewTorrentSelector(cfg, logger),
 		logger:          logger,
 		scheduler:       cron.New(),
 		searchQueue:     make(chan models.Media, 100),
@@ -346,7 +347,7 @@ func (m *Manager) GetTVShowDetails(mediaID int) (*models.TVShow, error) {
 }
 
 func (m *Manager) searchAndDownloadMovie(media *models.Media) {
-	m.logger.Info("🔍 Starting automatic search for movie:", media.Title)
+	m.logger.Info("Starting automatic search for movie:", media.Title)
 	m.mediaRepo.UpdateStatus(media.ID, models.StatusSearching)
 
 	results, err := m.performSearch(media, 0, 0)
@@ -356,7 +357,7 @@ func (m *Manager) searchAndDownloadMovie(media *models.Media) {
 		return
 	}
 
-	bestTorrent := m.selectBestTorrent(media, results)
+	bestTorrent := m.torrentSelector.SelectBestTorrent(media, results, 0, 0)
 	if bestTorrent == nil {
 		m.logger.Info("No suitable torrent found for:", media.Title)
 		m.mediaRepo.UpdateStatus(media.ID, models.StatusFailed)
@@ -380,14 +381,14 @@ func (m *Manager) searchAndDownloadNextEpisode(media *models.Media) {
 				return
 			}
 			if episode.Status == models.StatusPending {
-				m.logger.Info("🔍 Searching for episode:", media.Title, fmt.Sprintf("S%02dE%02d", season.SeasonNumber, episode.EpisodeNumber))
+				m.logger.Info("Searching for episode:", media.Title, fmt.Sprintf("S%02dE%02d", season.SeasonNumber, episode.EpisodeNumber))
 				results, err := m.performSearch(media, season.SeasonNumber, episode.EpisodeNumber)
 				if err != nil {
 					m.logger.Error("Episode search failed:", err)
 					continue
 				}
 
-				bestTorrent := m.selectBestTorrent(media, results)
+				bestTorrent := m.torrentSelector.SelectBestTorrent(media, results, season.SeasonNumber, episode.EpisodeNumber)
 				if bestTorrent != nil {
 					m.StartDownload(media.ID, *bestTorrent)
 					downloadsStarted++
@@ -398,63 +399,6 @@ func (m *Manager) searchAndDownloadNextEpisode(media *models.Media) {
 	if downloadsStarted == 0 {
 		m.logger.Info("No pending episodes to download for", media.Title)
 	}
-}
-
-func (m *Manager) selectBestTorrent(media *models.Media, results []indexers.IndexerResult) *indexers.IndexerResult {
-	minRank := RESOLUTION_RANK[media.MinQuality]
-	maxRank := RESOLUTION_RANK[media.MaxQuality]
-
-	var qualityFilteredTorrents []indexers.IndexerResult
-	for _, r := range results {
-		lowerTitle := strings.ToLower(r.Title)
-		for _, res := range SUPPORTED_RESOLUTIONS {
-			synonyms := RESOLUTION_SYNONYMS[res]
-			for _, s := range synonyms {
-				if strings.Contains(lowerTitle, strings.ToLower(s)) {
-					rank := RESOLUTION_RANK[res]
-					if rank >= minRank && rank <= maxRank {
-						qualityFilteredTorrents = append(qualityFilteredTorrents, r)
-					}
-					goto nextTorrent // Found a resolution, move to the next torrent
-				}
-			}
-		}
-	nextTorrent:
-	}
-
-	if len(qualityFilteredTorrents) == 0 {
-		return nil
-	}
-
-	var eligibleTorrents []indexers.IndexerResult
-	for _, r := range qualityFilteredTorrents {
-		if r.Seeders >= m.config.Automation.MinSeeders {
-			eligibleTorrents = append(eligibleTorrents, r)
-		}
-	}
-
-	if len(eligibleTorrents) == 0 {
-		return nil
-	}
-
-	for i := range eligibleTorrents {
-		eligibleTorrents[i].Score = getQualityScore(eligibleTorrents[i].Title)
-		eligibleTorrents[i].Score += eligibleTorrents[i].Seeders
-	}
-
-	sort.Slice(eligibleTorrents, func(i, j int) bool {
-		return eligibleTorrents[i].Score > eligibleTorrents[j].Score
-	})
-
-	bestTorrent := eligibleTorrents[0]
-	m.logger.Info(fmt.Sprintf("🏆 Best torrent found: %s (Score: %d, Seeders: %d, Leechers: %d)", bestTorrent.Title, bestTorrent.Score, bestTorrent.Seeders, bestTorrent.Leechers))
-
-	for i := 1; i < len(eligibleTorrents) && i < 3; i++ {
-		runnerUp := eligibleTorrents[i]
-		m.logger.Info(fmt.Sprintf("  - Runner-up: %s (Score: %d, Seeders: %d, Leechers: %d)", runnerUp.Title, runnerUp.Score, runnerUp.Seeders, runnerUp.Leechers))
-	}
-
-	return &bestTorrent
 }
 
 func (m *Manager) GetAllMedia() ([]models.Media, error) {
@@ -798,20 +742,14 @@ func (m *Manager) PerformSearch(id int) ([]indexers.IndexerResult, error) {
 		return nil, err
 	}
 
-	for i := range results {
-		results[i].Score = getQualityScore(results[i].Title)
-		results[i].Score += results[i].Seeders
-	}
+	// Use the TorrentSelector to filter and score the results
+	filteredResults := m.torrentSelector.FilterAndScoreTorrents(media, results, 0, 0)
 
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
-	})
-
-	return results, nil
+	return filteredResults, nil
 }
 
 func (m *Manager) StartDownload(id int, torrent indexers.IndexerResult) error {
-	m.logger.Info("🚀 Sending to download client:", m.config.TorrentClient.Type)
+	m.logger.Info("Sending to download client:", m.config.TorrentClient.Type)
 	hash, err := m.torrentClient.AddTorrent(torrent.DownloadURL, m.config.TorrentClient.DownloadPath)
 	if err != nil {
 		m.logger.Error("Failed to add torrent to client:", err)
@@ -819,7 +757,7 @@ func (m *Manager) StartDownload(id int, torrent indexers.IndexerResult) error {
 		return err
 	}
 
-	m.logger.Info("✅ Torrent successfully sent to download client! Hash:", hash)
+	m.logger.Info("Torrent successfully sent to download client! Hash:", hash)
 
 	if err := m.mediaRepo.UpdateDownloadInfo(id, models.StatusDownloading, &hash, &torrent.Title); err != nil {
 		m.logger.Error("Failed to update media status after adding torrent:", err)
@@ -848,20 +786,13 @@ func (m *Manager) PerformEpisodeSearch(mediaID int, seasonNumber int, episodeNum
 		return nil, err
 	}
 
-	// Score and sort results
-	for i := range results {
-		results[i].Score = getQualityScore(results[i].Title)
-		results[i].Score += results[i].Seeders
-	}
-
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
-	})
+	// Use the TorrentSelector to filter and score the results
+	filteredResults := m.torrentSelector.FilterAndScoreTorrents(media, results, seasonNumber, episodeNumber)
 
 	m.logger.Info(fmt.Sprintf("Found %d results for %s S%02dE%02d",
-		len(results), media.Title, seasonNumber, episodeNumber))
+		len(filteredResults), media.Title, seasonNumber, episodeNumber))
 
-	return results, nil
+	return filteredResults, nil
 }
 
 // StartEpisodeDownload starts downloading a specific episode with a chosen torrent
@@ -878,7 +809,7 @@ func (m *Manager) StartEpisodeDownload(mediaID int, seasonNumber int, episodeNum
 		return fmt.Errorf("media is not a TV show")
 	}
 
-	m.logger.Info(fmt.Sprintf("🚀 Starting manual download for %s S%02dE%02d: %s",
+	m.logger.Info(fmt.Sprintf("Starting manual download for %s S%02dE%02d: %s",
 		media.Title, seasonNumber, episodeNumber, torrent.Title))
 
 	// Start the torrent download
@@ -888,7 +819,7 @@ func (m *Manager) StartEpisodeDownload(mediaID int, seasonNumber int, episodeNum
 		return err
 	}
 
-	m.logger.Info("✅ Episode torrent successfully sent to download client! Hash:", hash)
+	m.logger.Info("Episode torrent successfully sent to download client! Hash:", hash)
 
 	// Update the specific episode status in database
 	if err := m.mediaRepo.UpdateEpisodeDownloadInfo(mediaID, seasonNumber, episodeNumber, models.StatusDownloading, &hash, &torrent.Title); err != nil {
