@@ -176,7 +176,6 @@ func (m *Manager) startSearchQueueWorker() {
 		} else if media.Type == models.MediaTypeTVShow {
 			m.searchAndDownloadNextEpisode(&media)
 		}
-		m.logger.Info("Waiting 30s before next search...")
 		time.Sleep(30 * time.Second)
 	}
 }
@@ -374,8 +373,12 @@ func (m *Manager) searchAndDownloadNextEpisode(media *models.Media) {
 		return
 	}
 
+	downloadsStarted := 0
 	for _, season := range show.Seasons {
 		for _, episode := range season.Episodes {
+			if downloadsStarted >= m.config.Automation.MaxConcurrentDownloads {
+				return
+			}
 			if episode.Status == models.StatusPending {
 				m.logger.Info("🔍 Searching for episode:", media.Title, fmt.Sprintf("S%02dE%02d", season.SeasonNumber, episode.EpisodeNumber))
 				results, err := m.performSearch(media, season.SeasonNumber, episode.EpisodeNumber)
@@ -387,13 +390,14 @@ func (m *Manager) searchAndDownloadNextEpisode(media *models.Media) {
 				bestTorrent := m.selectBestTorrent(media, results)
 				if bestTorrent != nil {
 					m.StartDownload(media.ID, *bestTorrent)
-					// We only download one episode at a time from the queue
-					return
+					downloadsStarted++
 				}
 			}
 		}
 	}
-	m.logger.Info("No pending episodes to download for", media.Title)
+	if downloadsStarted == 0 {
+		m.logger.Info("No pending episodes to download for", media.Title)
+	}
 }
 
 func (m *Manager) selectBestTorrent(media *models.Media, results []indexers.IndexerResult) *indexers.IndexerResult {
@@ -507,7 +511,111 @@ func (m *Manager) processPendingMedia() {
 }
 
 func (m *Manager) checkForNewEpisodes() {
-	// This function will re-check ongoing shows for new episodes
+	m.logger.Info("Checking for new episodes...")
+	media, err := m.mediaRepo.GetAll()
+	if err != nil {
+		m.logger.Error("Failed to get all media for new episode check:", err)
+		return
+	}
+
+	for _, item := range media {
+		if item.Type == models.MediaTypeTVShow {
+			provider := m.metadataClients[models.MediaTypeTVShow][0] // Assuming first provider
+			m.updateShowMetadata(&item, provider)
+		}
+	}
+}
+
+func (m *Manager) updateShowMetadata(media *models.Media, provider metadata.Client) {
+	m.logger.Info("Updating metadata for show:", media.Title)
+	remoteShow, err := provider.SearchTVShow(media.Title)
+	if err != nil {
+		m.logger.Error("Failed to fetch remote show data for", media.Title, ":", err)
+		return
+	}
+
+	localShow, err := m.mediaRepo.GetTVShowByMediaID(media.ID)
+	if err != nil {
+		m.logger.Error("Failed to get local show data for", media.Title, ":", err)
+		return
+	}
+
+	// Logic to compare and update seasons and episodes
+	// ... (This would be a comprehensive comparison logic)
+	// For now, let's just re-add and update statuses
+	for seasonNum, episodes := range remoteShow.Seasons {
+		var localSeason *models.Season
+		for i := range localShow.Seasons {
+			if localShow.Seasons[i].SeasonNumber == seasonNum {
+				localSeason = &localShow.Seasons[i]
+				break
+			}
+		}
+
+		if localSeason == nil {
+			// New season
+			newSeason := &models.Season{ShowID: localShow.ID, SeasonNumber: seasonNum}
+			m.mediaRepo.CreateSeason(newSeason)
+			localShow.Seasons = append(localShow.Seasons, *newSeason)
+			localSeason = newSeason
+		}
+
+		for _, remoteEpisode := range episodes {
+			var localEpisode *models.Episode
+			for i := range localSeason.Episodes {
+				if localSeason.Episodes[i].EpisodeNumber == remoteEpisode.EpisodeNumber {
+					localEpisode = &localSeason.Episodes[i]
+					break
+				}
+			}
+
+			if localEpisode == nil {
+				// New episode
+				status := models.StatusPending
+				airDate, _ := time.Parse("2006-01-02", remoteEpisode.AirDate)
+				if airDate.After(time.Now()) {
+					status = models.StatusTBA
+				}
+				newEpisode := &models.Episode{
+					SeasonID:      localSeason.ID,
+					EpisodeNumber: remoteEpisode.EpisodeNumber,
+					Title:         remoteEpisode.Title,
+					AirDate:       remoteEpisode.AirDate,
+					Status:        status,
+				}
+				m.mediaRepo.CreateEpisode(newEpisode)
+			} else if localEpisode.Status == models.StatusTBA {
+				airDate, _ := time.Parse("2006-01-02", remoteEpisode.AirDate)
+				if airDate.Before(time.Now()) {
+					m.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, seasonNum, localEpisode.EpisodeNumber, models.StatusPending, nil, nil)
+				}
+			}
+		}
+	}
+	m.updateShowProgress(media.ID)
+}
+
+func (m *Manager) updateShowProgress(mediaID int) {
+	show, err := m.mediaRepo.GetTVShowByMediaID(mediaID)
+	if err != nil {
+		return
+	}
+	var totalProgress float64
+	var downloadableEpisodes int
+	for _, season := range show.Seasons {
+		for _, episode := range season.Episodes {
+			if episode.Status != models.StatusSkipped && episode.Status != models.StatusTBA {
+				downloadableEpisodes++
+				if episode.Status == models.StatusDownloaded {
+					totalProgress += 1.0
+				}
+			}
+		}
+	}
+	if downloadableEpisodes > 0 {
+		progress := totalProgress / float64(downloadableEpisodes)
+		m.mediaRepo.UpdateProgress(mediaID, models.StatusDownloading, progress, nil)
+	}
 }
 
 func (m *Manager) updateDownloadStatus() {
