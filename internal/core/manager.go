@@ -115,8 +115,8 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 	m := &Manager{
 		config:          cfg,
 		mediaRepo:       models.NewMediaRepository(db),
-		torrentSelector: NewTorrentSelector(cfg, logger),
-		postProcessor:   NewPostProcessor(cfg, logger),
+		torrentSelector: NewTorrentSelector(cfg, logger), // Assuming this exists
+		postProcessor:   NewPostProcessor(cfg, logger, models.NewMediaRepository(db)),
 		logger:          logger,
 		scheduler:       cron.New(),
 		searchQueue:     make(chan models.Media, 100),
@@ -693,9 +693,6 @@ func (m *Manager) updateDownloadStatus() {
 				now := time.Now()
 				completedAt = &now
 
-				// Start post-processing in a new goroutine to avoid blocking
-				go m.postProcessor.ProcessDownload(media, status)
-
 				if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
 					show, err := m.mediaRepo.GetTVShowByMediaID(media.ID)
 					if err == nil {
@@ -704,6 +701,8 @@ func (m *Manager) updateDownloadStatus() {
 							for _, episode := range season.Episodes {
 								// This assumes only one episode downloads at a time for a given show
 								if episode.Status == models.StatusDownloading {
+									// Start post-processing in a new goroutine to avoid blocking
+									go m.postProcessor.ProcessDownload(media, status, season.SeasonNumber)
 									m.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, season.SeasonNumber, episode.EpisodeNumber, models.StatusDownloaded, nil, nil)
 									goto ShowStatusUpdate
 								}
@@ -711,6 +710,9 @@ func (m *Manager) updateDownloadStatus() {
 						}
 					}
 				}
+
+				// For movies, start post-processing with season 0
+				go m.postProcessor.ProcessDownload(media, status, 0)
 				// For movies, just update the main media item
 				m.mediaRepo.UpdateProgress(media.ID, models.StatusDownloaded, 1.0, completedAt)
 
