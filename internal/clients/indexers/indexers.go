@@ -4,7 +4,8 @@ import "time"
 
 // Client is the interface for all indexer providers.
 type Client interface {
-	SearchMovies(query string, tmdbID string) ([]IndexerResult, error)
+	SearchMovies(query string, tmdbID string, searchMode string) ([]IndexerResult, error)
+	SearchTVShows(query string, season int, episode int, searchMode string) ([]IndexerResult, error)
 	HealthCheck() (bool, error)
 }
 

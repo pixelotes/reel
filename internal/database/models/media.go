@@ -11,6 +11,7 @@ type MediaType string
 const (
 	MediaTypeMovie  MediaType = "movie"
 	MediaTypeTVShow MediaType = "tvshow"
+	MediaTypeAnime  MediaType = "anime"
 )
 
 type MediaStatus string
@@ -192,7 +193,7 @@ func (r *MediaRepository) GetAll() ([]Media, error) {
         FROM media ORDER BY added_at DESC
     `
 
-	fmt.Printf("DEBUG: Executing GetAll query: %s\n", query)
+	//fmt.Printf("DEBUG: Executing GetAll query: %s\n", query)
 
 	rows, err := r.db.Query(query)
 	if err != nil {

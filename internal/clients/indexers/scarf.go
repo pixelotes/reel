@@ -68,9 +68,12 @@ func NewScarfClient(baseURL, apiKey string, timeout time.Duration) *ScarfClient 
 	}
 }
 
-func (s *ScarfClient) SearchMovies(query string, tmdbID string) ([]IndexerResult, error) {
+func (s *ScarfClient) SearchMovies(query string, tmdbID string, searchMode string) ([]IndexerResult, error) {
 	params := url.Values{}
-	params.Add("t", "movie-search") // Use t=movie-search for movie-specific search
+	if searchMode == "" {
+		searchMode = "movie-search"
+	}
+	params.Add("t", searchMode)
 	params.Add("q", query)
 	params.Add("apikey", s.apiKey)
 	if tmdbID != "" {
@@ -88,6 +91,65 @@ func (s *ScarfClient) SearchMovies(query string, tmdbID string) ([]IndexerResult
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("Scarf search failed with status: %d", resp.StatusCode)
+	}
+
+	var torznabResp TorznabFeed
+	decoder := xml.NewDecoder(resp.Body)
+	decoder.CharsetReader = charset.NewReaderLabel
+	if err := decoder.Decode(&torznabResp); err != nil {
+		return nil, fmt.Errorf("failed to decode Scarf Torznab response: %w", err)
+	}
+
+	results := make([]IndexerResult, len(torznabResp.Channel.Items))
+	for i, item := range torznabResp.Channel.Items {
+		pubDate, _ := time.Parse(time.RFC1123Z, item.PubDate)
+		results[i] = IndexerResult{
+			Title:       item.Title,
+			Size:        item.Size,
+			Seeders:     item.GetIntAttr("seeders"),
+			Leechers:    item.GetIntAttr("leechers"),
+			DownloadURL: item.Link,
+			PublishDate: pubDate,
+			Indexer:     "Scarf",
+		}
+	}
+	return results, nil
+}
+
+func (s *ScarfClient) SearchTVShows(query string, season int, episode int, searchMode string) ([]IndexerResult, error) {
+	params := url.Values{}
+	effectiveSearchMode := searchMode
+	if effectiveSearchMode == "" {
+		effectiveSearchMode = "tv-search"
+	}
+	params.Add("t", effectiveSearchMode)
+
+	// Only add season and episode if not in generic search mode
+	if effectiveSearchMode != "search" {
+		params.Add("q", query)
+		if season > 0 {
+			params.Add("season", strconv.Itoa(season))
+		}
+		if episode > 0 {
+			params.Add("ep", strconv.Itoa(episode))
+		}
+	} else {
+		// For generic search, the query should already be fully formed
+		params.Add("q", query)
+	}
+
+	params.Add("apikey", s.apiKey)
+
+	searchURL := fmt.Sprintf("%s?%s", s.baseURL, params.Encode())
+
+	resp, err := s.httpClient.Get(searchURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search Scarf for TV shows: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Scarf TV show search failed with status: %d", resp.StatusCode)
 	}
 
 	var torznabResp TorznabFeed

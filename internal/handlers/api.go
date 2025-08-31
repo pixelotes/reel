@@ -58,7 +58,7 @@ func (h *APIHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 // Get all media
 func (h *APIHandler) GetMedia(w http.ResponseWriter, r *http.Request) {
-	h.logger.Info("=== GetMedia API called ===")
+	//h.logger.Info("=== GetMedia API called ===")
 
 	media, err := h.manager.GetAllMedia()
 	if err != nil {
@@ -75,7 +75,7 @@ func (h *APIHandler) GetMedia(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, media)
-	h.logger.Info("GetMedia: Response sent successfully")
+	//h.logger.Info("GetMedia: Response sent successfully")
 }
 
 // Add new media

@@ -43,7 +43,7 @@ func NewTMDBClient(apiKey, language string) *TMDBClient {
 	}
 }
 
-func (t *TMDBClient) SearchMovie(title string, year int) (*MovieResult, error) {
+func (t *TMDBClient) SearchMovie(title string, year int) ([]*MovieResult, error) {
 	params := url.Values{}
 	params.Add("api_key", t.apiKey)
 	params.Add("language", t.language)
@@ -97,29 +97,36 @@ func (t *TMDBClient) SearchMovie(title string, year int) (*MovieResult, error) {
 		return nil, fmt.Errorf("no results found on TMDB for '%s'", title)
 	}
 
-	result := searchResp.Results[0]
-	movieYear := 0
-	if result.ReleaseDate != "" {
-		if releaseTime, err := time.Parse("2006-01-02", result.ReleaseDate); err == nil {
-			movieYear = releaseTime.Year()
+	var results []*MovieResult
+	for i, result := range searchResp.Results {
+		if i >= 5 {
+			break
 		}
+		movieYear := 0
+		if result.ReleaseDate != "" {
+			if releaseTime, err := time.Parse("2006-01-02", result.ReleaseDate); err == nil {
+				movieYear = releaseTime.Year()
+			}
+		}
+
+		posterURL := ""
+		if result.PosterPath != "" {
+			posterURL = "https://image.tmdb.org/t/p/w500" + result.PosterPath
+		}
+
+		results = append(results, &MovieResult{
+			ID:        strconv.Itoa(result.ID),
+			Title:     result.Title,
+			Year:      movieYear,
+			Overview:  result.Overview,
+			PosterURL: posterURL,
+			Rating:    result.VoteAverage,
+		})
 	}
 
-	posterURL := ""
-	if result.PosterPath != "" {
-		posterURL = "https://image.tmdb.org/t/p/w500" + result.PosterPath
-	}
-
-	return &MovieResult{
-		ID:        strconv.Itoa(result.ID),
-		Title:     result.Title,
-		Year:      movieYear,
-		Overview:  result.Overview,
-		PosterURL: posterURL,
-		Rating:    result.VoteAverage,
-	}, nil
+	return results, nil
 }
 
-func (t *TMDBClient) SearchTVShow(title string) (*TVShowResult, error) {
+func (t *TMDBClient) SearchTVShow(title string) ([]*TVShowResult, error) {
 	return nil, fmt.Errorf("TMDB TV show search not implemented")
 }

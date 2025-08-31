@@ -7,14 +7,23 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// SourceConfig defines the structure for an indexer source
+type SourceConfig struct {
+	Type       string `yaml:"type"`
+	URL        string `yaml:"url"`
+	APIKey     string `yaml:"api_key"`
+	SearchMode string `yaml:"search_mode,omitempty"`
+}
+
 type Config struct {
 	App struct {
-		Port       int    `yaml:"port"`
-		DataPath   string `yaml:"data_path"`
-		UIEnabled  bool   `yaml:"ui_enabled"`
-		UIPassword string `yaml:"ui_password"`
-		Debug      bool   `yaml:"debug"`
-		JWTSecret  string `yaml:"jwt_secret"`
+		Port           int    `yaml:"port"`
+		DataPath       string `yaml:"data_path"`
+		UIEnabled      bool   `yaml:"ui_enabled"`
+		UIPassword     string `yaml:"ui_password"`
+		Debug          bool   `yaml:"debug"`
+		JWTSecret      string `yaml:"jwt_secret"`
+		FilterLogLevel string `yaml:"filter_log_level"` // "none" or "detail"
 	} `yaml:"app"`
 
 	TorrentClient struct {
@@ -36,36 +45,27 @@ type Config struct {
 		TVmaze struct {
 			APIKey string `yaml:"api_key"`
 		} `yaml:"tvmaze"`
-		AniDB struct {
-			APIKey string `yaml:"api_key"`
-		} `yaml:"anidb"`
+		AniList struct {
+			// AniList doesn't require an API key for public queries
+		} `yaml:"anilist"`
+		Trakt struct { // Add this section
+			ClientID string `yaml:"client_id"`
+		} `yaml:"trakt"`
 	} `yaml:"metadata"`
 
 	Movies struct {
-		Providers []string `yaml:"providers"`
-		Sources   []struct {
-			Type   string `yaml:"type"`
-			URL    string `yaml:"url"`
-			APIKey string `yaml:"api_key"`
-		} `yaml:"sources"`
+		Providers []string       `yaml:"providers"`
+		Sources   []SourceConfig `yaml:"sources"`
 	} `yaml:"movies"`
 
 	TVShows struct {
-		Providers []string `yaml:"providers"`
-		Sources   []struct {
-			Type   string `yaml:"type"`
-			URL    string `yaml:"url"`
-			APIKey string `yaml:"api_key"`
-		} `yaml:"sources"`
+		Providers []string       `yaml:"providers"`
+		Sources   []SourceConfig `yaml:"sources"`
 	} `yaml:"tv-shows"`
 
 	Anime struct {
-		Providers []string `yaml:"providers"`
-		Sources   []struct {
-			Type   string `yaml:"type"`
-			URL    string `yaml:"url"`
-			APIKey string `yaml:"api_key"`
-		} `yaml:"sources"`
+		Providers []string       `yaml:"providers"`
+		Sources   []SourceConfig `yaml:"sources"`
 	} `yaml:"anime"`
 
 	Database struct {

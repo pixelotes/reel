@@ -13,7 +13,7 @@ func NewIMDBClient(apiKey string) *IMDBClient {
 	return &IMDBClient{apiKey: apiKey}
 }
 
-func (c *IMDBClient) SearchMovie(title string, year int) (*MovieResult, error) {
+func (c *IMDBClient) SearchMovie(title string, year int) ([]*MovieResult, error) {
 	// This is a mock implementation.
 	if c.apiKey == "" {
 		return nil, fmt.Errorf("IMDb API key is missing (feature is a placeholder)")
@@ -25,6 +25,6 @@ func (c *IMDBClient) SearchMovie(title string, year int) (*MovieResult, error) {
 	return nil, fmt.Errorf("IMDb search not implemented")
 }
 
-func (c *IMDBClient) SearchTVShow(title string) (*TVShowResult, error) {
+func (c *IMDBClient) SearchTVShow(title string) ([]*TVShowResult, error) {
 	return nil, fmt.Errorf("IMDb TV show search not implemented")
 }

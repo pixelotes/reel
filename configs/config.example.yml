@@ -13,6 +13,11 @@ torrent_client:
   password: ""
   download_path: "/downloads/media"
 
+reject-common:
+  - \bscreener\b
+  - \bhdcam\b
+  - \btelecine\b
+
 metadata:
   language: "en"
   tmdb:
@@ -21,8 +26,9 @@ metadata:
     api_key: "" # Placeholder for future use
   tvmaze:
     api_key: "" # No key needed for basic use
-  anidb:
-    api_key: "" # Placeholder for future use
+  anilist: {} # No config needed for public queries
+  trakt: # Add this section
+    client_id: "your_trakt_client_id_here"
 
 movies:
   providers: ["tmdb", "imdb"] # Order of preference

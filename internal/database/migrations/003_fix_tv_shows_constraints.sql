@@ -1,5 +1,3 @@
--- Create a new migration file: internal/database/migrations/003_fix_tv_show_constraints.sql
-
 -- Drop the existing unique constraint that's causing issues
 DROP INDEX IF EXISTS idx_media_tmdb_id_type;
 

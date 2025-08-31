@@ -34,7 +34,7 @@ var QUALITY_SCORES = map[string]int{
 	"cam": 1, "ts": 1,
 	// Codec
 	"av1": 5, "x265": 3, "h265": 3, "hevc": 3,
-	"x264": 2, "h264": 2, "avc": 2,
+	"x264": 2, "h264": 2, "avc": 2, "xvid": 1,
 	// Audio
 	"atmos": 3, "truehd": 3, "dts-hd": 3, "dts-x": 3,
 	"dts": 2, "ac3": 1, "aac": 1,
@@ -47,8 +47,8 @@ var RESOLUTION_SYNONYMS = map[string][]string{
 	"2160p": {"2160p", "4k", "uhd"},
 	"1440p": {"1440p", "2k"},
 	"1080p": {"1080p", "fhd"},
-	"720p":  {"720p", "hd"},
-	"480p":  {"480p", "sd"},
+	"720p":  {"720p", "hd", "hdtv"},
+	"480p":  {"480p", "sd", "msd", "xvid"},
 	"360p":  {"360p"},
 }
 
@@ -75,10 +75,15 @@ func getQualityScore(title string) int {
 	return score
 }
 
+type IndexerClientWithMode struct {
+	Client     indexers.Client
+	SearchMode string
+}
+
 type Manager struct {
 	config          *config.Config
 	mediaRepo       *models.MediaRepository
-	indexerClients  map[models.MediaType][]indexers.Client
+	indexerClients  map[models.MediaType][]IndexerClientWithMode
 	metadataClients map[models.MediaType][]metadata.Client
 	torrentClient   torrent.TorrentClient
 	torrentSelector *TorrentSelector
@@ -95,7 +100,7 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		logger:          logger,
 		scheduler:       cron.New(),
 		searchQueue:     make(chan models.Media, 100),
-		indexerClients:  make(map[models.MediaType][]indexers.Client),
+		indexerClients:  make(map[models.MediaType][]IndexerClientWithMode),
 		metadataClients: make(map[models.MediaType][]metadata.Client),
 	}
 
@@ -110,16 +115,16 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 			return metadata.NewIMDBClient(cfg.Metadata.IMDB.APIKey)
 		case "tvmaze":
 			return metadata.NewTVmazeClient()
+		case "anilist":
+			return metadata.NewAniListClient()
+		case "trakt": // Add this case
+			return metadata.NewTraktClient(cfg.Metadata.Trakt.ClientID)
 		}
 		return nil
 	}
 
 	// Helper function to initialize indexer sources
-	initIndexerClient := func(source struct {
-		Type   string `yaml:"type"`
-		URL    string `yaml:"url"`
-		APIKey string `yaml:"api_key"`
-	}) indexers.Client {
+	initIndexerClient := func(source config.SourceConfig) indexers.Client {
 		switch source.Type {
 		case "scarf":
 			timeout, _ := time.ParseDuration("30s")
@@ -138,7 +143,10 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 	}
 	for _, source := range cfg.Movies.Sources {
 		if client := initIndexerClient(source); client != nil {
-			m.indexerClients[models.MediaTypeMovie] = append(m.indexerClients[models.MediaTypeMovie], client)
+			m.indexerClients[models.MediaTypeMovie] = append(m.indexerClients[models.MediaTypeMovie], IndexerClientWithMode{
+				Client:     client,
+				SearchMode: source.SearchMode,
+			})
 		}
 	}
 
@@ -150,7 +158,25 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 	}
 	for _, source := range cfg.TVShows.Sources {
 		if client := initIndexerClient(source); client != nil {
-			m.indexerClients[models.MediaTypeTVShow] = append(m.indexerClients[models.MediaTypeTVShow], client)
+			m.indexerClients[models.MediaTypeTVShow] = append(m.indexerClients[models.MediaTypeTVShow], IndexerClientWithMode{
+				Client:     client,
+				SearchMode: source.SearchMode,
+			})
+		}
+	}
+
+	// Initialize Anime Clients
+	for _, providerName := range cfg.Anime.Providers {
+		if client := initMetadataProvider(providerName); client != nil {
+			m.metadataClients[models.MediaTypeAnime] = append(m.metadataClients[models.MediaTypeAnime], client)
+		}
+	}
+	for _, source := range cfg.Anime.Sources {
+		if client := initIndexerClient(source); client != nil {
+			m.indexerClients[models.MediaTypeAnime] = append(m.indexerClients[models.MediaTypeAnime], IndexerClientWithMode{
+				Client:     client,
+				SearchMode: source.SearchMode,
+			})
 		}
 	}
 
@@ -174,7 +200,7 @@ func (m *Manager) startSearchQueueWorker() {
 	for media := range m.searchQueue {
 		if media.Type == models.MediaTypeMovie {
 			m.searchAndDownloadMovie(&media)
-		} else if media.Type == models.MediaTypeTVShow {
+		} else if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
 			m.searchAndDownloadNextEpisode(&media)
 		}
 		time.Sleep(30 * time.Second)
@@ -183,7 +209,7 @@ func (m *Manager) startSearchQueueWorker() {
 
 func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, year int, language, minQuality, maxQuality string, autoDownload bool, startSeason, startEpisode int) (*models.Media, error) {
 	m.logger.Info("=== STARTING AddMedia FUNCTION ===")
-	m.logger.Info("Parameters - Type:", mediaType, "ID:", id, "Title:", title, "Year:", year)
+	m.logger.Info("Parameters - Type:", mediaType, "ID:", id, "Title:", title, "Year:", year, "StartSeason:", startSeason, "StartEpisode:", startEpisode)
 
 	var overview, posterURL *string
 	var rating *float64
@@ -203,37 +229,38 @@ func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, 
 			movieData, err := client.SearchMovie(title, year)
 			if err != nil {
 				m.logger.Error("Movie metadata search failed:", err)
-			} else if movieData != nil {
-				m.logger.Info("Movie metadata found - ID:", movieData.ID, "Title:", movieData.Title)
+			} else if len(movieData) > 0 {
+				m.logger.Info("Movie metadata found - ID:", movieData[0].ID, "Title:", movieData[0].Title)
 				// Parse TMDB ID
-				if tmdbID, parseErr := strconv.Atoi(movieData.ID); parseErr == nil {
+				if tmdbID, parseErr := strconv.Atoi(movieData[0].ID); parseErr == nil {
 					metadataID = &tmdbID
 					m.logger.Info("Parsed TMDB ID:", *metadataID)
 				} else {
-					m.logger.Error("Failed to parse TMDB ID:", movieData.ID, "Error:", parseErr)
+					m.logger.Error("Failed to parse TMDB ID:", movieData[0].ID, "Error:", parseErr)
 				}
 
-				overview = &movieData.Overview
-				posterURL = &movieData.PosterURL
-				rating = &movieData.Rating
+				overview = &movieData[0].Overview
+				posterURL = &movieData[0].PosterURL
+				rating = &movieData[0].Rating
 				if title == "" {
-					title = movieData.Title
+					title = movieData[0].Title
 				}
 				if year == 0 {
-					year = movieData.Year
+					year = movieData[0].Year
 				}
 				m.logger.Info("Movie data processed successfully")
 			} else {
 				m.logger.Info("No movie metadata found")
 			}
-		} else if mediaType == models.MediaTypeTVShow {
-			m.logger.Info("Processing TV show metadata...")
+		} else if mediaType == models.MediaTypeTVShow || mediaType == models.MediaTypeAnime {
+			m.logger.Info("Processing TV show/anime metadata...")
 			var err error
-			tvShowData, err = client.SearchTVShow(title)
+			tvShowDataSlice, err := client.SearchTVShow(title)
 			if err != nil {
-				m.logger.Error("TV show metadata search failed:", err)
-			} else if tvShowData != nil {
-				m.logger.Info("TV show metadata found - ID:", tvShowData.ID, "Title:", tvShowData.Title)
+				m.logger.Error("TV show/anime metadata search failed:", err)
+			} else if len(tvShowDataSlice) > 0 {
+				tvShowData = tvShowDataSlice[0]
+				m.logger.Info("TV show/anime metadata found - ID:", tvShowData.ID, "Title:", tvShowData.Title)
 				overview = &tvShowData.Overview
 				posterURL = &tvShowData.PosterURL
 				rating = &tvShowData.Rating
@@ -243,27 +270,27 @@ func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, 
 				if year == 0 {
 					year = tvShowData.Year
 				}
-				m.logger.Info("TV show data processed successfully")
+				m.logger.Info("TV show/anime data processed successfully")
 			} else {
-				m.logger.Info("No TV show metadata found")
+				m.logger.Info("No TV show/anime metadata found")
 			}
 		}
 	}
 
 	var tvShowID *int
-	if mediaType == models.MediaTypeTVShow && tvShowData != nil {
-		m.logger.Info("Creating TV show database entries...")
+	if (mediaType == models.MediaTypeTVShow || mediaType == models.MediaTypeAnime) && tvShowData != nil {
+		m.logger.Info("Creating TV show/anime database entries...")
 		show := &models.TVShow{
 			Status:   tvShowData.Status,
-			TVmazeID: tvShowData.ID,
+			TVmazeID: tvShowData.ID, // Using TVmazeID for both for now
 		}
 
-		m.logger.Info("Creating TV show record...")
+		m.logger.Info("Creating TV show/anime record...")
 		if err := m.mediaRepo.CreateTVShow(show); err != nil {
-			m.logger.Error("CRITICAL: Failed to create TV show:", err)
-			return nil, fmt.Errorf("failed to create tv show: %w", err)
+			m.logger.Error("CRITICAL: Failed to create TV show/anime:", err)
+			return nil, fmt.Errorf("failed to create tv show/anime: %w", err)
 		}
-		m.logger.Info("TV show created with ID:", show.ID)
+		m.logger.Info("TV show/anime created with ID:", show.ID)
 		tvShowID = &show.ID
 
 		m.logger.Info("Creating", len(tvShowData.Seasons), "seasons...")
@@ -278,10 +305,13 @@ func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, 
 
 			for _, ep := range episodes {
 				status := models.StatusPending
-				airDate, _ := time.Parse("2006-01-02", ep.AirDate)
-				if airDate.After(time.Now()) {
-					status = models.StatusTBA
-				} else if seasonNum < startSeason || (seasonNum == startSeason && ep.EpisodeNumber < startEpisode) {
+				if ep.AirDate != "" {
+					airDate, _ := time.Parse("2006-01-02", ep.AirDate)
+					if airDate.After(time.Now()) {
+						status = models.StatusTBA
+					}
+				}
+				if seasonNum < startSeason || (seasonNum == startSeason && ep.EpisodeNumber < startEpisode) {
 					status = models.StatusSkipped
 				}
 				episode := &models.Episode{
@@ -297,7 +327,7 @@ func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, 
 				}
 			}
 		}
-		m.logger.Info("All TV show data created successfully")
+		m.logger.Info("All TV show/anime data created successfully")
 	}
 
 	m.logger.Info("Creating main media record...")
@@ -390,8 +420,9 @@ func (m *Manager) searchAndDownloadNextEpisode(media *models.Media) {
 
 				bestTorrent := m.torrentSelector.SelectBestTorrent(media, results, season.SeasonNumber, episode.EpisodeNumber)
 				if bestTorrent != nil {
-					m.StartDownload(media.ID, *bestTorrent)
+					m.StartEpisodeDownload(media.ID, season.SeasonNumber, episode.EpisodeNumber, *bestTorrent)
 					downloadsStarted++
+					time.Sleep(5 * time.Second) // Add a 5-second delay between each download
 				}
 			}
 		}
@@ -463,20 +494,28 @@ func (m *Manager) checkForNewEpisodes() {
 	}
 
 	for _, item := range media {
-		if item.Type == models.MediaTypeTVShow {
-			provider := m.metadataClients[models.MediaTypeTVShow][0] // Assuming first provider
-			m.updateShowMetadata(&item, provider)
+		if item.Type == models.MediaTypeTVShow || item.Type == models.MediaTypeAnime {
+			if item.Status == models.StatusMonitoring || item.Status == models.StatusPending {
+				provider := m.metadataClients[item.Type][0] // Assuming first provider
+				m.updateShowMetadata(&item, provider)
+			}
 		}
 	}
 }
 
 func (m *Manager) updateShowMetadata(media *models.Media, provider metadata.Client) {
 	m.logger.Info("Updating metadata for show:", media.Title)
-	remoteShow, err := provider.SearchTVShow(media.Title)
+	remoteShowSlice, err := provider.SearchTVShow(media.Title)
 	if err != nil {
 		m.logger.Error("Failed to fetch remote show data for", media.Title, ":", err)
 		return
 	}
+
+	if len(remoteShowSlice) == 0 {
+		m.logger.Error("No remote show data found for", media.Title)
+		return
+	}
+	remoteShow := remoteShowSlice[0]
 
 	localShow, err := m.mediaRepo.GetTVShowByMediaID(media.ID)
 	if err != nil {
@@ -516,9 +555,11 @@ func (m *Manager) updateShowMetadata(media *models.Media, provider metadata.Clie
 			if localEpisode == nil {
 				// New episode
 				status := models.StatusPending
-				airDate, _ := time.Parse("2006-01-02", remoteEpisode.AirDate)
-				if airDate.After(time.Now()) {
-					status = models.StatusTBA
+				if remoteEpisode.AirDate != "" {
+					airDate, _ := time.Parse("2006-01-02", remoteEpisode.AirDate)
+					if airDate.After(time.Now()) {
+						status = models.StatusTBA
+					}
 				}
 				newEpisode := &models.Episode{
 					SeasonID:      localSeason.ID,
@@ -528,10 +569,18 @@ func (m *Manager) updateShowMetadata(media *models.Media, provider metadata.Clie
 					Status:        status,
 				}
 				m.mediaRepo.CreateEpisode(newEpisode)
-			} else if localEpisode.Status == models.StatusTBA {
+				// If a new episode is found, set the media status to pending
+				if media.Status == models.StatusMonitoring {
+					m.mediaRepo.UpdateStatus(media.ID, models.StatusPending)
+				}
+			} else if localEpisode.Status == models.StatusTBA && remoteEpisode.AirDate != "" {
 				airDate, _ := time.Parse("2006-01-02", remoteEpisode.AirDate)
 				if airDate.Before(time.Now()) {
 					m.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, seasonNum, localEpisode.EpisodeNumber, models.StatusPending, nil, nil)
+					// If a TBA episode becomes available, set the media status to pending
+					if media.Status == models.StatusMonitoring {
+						m.mediaRepo.UpdateStatus(media.ID, models.StatusPending)
+					}
 				}
 			}
 		}
@@ -542,24 +591,52 @@ func (m *Manager) updateShowMetadata(media *models.Media, provider metadata.Clie
 func (m *Manager) updateShowProgress(mediaID int) {
 	show, err := m.mediaRepo.GetTVShowByMediaID(mediaID)
 	if err != nil {
+		m.logger.Error("Failed to get show for progress update:", err)
 		return
 	}
-	var totalProgress float64
-	var downloadableEpisodes int
+	if show == nil {
+		return // Not a show, nothing to do
+	}
+
+	var downloadableEpisodes, downloadedEpisodes, pendingEpisodes, tbaEpisodes int
+
 	for _, season := range show.Seasons {
 		for _, episode := range season.Episodes {
+			// Count episodes for progress calculation
 			if episode.Status != models.StatusSkipped && episode.Status != models.StatusTBA {
 				downloadableEpisodes++
 				if episode.Status == models.StatusDownloaded {
-					totalProgress += 1.0
+					downloadedEpisodes++
 				}
+			}
+			// Count episodes for status determination
+			if episode.Status == models.StatusPending || episode.Status == models.StatusDownloading {
+				pendingEpisodes++
+			}
+			if episode.Status == models.StatusTBA {
+				tbaEpisodes++
 			}
 		}
 	}
+
+	var progress float64
 	if downloadableEpisodes > 0 {
-		progress := totalProgress / float64(downloadableEpisodes)
-		m.mediaRepo.UpdateProgress(mediaID, models.StatusDownloading, progress, nil)
+		progress = float64(downloadedEpisodes) / float64(downloadableEpisodes)
 	}
+
+	// Determine the new overall status for the media item
+	newStatus := models.StatusDownloading
+	if pendingEpisodes == 0 {
+		if tbaEpisodes > 0 || strings.ToLower(show.Status) == "running" {
+			newStatus = models.StatusMonitoring
+		} else {
+			newStatus = models.StatusDownloaded
+		}
+	}
+
+	// Use the generic UpdateProgress which now handles status correctly
+	m.mediaRepo.UpdateProgress(mediaID, newStatus, progress, nil)
+	m.logger.Info("Updated show progress for Media ID", mediaID, "New Status:", newStatus, "Progress:", progress)
 }
 
 func (m *Manager) updateDownloadStatus() {
@@ -574,20 +651,44 @@ func (m *Manager) updateDownloadStatus() {
 			status, err := m.torrentClient.GetTorrentStatus(*media.TorrentHash)
 			if err != nil {
 				m.logger.Error("Failed to get torrent status for", media.Title, ":", err)
-				if err := m.mediaRepo.UpdateStatus(media.ID, models.StatusFailed); err != nil {
-					m.logger.Error("Failed to update media status to failed for", media.Title, ":", err)
-				}
+				m.mediaRepo.UpdateStatus(media.ID, models.StatusFailed)
 				continue
 			}
 
-			newStatus := models.StatusDownloading
-			var completedAt *time.Time
+			// If the torrent is completed, update the specific episode
 			if status.IsCompleted {
-				newStatus = models.StatusDownloaded
+				var completedAt *time.Time
 				now := time.Now()
 				completedAt = &now
+
+				if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+					show, err := m.mediaRepo.GetTVShowByMediaID(media.ID)
+					if err == nil {
+						// Find the downloading episode and mark it as downloaded
+						for _, season := range show.Seasons {
+							for _, episode := range season.Episodes {
+								// This assumes only one episode downloads at a time for a given show
+								if episode.Status == models.StatusDownloading {
+									m.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, season.SeasonNumber, episode.EpisodeNumber, models.StatusDownloaded, nil, nil)
+									goto ShowStatusUpdate
+								}
+							}
+						}
+					}
+				}
+				// For movies, just update the main media item
+				m.mediaRepo.UpdateProgress(media.ID, models.StatusDownloaded, 1.0, completedAt)
+
+			ShowStatusUpdate:
+				// After any episode completes, always recalculate the show's overall status
+				if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+					m.updateShowProgress(media.ID)
+				}
+
+			} else {
+				// If not completed, just update the progress percentage
+				m.mediaRepo.UpdateProgress(media.ID, models.StatusDownloading, status.Progress, nil)
 			}
-			m.mediaRepo.UpdateProgress(media.ID, newStatus, status.Progress, completedAt)
 		}
 	}
 }
@@ -640,13 +741,17 @@ func (m *Manager) SearchMetadata(query string, mediaType string) ([]interface{},
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, res)
-	} else if mediaType == string(models.MediaTypeTVShow) {
+		for _, r := range res {
+			results = append(results, r)
+		}
+	} else if mediaType == string(models.MediaTypeTVShow) || mediaType == string(models.MediaTypeAnime) {
 		res, err := client.SearchTVShow(query)
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, res)
+		for _, r := range res {
+			results = append(results, r)
+		}
 	} else {
 		return nil, fmt.Errorf("unsupported media type for metadata search: %s", mediaType)
 	}
@@ -666,7 +771,7 @@ func (m *Manager) TestIndexerConnection() bool {
 	// A basic test, a better one would ping the client
 	for _, clients := range m.indexerClients {
 		for _, client := range clients {
-			ok, err := client.HealthCheck()
+			ok, err := client.Client.HealthCheck()
 			if err != nil || !ok {
 				m.logger.Error("Indexer health check failed:", err)
 				return false
@@ -687,40 +792,44 @@ func (m *Manager) performSearch(media *models.Media, season, episode int) ([]ind
 		return nil, fmt.Errorf("no indexer sources configured for media type: %s", media.Type)
 	}
 
-	query := media.Title
-	if media.Type == models.MediaTypeMovie {
-		query = fmt.Sprintf("%s %d", media.Title, media.Year)
-	} else if media.Type == models.MediaTypeTVShow && season > 0 && episode > 0 {
-		// Try SxxExx format first
-		query = fmt.Sprintf("%s S%02dE%02d", media.Title, season, episode)
-	}
-
+	baseQuery := media.Title
 	tmdbIDStr := ""
 	if media.TMDBId != nil {
 		tmdbIDStr = strconv.Itoa(*media.TMDBId)
 	}
 
 	var allResults []indexers.IndexerResult
-	for _, client := range clients {
-		results, err := client.SearchMovies(query, tmdbIDStr)
+	for _, clientWithMode := range clients {
+		client := clientWithMode.Client
+		searchMode := clientWithMode.SearchMode
+		query := baseQuery
+
+		var results []indexers.IndexerResult
+		var err error
+
+		if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+			if searchMode == "search" && season > 0 && episode > 0 {
+				query = fmt.Sprintf("%s S%02dE%02d", baseQuery, season, episode)
+			}
+			results, err = client.SearchTVShows(query, season, episode, searchMode)
+
+			// Fallback for "search" mode if no results are found
+			if len(results) == 0 && searchMode == "search" && season > 0 && episode > 0 {
+				query = fmt.Sprintf("%s %dx%02d", baseQuery, season, episode)
+				results, err = client.SearchTVShows(query, season, episode, searchMode)
+			}
+		} else { // Movie
+			if media.Year > 0 {
+				query = fmt.Sprintf("%s %d", baseQuery, media.Year)
+			}
+			results, err = client.SearchMovies(query, tmdbIDStr, searchMode)
+		}
+
 		if err != nil {
 			m.logger.Error("Search failed for indexer:", err)
 			continue
 		}
 		allResults = append(allResults, results...)
-	}
-
-	// If no results with SxxExx, try 1x01 format
-	if len(allResults) == 0 && media.Type == models.MediaTypeTVShow && season > 0 && episode > 0 {
-		query = fmt.Sprintf("%s %dx%02d", media.Title, season, episode)
-		for _, client := range clients {
-			results, err := client.SearchMovies(query, tmdbIDStr)
-			if err != nil {
-				m.logger.Error("Search failed for indexer with alternative format:", err)
-				continue
-			}
-			allResults = append(allResults, results...)
-		}
 	}
 
 	m.logger.Info(fmt.Sprintf("Found %d total results for %s", len(allResults), media.Title))
@@ -776,8 +885,8 @@ func (m *Manager) PerformEpisodeSearch(mediaID int, seasonNumber int, episodeNum
 		return nil, fmt.Errorf("media not found")
 	}
 
-	if media.Type != models.MediaTypeTVShow {
-		return nil, fmt.Errorf("media is not a TV show")
+	if media.Type != models.MediaTypeTVShow && media.Type != models.MediaTypeAnime {
+		return nil, fmt.Errorf("media is not a TV show or anime")
 	}
 
 	// Perform search with specific season/episode
@@ -805,8 +914,8 @@ func (m *Manager) StartEpisodeDownload(mediaID int, seasonNumber int, episodeNum
 		return fmt.Errorf("media not found")
 	}
 
-	if media.Type != models.MediaTypeTVShow {
-		return fmt.Errorf("media is not a TV show")
+	if media.Type != models.MediaTypeTVShow && media.Type != models.MediaTypeAnime {
+		return fmt.Errorf("media is not a TV show or anime")
 	}
 
 	m.logger.Info(fmt.Sprintf("Starting manual download for %s S%02dE%02d: %s",

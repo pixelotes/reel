@@ -46,10 +46,10 @@ func NewAniListClient() *AniListClient {
 	}
 }
 
-func (a *AniListClient) SearchAnime(title string) (*TVShowResult, error) {
+func (a *AniListClient) SearchAnime(title string) ([]*TVShowResult, error) {
 	query := `
 query ($search: String) {
-  Page {
+  Page(perPage: 5) {
     media(search: $search, type: ANIME, sort: POPULARITY_DESC) {
       id
       title {
@@ -101,36 +101,38 @@ query ($search: String) {
 		return nil, fmt.Errorf("no anime results found for '%s'", title)
 	}
 
-	anime := searchResp.Data.Page.Media[0]
+	var results []*TVShowResult
+	for _, anime := range searchResp.Data.Page.Media {
+		animeTitle := anime.Title.English
+		if animeTitle == "" {
+			animeTitle = anime.Title.Romaji
+		}
 
-	animeTitle := anime.Title.English
-	if animeTitle == "" {
-		animeTitle = anime.Title.Romaji
+		result := &TVShowResult{
+			ID:        strconv.Itoa(anime.ID),
+			Title:     animeTitle,
+			Year:      anime.StartDate.Year,
+			Overview:  anime.Description,
+			PosterURL: anime.BannerImage,
+			Seasons:   make(map[int][]Episode),
+		}
+
+		for i := 1; i <= anime.Episodes; i++ {
+			result.Seasons[1] = append(result.Seasons[1], Episode{
+				EpisodeNumber: i,
+				Title:         fmt.Sprintf("Episode %d", i),
+			})
+		}
+		results = append(results, result)
 	}
 
-	result := &TVShowResult{
-		ID:        strconv.Itoa(anime.ID),
-		Title:     animeTitle,
-		Year:      anime.StartDate.Year,
-		Overview:  anime.Description,
-		PosterURL: anime.BannerImage,
-		Seasons:   make(map[int][]Episode),
-	}
-
-	for i := 1; i <= anime.Episodes; i++ {
-		result.Seasons[1] = append(result.Seasons[1], Episode{
-			EpisodeNumber: i,
-			Title:         fmt.Sprintf("Episode %d", i),
-		})
-	}
-
-	return result, nil
+	return results, nil
 }
 
-func (a *AniListClient) SearchMovie(title string, year int) (*MovieResult, error) {
+func (a *AniListClient) SearchMovie(title string, year int) ([]*MovieResult, error) {
 	return nil, fmt.Errorf("anilist client does not support movie searches")
 }
 
-func (a *AniListClient) SearchTVShow(title string) (*TVShowResult, error) {
+func (a *AniListClient) SearchTVShow(title string) ([]*TVShowResult, error) {
 	return a.SearchAnime(title)
 }

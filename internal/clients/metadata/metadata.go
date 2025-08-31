@@ -2,8 +2,8 @@ package metadata
 
 // Client is the interface for all metadata providers.
 type Client interface {
-	SearchMovie(title string, year int) (*MovieResult, error)
-	SearchTVShow(title string) (*TVShowResult, error)
+	SearchMovie(title string, year int) ([]*MovieResult, error)
+	SearchTVShow(title string) ([]*TVShowResult, error)
 }
 
 // MovieResult is a standardized struct for movie metadata.
