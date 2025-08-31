@@ -81,12 +81,19 @@ type Config struct {
 		Path string `yaml:"path"`
 	} `yaml:"database"`
 
+	Notifications struct {
+		Pushbullet struct {
+			APIKey string `yaml:"api_key"`
+		} `yaml:"pushbullet"`
+	} `yaml:"notifications"`
+
 	Automation struct {
 		SearchInterval         string   `yaml:"search_interval"`
 		MaxConcurrentDownloads int      `yaml:"max_concurrent_downloads"`
 		QualityPreferences     []string `yaml:"quality_preferences"`
 		MinSeeders             int      `yaml:"min_seeders"`
 		RejectCommon           []string `yaml:"reject-common"`
+		Notifications          []string `yaml:"notifications"`
 	} `yaml:"automation"`
 
 	RejectCommon []string `yaml:"reject-common"`

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"reel/internal/clients/notifications"
 	"reel/internal/clients/torrent"
 	"reel/internal/config"
 	"reel/internal/database/models"
@@ -16,14 +17,16 @@ type PostProcessor struct {
 	config    *config.Config
 	logger    *utils.Logger
 	mediaRepo *models.MediaRepository
+	notifiers []notifications.Notifier
 }
 
 // NewPostProcessor creates a new instance of the PostProcessor.
-func NewPostProcessor(cfg *config.Config, logger *utils.Logger, mediaRepo *models.MediaRepository) *PostProcessor {
+func NewPostProcessor(cfg *config.Config, logger *utils.Logger, mediaRepo *models.MediaRepository, notifiers []notifications.Notifier) *PostProcessor {
 	return &PostProcessor{
 		config:    cfg,
 		logger:    logger,
 		mediaRepo: mediaRepo,
+		notifiers: notifiers,
 	}
 }
 
@@ -46,6 +49,9 @@ func (pp *PostProcessor) ProcessDownload(media models.Media, torrentStatus torre
 	pp.moveOrLinkFiles(&media, mediaFiles, destinationPath)
 
 	pp.renameFiles(&media, destinationPath)
+
+	// Send notification at the very end of the pipeline.
+	pp.notifyDownloadCompleted(&media, torrentStatus.Name)
 
 	pp.logger.Info("Finished post-processing for:", media.Title)
 }
@@ -105,4 +111,12 @@ func (pp *PostProcessor) moveOrLinkFiles(media *models.Media, files []string, de
 func (pp *PostProcessor) renameFiles(media *models.Media, destination string) {
 	pp.logger.Info("[DUMMY] Renaming files for:", media.Title, "in", destination)
 	// In the future, this will rename files to a format like "Movie Title (2023).mkv".
+}
+
+// notifyDownloadCompleted dispatches notifications for a completed download.
+func (pp *PostProcessor) notifyDownloadCompleted(media *models.Media, torrentName string) {
+	for _, n := range pp.notifiers {
+		// Run in a goroutine to avoid blocking the main application flow.
+		go n.NotifyDownloadComplete(media, torrentName)
+	}
 }

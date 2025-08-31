@@ -14,6 +14,7 @@ import (
 
 	"reel/internal/clients/indexers"
 	"reel/internal/clients/metadata"
+	"reel/internal/clients/notifications"
 	"reel/internal/clients/torrent"
 	"reel/internal/config"
 	"reel/internal/database/models"
@@ -104,6 +105,7 @@ type Manager struct {
 	metadataClients map[models.MediaType][]metadata.Client
 	torrentClient   torrent.TorrentClient
 	torrentSelector *TorrentSelector
+	notifiers       []notifications.Notifier
 	postProcessor   *PostProcessor
 	logger          *utils.Logger
 	scheduler       *cron.Cron
@@ -116,7 +118,7 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		config:          cfg,
 		mediaRepo:       models.NewMediaRepository(db),
 		torrentSelector: NewTorrentSelector(cfg, logger), // Assuming this exists
-		postProcessor:   NewPostProcessor(cfg, logger, models.NewMediaRepository(db)),
+		notifiers:       make([]notifications.Notifier, 0),
 		logger:          logger,
 		scheduler:       cron.New(),
 		searchQueue:     make(chan models.Media, 100),
@@ -125,6 +127,22 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+	}
+
+	// Pass the notifiers when creating the PostProcessor
+	m.postProcessor = NewPostProcessor(cfg, logger, models.NewMediaRepository(db), m.notifiers)
+
+	// --- Initialize Notifiers ---
+	for _, notifierName := range cfg.Automation.Notifications {
+		switch notifierName {
+		case "pushbullet":
+			if cfg.Notifications.Pushbullet.APIKey != "" {
+				client := notifications.NewPushbulletClient(cfg.Notifications.Pushbullet.APIKey, logger)
+				m.notifiers = append(m.notifiers, client)
+				logger.Info("Pushbullet notifier enabled.")
+			}
+			// Add other notifiers here in the future
+		}
 	}
 
 	// --- Initialize Clients based on new Config Structure ---
@@ -704,6 +722,7 @@ func (m *Manager) updateDownloadStatus() {
 									// Start post-processing in a new goroutine to avoid blocking
 									go m.postProcessor.ProcessDownload(media, status, season.SeasonNumber)
 									m.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, season.SeasonNumber, episode.EpisodeNumber, models.StatusDownloaded, nil, nil)
+									//m.notifyDownloadCompleted(&media, status.Name)
 									goto ShowStatusUpdate
 								}
 							}
@@ -715,6 +734,7 @@ func (m *Manager) updateDownloadStatus() {
 				go m.postProcessor.ProcessDownload(media, status, 0)
 				// For movies, just update the main media item
 				m.mediaRepo.UpdateProgress(media.ID, models.StatusDownloaded, 1.0, completedAt)
+				//m.notifyDownloadCompleted(&media, status.Name)
 
 			ShowStatusUpdate:
 				// After any episode completes, always recalculate the show's overall status
@@ -1017,6 +1037,7 @@ func (m *Manager) StartDownload(id int, torrent indexers.IndexerResult) error {
 		return err
 	}
 
+	m.notifyDownloadStarted(media, torrent.Title)
 	m.logger.Info("Torrent successfully sent to download client! Hash:", hash)
 
 	if err := m.mediaRepo.UpdateDownloadInfo(id, models.StatusDownloading, &hash, &torrent.Title); err != nil {
@@ -1098,4 +1119,18 @@ func (m *Manager) StartEpisodeDownload(mediaID int, seasonNumber int, episodeNum
 	}
 
 	return nil
+}
+
+func (m *Manager) notifyDownloadStarted(media *models.Media, torrentName string) {
+	for _, n := range m.notifiers {
+		// Run in a goroutine to avoid blocking the main application flow.
+		go n.NotifyDownloadStart(media, torrentName)
+	}
+}
+
+func (m *Manager) notifyDownloadCompleted(media *models.Media, torrentName string) {
+	for _, n := range m.notifiers {
+		// Run in a goroutine to avoid blocking the main application flow.
+		go n.NotifyDownloadComplete(media, torrentName)
+	}
 }

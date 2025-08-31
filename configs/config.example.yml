@@ -13,6 +13,10 @@ torrent_client:
   password: ""
   download_path: "/downloads/media"
 
+notifications:
+  pushbullet:
+    api_key: ""
+
 reject-common:
   - \bscreener\b
   - \bhdcam\b
@@ -72,3 +76,4 @@ automation:
     - "1080p"
     - "720p"
   min_seeders: 5
+  notifications: [] # e.g., ["pushbullet"]
