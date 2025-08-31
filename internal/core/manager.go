@@ -104,6 +104,7 @@ type Manager struct {
 	metadataClients map[models.MediaType][]metadata.Client
 	torrentClient   torrent.TorrentClient
 	torrentSelector *TorrentSelector
+	postProcessor   *PostProcessor
 	logger          *utils.Logger
 	scheduler       *cron.Cron
 	searchQueue     chan models.Media
@@ -115,6 +116,7 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		config:          cfg,
 		mediaRepo:       models.NewMediaRepository(db),
 		torrentSelector: NewTorrentSelector(cfg, logger),
+		postProcessor:   NewPostProcessor(cfg, logger),
 		logger:          logger,
 		scheduler:       cron.New(),
 		searchQueue:     make(chan models.Media, 100),
@@ -691,6 +693,9 @@ func (m *Manager) updateDownloadStatus() {
 				now := time.Now()
 				completedAt = &now
 
+				// Start post-processing in a new goroutine to avoid blocking
+				go m.postProcessor.ProcessDownload(media, status)
+
 				if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
 					show, err := m.mediaRepo.GetTVShowByMediaID(media.ID)
 					if err == nil {
@@ -982,8 +987,28 @@ func (m *Manager) PerformSearch(id int) ([]indexers.IndexerResult, error) {
 }
 
 func (m *Manager) StartDownload(id int, torrent indexers.IndexerResult) error {
+	media, err := m.mediaRepo.GetByID(id)
+	if err != nil {
+		return err
+	}
+	if media == nil {
+		return fmt.Errorf("media not found")
+	}
+
+	var downloadPath string
+	switch media.Type {
+	case models.MediaTypeMovie:
+		downloadPath = m.config.Movies.DownloadFolder
+	case models.MediaTypeTVShow:
+		downloadPath = m.config.TVShows.DownloadFolder
+	case models.MediaTypeAnime:
+		downloadPath = m.config.Anime.DownloadFolder
+	default:
+		downloadPath = m.config.TorrentClient.DownloadPath // Fallback
+	}
+
 	m.logger.Info("Sending to download client:", m.config.TorrentClient.Type)
-	hash, err := m.torrentClient.AddTorrent(torrent.DownloadURL, m.config.TorrentClient.DownloadPath)
+	hash, err := m.torrentClient.AddTorrent(torrent.DownloadURL, downloadPath)
 	if err != nil {
 		m.logger.Error("Failed to add torrent to client:", err)
 		m.mediaRepo.UpdateStatus(id, models.StatusFailed)
@@ -1042,11 +1067,21 @@ func (m *Manager) StartEpisodeDownload(mediaID int, seasonNumber int, episodeNum
 		return fmt.Errorf("media is not a TV show or anime")
 	}
 
+	var downloadPath string
+	switch media.Type {
+	case models.MediaTypeTVShow:
+		downloadPath = m.config.TVShows.DownloadFolder
+	case models.MediaTypeAnime:
+		downloadPath = m.config.Anime.DownloadFolder
+	default:
+		downloadPath = m.config.TorrentClient.DownloadPath // Fallback
+	}
+
 	m.logger.Info(fmt.Sprintf("Starting manual download for %s S%02dE%02d: %s",
 		media.Title, seasonNumber, episodeNumber, torrent.Title))
 
 	// Start the torrent download
-	hash, err := m.torrentClient.AddTorrent(torrent.DownloadURL, m.config.TorrentClient.DownloadPath)
+	hash, err := m.torrentClient.AddTorrent(torrent.DownloadURL, downloadPath)
 	if err != nil {
 		m.logger.Error("Failed to add episode torrent to client:", err)
 		return err
