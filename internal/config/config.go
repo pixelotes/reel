@@ -54,18 +54,27 @@ type Config struct {
 	} `yaml:"metadata"`
 
 	Movies struct {
-		Providers []string       `yaml:"providers"`
-		Sources   []SourceConfig `yaml:"sources"`
+		Providers         []string       `yaml:"providers"`
+		Sources           []SourceConfig `yaml:"sources"`
+		DownloadFolder    string         `yaml:"download_folder"`
+		DestinationFolder string         `yaml:"destination_folder"`
+		MoveMethod        string         `yaml:"move_method"`
 	} `yaml:"movies"`
 
 	TVShows struct {
-		Providers []string       `yaml:"providers"`
-		Sources   []SourceConfig `yaml:"sources"`
+		Providers         []string       `yaml:"providers"`
+		Sources           []SourceConfig `yaml:"sources"`
+		DownloadFolder    string         `yaml:"download_folder"`
+		DestinationFolder string         `yaml:"destination_folder"`
+		MoveMethod        string         `yaml:"move_method"`
 	} `yaml:"tv-shows"`
 
 	Anime struct {
-		Providers []string       `yaml:"providers"`
-		Sources   []SourceConfig `yaml:"sources"`
+		Providers         []string       `yaml:"providers"`
+		Sources           []SourceConfig `yaml:"sources"`
+		DownloadFolder    string         `yaml:"download_folder"`
+		DestinationFolder string         `yaml:"destination_folder"`
+		MoveMethod        string         `yaml:"move_method"`
 	} `yaml:"anime"`
 
 	Database struct {
@@ -79,6 +88,8 @@ type Config struct {
 		MinSeeders             int      `yaml:"min_seeders"`
 		RejectCommon           []string `yaml:"reject-common"`
 	} `yaml:"automation"`
+
+	RejectCommon []string `yaml:"reject-common"`
 }
 
 func Load(path string) (*Config, error) {
