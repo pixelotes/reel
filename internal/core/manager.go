@@ -2,12 +2,15 @@ package core
 
 import (
 	"database/sql"
+	"encoding/xml"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"golang.org/x/net/html/charset"
 
 	"reel/internal/clients/indexers"
 	"reel/internal/clients/metadata"
@@ -26,6 +29,7 @@ var QUALITY_SCORES = map[string]int{
 	"720p": 4, "hd": 4,
 	"480p": 3, "sd": 2,
 	"360p": 1,
+	"xvid": 1,
 	// Source quality
 	"remux":  10,
 	"bluray": 8, "blu-ray": 8, "bdrip": 8, "brrip": 6,
@@ -34,7 +38,7 @@ var QUALITY_SCORES = map[string]int{
 	"cam": 1, "ts": 1,
 	// Codec
 	"av1": 5, "x265": 3, "h265": 3, "hevc": 3,
-	"x264": 2, "h264": 2, "avc": 2, "xvid": 1,
+	"x264": 2, "h264": 2, "avc": 2,
 	// Audio
 	"atmos": 3, "truehd": 3, "dts-hd": 3, "dts-x": 3,
 	"dts": 2, "ac3": 1, "aac": 1,
@@ -47,8 +51,8 @@ var RESOLUTION_SYNONYMS = map[string][]string{
 	"2160p": {"2160p", "4k", "uhd"},
 	"1440p": {"1440p", "2k"},
 	"1080p": {"1080p", "fhd"},
-	"720p":  {"720p", "hd", "hdtv"},
-	"480p":  {"480p", "sd", "msd", "xvid"},
+	"720p":  {"720p", "hd", "hdtv", "xvid"},
+	"480p":  {"480p", "sd", "msd"},
 	"360p":  {"360p"},
 }
 
@@ -64,6 +68,19 @@ var RESOLUTION_RANK = map[string]int{
 // Ordered from highest to lowest for matching
 var SUPPORTED_RESOLUTIONS = []string{"2160p", "1440p", "1080p", "720p", "480p", "360p"}
 
+// --- RSS Parsing Structs ---
+type rssItem struct {
+	Title string `xml:"title"`
+	Link  string `xml:"link"`
+}
+type rssChannel struct {
+	Items []rssItem `xml:"item"`
+}
+type rssFeed struct {
+	XMLName xml.Name   `xml:"rss"`
+	Channel rssChannel `xml:"channel"`
+}
+
 func getQualityScore(title string) int {
 	score := 0
 	lowerTitle := strings.ToLower(title)
@@ -76,8 +93,8 @@ func getQualityScore(title string) int {
 }
 
 type IndexerClientWithMode struct {
-	Client     indexers.Client
-	SearchMode string
+	Client indexers.Client
+	Source config.SourceConfig
 }
 
 type Manager struct {
@@ -90,6 +107,7 @@ type Manager struct {
 	logger          *utils.Logger
 	scheduler       *cron.Cron
 	searchQueue     chan models.Media
+	httpClient      *http.Client
 }
 
 func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
@@ -102,6 +120,9 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		searchQueue:     make(chan models.Media, 100),
 		indexerClients:  make(map[models.MediaType][]IndexerClientWithMode),
 		metadataClients: make(map[models.MediaType][]metadata.Client),
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
 	}
 
 	// --- Initialize Clients based on new Config Structure ---
@@ -117,7 +138,7 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 			return metadata.NewTVmazeClient()
 		case "anilist":
 			return metadata.NewAniListClient()
-		case "trakt": // Add this case
+		case "trakt":
 			return metadata.NewTraktClient(cfg.Metadata.Trakt.ClientID)
 		}
 		return nil
@@ -142,11 +163,13 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		}
 	}
 	for _, source := range cfg.Movies.Sources {
-		if client := initIndexerClient(source); client != nil {
-			m.indexerClients[models.MediaTypeMovie] = append(m.indexerClients[models.MediaTypeMovie], IndexerClientWithMode{
-				Client:     client,
-				SearchMode: source.SearchMode,
-			})
+		if source.Type != "rss" {
+			if client := initIndexerClient(source); client != nil {
+				m.indexerClients[models.MediaTypeMovie] = append(m.indexerClients[models.MediaTypeMovie], IndexerClientWithMode{
+					Client: client,
+					Source: source,
+				})
+			}
 		}
 	}
 
@@ -157,11 +180,13 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		}
 	}
 	for _, source := range cfg.TVShows.Sources {
-		if client := initIndexerClient(source); client != nil {
-			m.indexerClients[models.MediaTypeTVShow] = append(m.indexerClients[models.MediaTypeTVShow], IndexerClientWithMode{
-				Client:     client,
-				SearchMode: source.SearchMode,
-			})
+		if source.Type != "rss" {
+			if client := initIndexerClient(source); client != nil {
+				m.indexerClients[models.MediaTypeTVShow] = append(m.indexerClients[models.MediaTypeTVShow], IndexerClientWithMode{
+					Client: client,
+					Source: source,
+				})
+			}
 		}
 	}
 
@@ -172,11 +197,13 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		}
 	}
 	for _, source := range cfg.Anime.Sources {
-		if client := initIndexerClient(source); client != nil {
-			m.indexerClients[models.MediaTypeAnime] = append(m.indexerClients[models.MediaTypeAnime], IndexerClientWithMode{
-				Client:     client,
-				SearchMode: source.SearchMode,
-			})
+		if source.Type != "rss" {
+			if client := initIndexerClient(source); client != nil {
+				m.indexerClients[models.MediaTypeAnime] = append(m.indexerClients[models.MediaTypeAnime], IndexerClientWithMode{
+					Client: client,
+					Source: source,
+				})
+			}
 		}
 	}
 
@@ -449,9 +476,11 @@ func (m *Manager) StartScheduler() {
 	m.scheduler.AddFunc("@every 30m", m.processPendingMedia)
 	m.scheduler.AddFunc("@every 6h", m.checkForNewEpisodes)
 	m.scheduler.AddFunc("@every 10s", m.updateDownloadStatus)
+	m.scheduler.AddFunc("@every 5m", m.processRSSFeeds)
 	m.scheduler.Start()
-	m.logger.Info("Scheduler started. Performing initial search for pending media.")
+	m.logger.Info("Scheduler started.")
 	go m.processPendingMedia()
+	go m.processRSSFeeds()
 }
 
 func (m *Manager) Stop() {
@@ -789,7 +818,8 @@ func (m *Manager) TestTorrentConnection() bool {
 func (m *Manager) performSearch(media *models.Media, season, episode int) ([]indexers.IndexerResult, error) {
 	clients := m.indexerClients[media.Type]
 	if len(clients) == 0 {
-		return nil, fmt.Errorf("no indexer sources configured for media type: %s", media.Type)
+		m.logger.Warn("No search-based indexers configured for media type:", media.Type)
+		return nil, nil
 	}
 
 	baseQuery := media.Title
@@ -801,7 +831,7 @@ func (m *Manager) performSearch(media *models.Media, season, episode int) ([]ind
 	var allResults []indexers.IndexerResult
 	for _, clientWithMode := range clients {
 		client := clientWithMode.Client
-		searchMode := clientWithMode.SearchMode
+		searchMode := clientWithMode.Source.SearchMode
 		query := baseQuery
 
 		var results []indexers.IndexerResult
@@ -816,7 +846,11 @@ func (m *Manager) performSearch(media *models.Media, season, episode int) ([]ind
 			// Fallback for "search" mode if no results are found
 			if len(results) == 0 && searchMode == "search" && season > 0 && episode > 0 {
 				query = fmt.Sprintf("%s %dx%02d", baseQuery, season, episode)
-				results, err = client.SearchTVShows(query, season, episode, searchMode)
+				var fallbackResults []indexers.IndexerResult
+				fallbackResults, err = client.SearchTVShows(query, season, episode, searchMode)
+				if err == nil {
+					results = append(results, fallbackResults...)
+				}
 			}
 		} else { // Movie
 			if media.Year > 0 {
@@ -834,6 +868,95 @@ func (m *Manager) performSearch(media *models.Media, season, episode int) ([]ind
 
 	m.logger.Info(fmt.Sprintf("Found %d total results for %s", len(allResults), media.Title))
 	return allResults, nil
+}
+
+func (m *Manager) processRSSFeeds() {
+	m.logger.Info("Starting RSS feed processing...")
+
+	allSources := append(m.config.TVShows.Sources, m.config.Anime.Sources...)
+
+	for _, source := range allSources {
+		if source.Type == "rss" {
+			m.logger.Info("Fetching RSS feed:", source.URL)
+
+			resp, err := m.httpClient.Get(source.URL)
+			if err != nil {
+				m.logger.Error("Failed to fetch RSS feed", source.URL, ":", err)
+				continue
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				m.logger.Error("RSS feed request failed for", source.URL, "with status:", resp.StatusCode)
+				continue
+			}
+
+			var feed rssFeed
+			decoder := xml.NewDecoder(resp.Body)
+			decoder.CharsetReader = charset.NewReaderLabel
+			if err := decoder.Decode(&feed); err != nil {
+				m.logger.Error("Failed to parse RSS feed", source.URL, ":", err)
+				continue
+			}
+
+			m.matchFeedItems(feed.Channel.Items)
+		}
+	}
+	m.logger.Info("Finished RSS feed processing.")
+}
+
+func (m *Manager) matchFeedItems(items []rssItem) {
+	// 1. Get all TV shows and anime from the library that are being monitored or are pending.
+	mediaToMonitor, err := m.mediaRepo.GetByStatus(models.StatusMonitoring)
+	if err != nil {
+		m.logger.Error("Failed to get monitoring media for RSS check:", err)
+		return
+	}
+	pendingMedia, err := m.mediaRepo.GetByStatus(models.StatusPending)
+	if err != nil {
+		m.logger.Error("Failed to get pending media for RSS check:", err)
+		return
+	}
+	allMedia := append(mediaToMonitor, pendingMedia...)
+
+	if len(allMedia) == 0 {
+		return
+	}
+
+	// 2. Match feed items against the local media library.
+	for _, item := range items {
+		indexerResult := indexers.IndexerResult{
+			Title:       item.Title,
+			DownloadURL: item.Link,
+			Indexer:     "RSS",
+		}
+
+		for _, media := range allMedia {
+			if !strings.Contains(strings.ToLower(item.Title), strings.ToLower(media.Title)) {
+				continue
+			}
+
+			show, err := m.mediaRepo.GetTVShowByMediaID(media.ID)
+			if err != nil || show == nil {
+				continue
+			}
+
+			for _, season := range show.Seasons {
+				for _, episode := range season.Episodes {
+					if episode.Status == models.StatusPending {
+						bestTorrent := m.torrentSelector.SelectBestTorrent(&media, []indexers.IndexerResult{indexerResult}, season.SeasonNumber, episode.EpisodeNumber)
+						if bestTorrent != nil {
+							m.logger.Info("Found match in RSS feed for", media.Title, fmt.Sprintf("S%02dE%02d", season.SeasonNumber, episode.EpisodeNumber))
+							m.StartEpisodeDownload(media.ID, season.SeasonNumber, episode.EpisodeNumber, *bestTorrent)
+							time.Sleep(10 * time.Second) // Avoid overwhelming the download client
+							goto nextItem                // Move to the next RSS item once a match is found and downloaded
+						}
+					}
+				}
+			}
+		}
+	nextItem:
+	}
 }
 
 func (m *Manager) PerformSearch(id int) ([]indexers.IndexerResult, error) {

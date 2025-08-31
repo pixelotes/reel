@@ -80,7 +80,6 @@ func (s *ScarfClient) SearchMovies(query string, tmdbID string, searchMode strin
 		params.Add("tmdbid", tmdbID)
 	}
 
-	// It now uses the base URL directly as the endpoint
 	searchURL := fmt.Sprintf("%s?%s", s.baseURL, params.Encode())
 
 	resp, err := s.httpClient.Get(searchURL)
@@ -124,7 +123,6 @@ func (s *ScarfClient) SearchTVShows(query string, season int, episode int, searc
 	}
 	params.Add("t", effectiveSearchMode)
 
-	// Only add season and episode if not in generic search mode
 	if effectiveSearchMode != "search" {
 		params.Add("q", query)
 		if season > 0 {
@@ -134,7 +132,6 @@ func (s *ScarfClient) SearchTVShows(query string, season int, episode int, searc
 			params.Add("ep", strconv.Itoa(episode))
 		}
 	} else {
-		// For generic search, the query should already be fully formed
 		params.Add("q", query)
 	}
 
@@ -176,7 +173,5 @@ func (s *ScarfClient) SearchTVShows(query string, season int, episode int, searc
 }
 
 func (s *ScarfClient) HealthCheck() (bool, error) {
-	// A proper health check would ping a status endpoint.
-	// For now, we assume it's healthy if the config is present.
 	return true, nil
 }
