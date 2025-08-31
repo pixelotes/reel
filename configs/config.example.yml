@@ -32,6 +32,9 @@ metadata:
 
 movies:
   providers: ["tmdb", "imdb"] # Order of preference
+  download_folder: "/downloads/movies"
+  destination_folder: "/media/movies"
+  move_method: "move" # or "symlink"
   sources:
     - type: "scarf"
       url: "http://localhost:8080/torznab/movies"
@@ -41,6 +44,9 @@ movies:
 
 tv-shows:
   providers: ["tvmaze"]
+  download_folder: "/downloads/shows"
+  destination_folder: "/media/shows"
+  move_method: "move" # or "symlink"
   sources:
     - type: "scarf"
       url: "http://localhost:8080/torznab/tv"
@@ -48,6 +54,9 @@ tv-shows:
 
 anime:
   providers: ["anidb"]
+  download_folder: "/downloads/anime"
+  destination_folder: "/media/anime"
+  move_method: "move" # or "symlink"
   sources:
     - type: "scarf"
       url: "http://localhost:8080/torznab/anime"
