@@ -18,6 +18,13 @@ type TMDBClient struct {
 	httpClient *http.Client
 }
 
+type tmdbTVDetails struct {
+	ID         int    `json:"id"`
+	Name       string `json:"name"`
+	Overview   string `json:"overview"`
+	PosterPath string `json:"poster_path"`
+}
+
 // Define a struct that matches the TMDB API's JSON response
 type tmdbSearchResponse struct {
 	Page    int `json:"page"`
@@ -127,6 +134,39 @@ func (t *TMDBClient) SearchMovie(title string, year int) ([]*MovieResult, error)
 	return results, nil
 }
 
-func (t *TMDBClient) SearchTVShow(title string) ([]*TVShowResult, error) {
+func (t *TMDBClient) GetTVShowDetailsByID(tmdbID int) (*TVShowResult, error) {
+	detailsURL := fmt.Sprintf("https://api.themoviedb.org/3/tv/%d?api_key=%s&language=%s", tmdbID, t.apiKey, t.language)
+
+	req, err := http.NewRequest("GET", detailsURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create TMDB details request: %w", err)
+	}
+
+	resp, err := t.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get TMDB details: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("TMDB details request failed with status: %d", resp.StatusCode)
+	}
+
+	var details tmdbTVDetails
+	if err := json.NewDecoder(resp.Body).Decode(&details); err != nil {
+		return nil, fmt.Errorf("failed to decode TMDB details: %w", err)
+	}
+
+	posterURL := ""
+	if details.PosterPath != "" {
+		posterURL = "https://image.tmdb.org/t/p/w500" + details.PosterPath
+	}
+
+	return &TVShowResult{
+		PosterURL: posterURL,
+	}, nil
+}
+
+func (t *TMDBClient) SearchTVShow(title string) ([]*TVShowResult, error) { // Add this empty function
 	return nil, fmt.Errorf("TMDB TV show search not implemented")
 }

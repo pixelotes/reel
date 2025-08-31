@@ -12,6 +12,7 @@ import (
 type TraktClient struct {
 	httpClient *http.Client
 	clientID   string
+	tmdbClient *TMDBClient // Add this
 }
 
 // Trakt search result structs
@@ -20,10 +21,10 @@ type traktSearchResult struct {
 }
 
 type traktShow struct {
-	Title    string         `json:"title"`
-	Year     int            `json:"year"`
-	Overview string         `json:"overview"`
-	IDs      map[string]int `json:"ids"`
+	Title    string                 `json:"title"`
+	Year     int                    `json:"year"`
+	Overview string                 `json:"overview"`
+	IDs      map[string]interface{} `json:"ids"` // Correctly handle mixed types to prevent JSON error
 }
 
 // Trakt episode structs
@@ -34,9 +35,10 @@ type traktEpisode struct {
 	FirstAired string `json:"first_aired"`
 }
 
-func NewTraktClient(clientID string) *TraktClient {
+func NewTraktClient(clientID string, tmdbClient *TMDBClient) *TraktClient {
 	return &TraktClient{
-		clientID: clientID,
+		clientID:   clientID,
+		tmdbClient: tmdbClient,
 		httpClient: &http.Client{
 			Timeout: 15 * time.Second,
 		},
@@ -66,7 +68,7 @@ func (t *TraktClient) sendRequest(url string, target interface{}) error {
 }
 
 func (t *TraktClient) SearchTVShow(title string) ([]*TVShowResult, error) {
-	searchURL := fmt.Sprintf("https://api.trakt.tv/search/show?query=%s&limit=5", url.QueryEscape(title))
+	searchURL := fmt.Sprintf("https://api.trakt.tv/search/show?query=%s&limit=5&extended=full", url.QueryEscape(title))
 
 	var searchResults []traktSearchResult
 	if err := t.sendRequest(searchURL, &searchResults); err != nil {
@@ -75,9 +77,12 @@ func (t *TraktClient) SearchTVShow(title string) ([]*TVShowResult, error) {
 
 	var results []*TVShowResult
 	for _, res := range searchResults {
-		traktID := res.Show.IDs["trakt"]
-		if traktID == 0 {
-			continue
+		// Safely extract the trakt ID
+		var traktID int
+		if id, ok := res.Show.IDs["trakt"].(float64); ok {
+			traktID = int(id)
+		} else {
+			continue // Skip if we can't get a valid Trakt ID
 		}
 
 		// Get episode list for the show
@@ -87,7 +92,6 @@ func (t *TraktClient) SearchTVShow(title string) ([]*TVShowResult, error) {
 			Episodes []traktEpisode `json:"episodes"`
 		}
 		if err := t.sendRequest(episodesURL, &seasonsData); err != nil {
-			// Could fail for shows with no seasons yet, so we don't return an error
 			fmt.Printf("Could not get episode data for %s: %v\n", res.Show.Title, err)
 		}
 
@@ -96,16 +100,25 @@ func (t *TraktClient) SearchTVShow(title string) ([]*TVShowResult, error) {
 			Title:     res.Show.Title,
 			Year:      res.Show.Year,
 			Overview:  res.Show.Overview,
-			PosterURL: "", // Trakt doesn't provide images directly
+			PosterURL: "",
 			Seasons:   make(map[int][]Episode),
 		}
 
 		for _, season := range seasonsData {
+			if season.Number == 0 { // Skip specials
+				continue
+			}
 			for _, ep := range season.Episodes {
+				parsedTime, err := time.Parse(time.RFC3339, ep.FirstAired)
+				airDate := ""
+				if err == nil {
+					airDate = parsedTime.Format("2006-01-02")
+				}
+
 				result.Seasons[season.Number] = append(result.Seasons[season.Number], Episode{
 					EpisodeNumber: ep.Number,
 					Title:         ep.Title,
-					AirDate:       ep.FirstAired,
+					AirDate:       airDate,
 				})
 			}
 		}
@@ -117,4 +130,8 @@ func (t *TraktClient) SearchTVShow(title string) ([]*TVShowResult, error) {
 
 func (t *TraktClient) SearchMovie(title string, year int) ([]*MovieResult, error) {
 	return nil, fmt.Errorf("Trakt movie search not implemented")
+}
+
+func (c *TraktClient) GetTVShowDetailsByID(tmdbID int) (*TVShowResult, error) {
+	return nil, fmt.Errorf("GetTVShowDetailsByID not implemented for this client")
 }

@@ -4,6 +4,7 @@ package metadata
 type Client interface {
 	SearchMovie(title string, year int) ([]*MovieResult, error)
 	SearchTVShow(title string) ([]*TVShowResult, error)
+	GetTVShowDetailsByID(tmdbID int) (*TVShowResult, error)
 }
 
 // MovieResult is a standardized struct for movie metadata.

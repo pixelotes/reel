@@ -127,11 +127,14 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 
 	// --- Initialize Clients based on new Config Structure ---
 
+	// Create a TMDB client instance to be shared
+	tmdbClient := metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language)
+
 	// Helper function to initialize metadata providers
 	initMetadataProvider := func(provider string) metadata.Client {
 		switch provider {
 		case "tmdb":
-			return metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language)
+			return tmdbClient // Return the shared instance
 		case "imdb":
 			return metadata.NewIMDBClient(cfg.Metadata.IMDB.APIKey)
 		case "tvmaze":
@@ -139,7 +142,7 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		case "anilist":
 			return metadata.NewAniListClient()
 		case "trakt":
-			return metadata.NewTraktClient(cfg.Metadata.Trakt.ClientID)
+			return metadata.NewTraktClient(cfg.Metadata.Trakt.ClientID, tmdbClient) // Pass TMDB client
 		}
 		return nil
 	}
@@ -251,21 +254,20 @@ func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, 
 		client := providers[0]
 		m.logger.Info("Using first metadata provider")
 
-		if mediaType == models.MediaTypeMovie {
+		switch mediaType {
+		case models.MediaTypeMovie:
 			m.logger.Info("Processing movie metadata...")
 			movieData, err := client.SearchMovie(title, year)
 			if err != nil {
 				m.logger.Error("Movie metadata search failed:", err)
 			} else if len(movieData) > 0 {
 				m.logger.Info("Movie metadata found - ID:", movieData[0].ID, "Title:", movieData[0].Title)
-				// Parse TMDB ID
 				if tmdbID, parseErr := strconv.Atoi(movieData[0].ID); parseErr == nil {
 					metadataID = &tmdbID
 					m.logger.Info("Parsed TMDB ID:", *metadataID)
 				} else {
 					m.logger.Error("Failed to parse TMDB ID:", movieData[0].ID, "Error:", parseErr)
 				}
-
 				overview = &movieData[0].Overview
 				posterURL = &movieData[0].PosterURL
 				rating = &movieData[0].Rating
@@ -279,9 +281,8 @@ func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, 
 			} else {
 				m.logger.Info("No movie metadata found")
 			}
-		} else if mediaType == models.MediaTypeTVShow || mediaType == models.MediaTypeAnime {
+		case models.MediaTypeTVShow, models.MediaTypeAnime:
 			m.logger.Info("Processing TV show/anime metadata...")
-			var err error
 			tvShowDataSlice, err := client.SearchTVShow(title)
 			if err != nil {
 				m.logger.Error("TV show/anime metadata search failed:", err)

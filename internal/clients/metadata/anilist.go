@@ -136,3 +136,7 @@ func (a *AniListClient) SearchMovie(title string, year int) ([]*MovieResult, err
 func (a *AniListClient) SearchTVShow(title string) ([]*TVShowResult, error) {
 	return a.SearchAnime(title)
 }
+
+func (c *AniListClient) GetTVShowDetailsByID(tmdbID int) (*TVShowResult, error) {
+	return nil, fmt.Errorf("GetTVShowDetailsByID not implemented for this client")
+}
