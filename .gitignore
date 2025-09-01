@@ -1,2 +1,3 @@
 configs/config.yml
 data/reel.db*
+data/filter.log
