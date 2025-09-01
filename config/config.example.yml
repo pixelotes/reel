@@ -31,8 +31,9 @@ metadata:
   tvmaze:
     api_key: "" # No key needed for basic use
   anilist: {} # No config needed for public queries
-  trakt: # Add this section
+  trakt:
     client_id: "your_trakt_client_id_here"
+  anidb: {} # No config needed for public queries
 
 movies:
   providers: ["tmdb", "imdb"] # Order of preference

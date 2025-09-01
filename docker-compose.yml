@@ -1,0 +1,49 @@
+services:
+  reel:
+    image: pixelotes/reel
+    container_name: reel
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./reel/config:/app/config
+      - ./reel/data:/app/data
+      - ./usb/media:/media
+      - ./usb/downloads:/downloads
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Madrid
+  scarf:
+    image: pixelotes/scarf
+    container_name: scarf
+    ports:
+      - "8080:8080"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Madrid
+      - CRONJOB_ENABLE=false
+      - SKIP_TLS_VERIFY=true
+      - UI_PASSWORD=changeme
+      - FLEXGET_API_KEY=abcd1234
+      - ENABLE_CRONJOBS=false
+      - JWT_SECRET=abcd1234
+      - DEBUG=false
+      - DEFAULT_API_LIMIT=300
+    volumes:
+      - ./scarf/definitions:/app/definitions
+  transmission:
+    image: linuxserver/transmission
+    container_name: transmission
+    restart: unless-stopped
+    ports:
+      - "9091:9091"
+      - "51413:51413"
+      - "51413:51413/udp"
+    volumes:
+      - ./usb/downloads/:/downloads
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Madrid
