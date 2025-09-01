@@ -1,11 +1,12 @@
 package core
 
 import (
+	"context"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"reel/internal/clients/notifications"
 	"reel/internal/clients/torrent"
@@ -33,7 +34,7 @@ func NewPostProcessor(cfg *config.Config, logger *utils.Logger, mediaRepo *model
 }
 
 // ProcessDownload is the main entry point for post-processing a completed download.
-func (pp *PostProcessor) ProcessDownload(media models.Media, torrentStatus torrent.TorrentStatus, seasonNumber int, episodeNumber int) {
+func (pp *PostProcessor) ProcessDownload(media models.Media, torrentStatus torrent.TorrentStatus, seasonNumber int, episodeNumber int, downloadPath string) {
 	pp.logger.Info("Starting post-processing for:", media.Title)
 
 	destinationPath := pp.createDestinationFolder(&media, seasonNumber)
@@ -42,7 +43,7 @@ func (pp *PostProcessor) ProcessDownload(media models.Media, torrentStatus torre
 		return
 	}
 
-	mediaFiles := pp.identifyMediaFiles(&media, torrentStatus)
+	mediaFiles := pp.identifyMediaFiles(downloadPath, torrentStatus.Files)
 	if len(mediaFiles) == 0 {
 		pp.logger.Error("No media files identified for:", media.Title)
 		return
@@ -97,25 +98,20 @@ func (pp *PostProcessor) createDestinationFolder(media *models.Media, seasonNumb
 }
 
 // identifyMediaFiles finds the relevant video and subtitle files within the downloaded content.
-func (pp *PostProcessor) identifyMediaFiles(media *models.Media, torrentStatus torrent.TorrentStatus) []string {
+func (pp *PostProcessor) identifyMediaFiles(downloadPath string, torrentFiles []string) []string {
 	videoExtensions := map[string]bool{".mkv": true, ".mp4": true, ".avi": true, ".mov": true}
 	subtitleExtensions := map[string]bool{".srt": true, ".sub": true, ".ass": true}
 
 	var files []string
-	downloadPath := *media.DownloadPath
 
-	filepath.Walk(downloadPath, func(path string, info fs.FileInfo, err error) error {
-		if err != nil {
-			return err
+	for _, file := range torrentFiles {
+		ext := strings.ToLower(filepath.Ext(file))
+		if videoExtensions[ext] || subtitleExtensions[ext] {
+			// Construct the full path by joining the torrent's download directory with the file path
+			fullPath := filepath.Join(downloadPath, file)
+			files = append(files, fullPath)
 		}
-		if !info.IsDir() {
-			ext := strings.ToLower(filepath.Ext(path))
-			if videoExtensions[ext] || subtitleExtensions[ext] {
-				files = append(files, path)
-			}
-		}
-		return nil
-	})
+	}
 	return files
 }
 
@@ -133,15 +129,41 @@ func (pp *PostProcessor) moveOrLinkFiles(media *models.Media, files []string, de
 
 	for _, file := range files {
 		newPath := filepath.Join(destination, filepath.Base(file))
+
+		// Wait for the file to exist to handle the race condition.
+		if !waitForFile(file, 30*time.Second) {
+			pp.logger.Error(fmt.Sprintf("Source file did not appear in time: %s", file))
+			continue // Skip to the next file
+		}
+
+		var err error
 		if moveMethod == "move" {
-			err := os.Rename(file, newPath)
-			if err != nil {
-				pp.logger.Error("Failed to move file:", err)
-			}
+			err = os.Rename(file, newPath)
 		} else {
-			err := os.Link(file, newPath)
-			if err != nil {
-				pp.logger.Error("Failed to link file:", err)
+			err = os.Link(file, newPath)
+		}
+
+		if err != nil {
+			pp.logger.Error(fmt.Sprintf("Failed to %s file '%s' to '%s': %v", moveMethod, file, newPath, err))
+		}
+	}
+}
+
+// waitForFile waits for a file to exist for a certain duration.
+func waitForFile(filePath string, timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return false // Timeout reached
+		case <-ticker.C:
+			if _, err := os.Stat(filePath); err == nil {
+				return true // File exists
 			}
 		}
 	}

@@ -23,13 +23,15 @@ type TorrentClient interface {
 }
 
 type TorrentStatus struct {
-	Hash         string  `json:"hash"`
-	Name         string  `json:"name"`
-	Progress     float64 `json:"progress"`
-	IsCompleted  bool    `json:"is_completed"`
-	DownloadRate int64   `json:"download_rate"`
-	UploadRate   int64   `json:"upload_rate"`
-	ETA          int     `json:"eta"`
+	Hash         string   `json:"hash"`
+	Name         string   `json:"name"`
+	Progress     float64  `json:"progress"`
+	Files        []string `json:"files"`
+	DownloadDir  string   `json:"download_dir"`
+	IsCompleted  bool     `json:"is_completed"`
+	DownloadRate int64    `json:"download_rate"`
+	UploadRate   int64    `json:"upload_rate"`
+	ETA          int      `json:"eta"`
 }
 
 func NewTransmissionClient(host, username, password string) *TransmissionClient {
@@ -83,7 +85,7 @@ func (t *TransmissionClient) AddTorrent(magnetLink string, downloadPath string) 
 func (t *TransmissionClient) GetTorrentStatus(hash string) (TorrentStatus, error) {
 	method := "torrent-get"
 	args := map[string]interface{}{
-		"fields": []string{"hashString", "name", "percentDone", "status", "rateDownload", "rateUpload", "eta"},
+		"fields": []string{"hashString", "name", "percentDone", "status", "rateDownload", "rateUpload", "eta", "downloadDir", "files"},
 		"ids":    []string{hash},
 	}
 
@@ -96,9 +98,19 @@ func (t *TransmissionClient) GetTorrentStatus(hash string) (TorrentStatus, error
 		if torrents, ok := arguments["torrents"].([]interface{}); ok && len(torrents) > 0 {
 			if torrent, ok := torrents[0].(map[string]interface{}); ok {
 				status := TorrentStatus{
-					Hash:     hash,
-					Name:     torrent["name"].(string),
-					Progress: getFloat(torrent, "percentDone"),
+					Hash:        hash,
+					Name:        torrent["name"].(string),
+					Progress:    getFloat(torrent, "percentDone"),
+					DownloadDir: torrent["downloadDir"].(string),
+					Files:       []string{},
+				}
+
+				if files, ok := torrent["files"].([]interface{}); ok {
+					for _, file := range files {
+						if fileMap, ok := file.(map[string]interface{}); ok {
+							status.Files = append(status.Files, fileMap["name"].(string))
+						}
+					}
 				}
 
 				if status.Progress >= 1.0 {
@@ -113,7 +125,7 @@ func (t *TransmissionClient) GetTorrentStatus(hash string) (TorrentStatus, error
 	// If we get here, it means the torrent was not found by its hash.
 	// Let's try getting all torrents and finding it.
 	args = map[string]interface{}{
-		"fields": []string{"hashString", "name", "percentDone", "status", "rateDownload", "rateUpload", "eta"},
+		"fields": []string{"hashString", "name", "percentDone", "status", "rateDownload", "rateUpload", "eta", "downloadDir", "files"},
 	}
 
 	response, err = t.sendRequest(method, args)
@@ -127,9 +139,19 @@ func (t *TransmissionClient) GetTorrentStatus(hash string) (TorrentStatus, error
 				if torrent, ok := tdata.(map[string]interface{}); ok {
 					if h, ok := torrent["hashString"].(string); ok && strings.EqualFold(h, hash) {
 						status := TorrentStatus{
-							Hash:     hash,
-							Name:     torrent["name"].(string),
-							Progress: getFloat(torrent, "percentDone"),
+							Hash:        hash,
+							Name:        torrent["name"].(string),
+							Progress:    getFloat(torrent, "percentDone"),
+							DownloadDir: torrent["downloadDir"].(string),
+							Files:       []string{},
+						}
+
+						if files, ok := torrent["files"].([]interface{}); ok {
+							for _, file := range files {
+								if fileMap, ok := file.(map[string]interface{}); ok {
+									status.Files = append(status.Files, fileMap["name"].(string))
+								}
+							}
 						}
 
 						if status.Progress >= 1.0 {

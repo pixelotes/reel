@@ -762,7 +762,7 @@ func (m *Manager) updateDownloadStatus() {
 								// Only process if episode is still downloading
 								if episode.Status == models.StatusDownloading {
 									// Start post-processing in a new goroutine to avoid blocking
-									go m.postProcessor.ProcessDownload(media, status, season.SeasonNumber, episode.EpisodeNumber)
+									go m.postProcessor.ProcessDownload(media, status, season.SeasonNumber, episode.EpisodeNumber, status.DownloadDir)
 									m.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, season.SeasonNumber, episode.EpisodeNumber, models.StatusDownloaded, nil, nil)
 									goto ShowStatusUpdate
 								}
@@ -773,7 +773,7 @@ func (m *Manager) updateDownloadStatus() {
 					// For movies - only process if still downloading
 					if media.Status == models.StatusDownloading {
 						// Start post-processing in a new goroutine to avoid blocking
-						go m.postProcessor.ProcessDownload(media, status, 0, 0)
+						go m.postProcessor.ProcessDownload(media, status, 0, 0, status.DownloadDir)
 						// For movies, just update the main media item
 						m.mediaRepo.UpdateProgress(media.ID, models.StatusDownloaded, 1.0, completedAt)
 					}
