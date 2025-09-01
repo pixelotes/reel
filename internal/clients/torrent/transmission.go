@@ -149,7 +149,7 @@ func (t *TransmissionClient) RemoveTorrent(hash string) error {
 	method := "torrent-remove"
 	args := map[string]interface{}{
 		"ids":               []string{hash},
-		"delete-local-data": false,
+		"delete-local-data": true,
 	}
 
 	_, err := t.sendRequest(method, args)

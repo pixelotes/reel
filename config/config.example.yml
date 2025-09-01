@@ -77,4 +77,5 @@ automation:
     - "1080p"
     - "720p"
   min_seeders: 5
+  keep_torrents_for_days: 7
   notifications: [] # e.g., ["pushbullet"]

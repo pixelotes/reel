@@ -17,14 +17,16 @@ const (
 type MediaStatus string
 
 const (
-	StatusPending     MediaStatus = "pending"
-	StatusSearching   MediaStatus = "searching"
-	StatusDownloading MediaStatus = "downloading"
-	StatusDownloaded  MediaStatus = "downloaded"
-	StatusFailed      MediaStatus = "failed"
-	StatusSkipped     MediaStatus = "skipped"
-	StatusMonitoring  MediaStatus = "monitoring"
-	StatusTBA         MediaStatus = "tba"
+	StatusPending        MediaStatus = "pending"
+	StatusSearching      MediaStatus = "searching"
+	StatusDownloading    MediaStatus = "downloading"
+	StatusDownloaded     MediaStatus = "downloaded"
+	StatusFailed         MediaStatus = "failed"
+	StatusSkipped        MediaStatus = "skipped"
+	StatusMonitoring     MediaStatus = "monitoring"
+	StatusPostProcessing MediaStatus = "post-processing"
+	StatusTBA            MediaStatus = "tba"
+	StatusArchived       MediaStatus = "archived"
 )
 
 type Media struct {

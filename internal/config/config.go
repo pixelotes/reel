@@ -92,6 +92,7 @@ type Config struct {
 		MaxConcurrentDownloads int      `yaml:"max_concurrent_downloads"`
 		QualityPreferences     []string `yaml:"quality_preferences"`
 		MinSeeders             int      `yaml:"min_seeders"`
+		KeepTorrentsForDays    int      `yaml:"keep_torrents_for_days"`
 		RejectCommon           []string `yaml:"reject-common"`
 		Notifications          []string `yaml:"notifications"`
 	} `yaml:"automation"`

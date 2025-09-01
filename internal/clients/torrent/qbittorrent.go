@@ -103,6 +103,32 @@ func (q *qBittorrentClient) GetTorrentStatus(hash string) (TorrentStatus, error)
 }
 
 func (q *qBittorrentClient) RemoveTorrent(hash string) error {
-	// Placeholder for removing a torrent via the API.
+	cookie, err := q.login()
+	if err != nil {
+		return err
+	}
+
+	removeURL := fmt.Sprintf("%s/api/v2/torrents/delete", q.host)
+	data := url.Values{}
+	data.Set("hashes", hash)
+	data.Set("deleteFiles", "true")
+
+	req, err := http.NewRequest("POST", removeURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		return err
+	}
+
+	req.AddCookie(cookie)
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := q.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to remove torrent with status: %s", resp.Status)
+	}
 	return nil
 }

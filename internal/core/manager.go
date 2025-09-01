@@ -509,11 +509,37 @@ func (m *Manager) GetAllMedia() ([]models.Media, error) {
 	return result, nil
 }
 
+func (m *Manager) cleanupCompletedTorrents() {
+	if m.config.Automation.KeepTorrentsForDays <= 0 {
+		return // Feature is disabled
+	}
+
+	downloadedMedia, err := m.mediaRepo.GetByStatus(models.StatusDownloaded)
+	if err != nil {
+		m.logger.Error("Failed to get downloaded media for cleanup:", err)
+		return
+	}
+
+	cleanupThreshold := time.Now().AddDate(0, 0, -m.config.Automation.KeepTorrentsForDays)
+
+	for _, media := range downloadedMedia {
+		if media.CompletedAt != nil && media.TorrentHash != nil && media.CompletedAt.Before(cleanupThreshold) {
+			m.logger.Info("Cleaning up torrent for:", media.Title)
+			if err := m.torrentClient.RemoveTorrent(*media.TorrentHash); err != nil {
+				m.logger.Error("Failed to remove torrent from client:", err)
+			} else {
+				m.mediaRepo.UpdateStatus(media.ID, models.StatusArchived)
+			}
+		}
+	}
+}
+
 func (m *Manager) StartScheduler() {
 	m.scheduler.AddFunc("@every 30m", m.processPendingMedia)
 	m.scheduler.AddFunc("@every 6h", m.checkForNewEpisodes)
 	m.scheduler.AddFunc("@every 10s", m.updateDownloadStatus)
 	m.scheduler.AddFunc("@every 5m", m.processRSSFeeds)
+	m.scheduler.AddFunc("@every 24h", m.cleanupCompletedTorrents)
 	m.scheduler.Start()
 	m.logger.Info("Scheduler started.")
 	go m.processPendingMedia()
@@ -736,7 +762,7 @@ func (m *Manager) updateDownloadStatus() {
 								// Only process if episode is still downloading
 								if episode.Status == models.StatusDownloading {
 									// Start post-processing in a new goroutine to avoid blocking
-									go m.postProcessor.ProcessDownload(media, status, season.SeasonNumber)
+									go m.postProcessor.ProcessDownload(media, status, season.SeasonNumber, episode.EpisodeNumber)
 									m.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, season.SeasonNumber, episode.EpisodeNumber, models.StatusDownloaded, nil, nil)
 									goto ShowStatusUpdate
 								}
@@ -747,7 +773,7 @@ func (m *Manager) updateDownloadStatus() {
 					// For movies - only process if still downloading
 					if media.Status == models.StatusDownloading {
 						// Start post-processing in a new goroutine to avoid blocking
-						go m.postProcessor.ProcessDownload(media, status, 0)
+						go m.postProcessor.ProcessDownload(media, status, 0, 0)
 						// For movies, just update the main media item
 						m.mediaRepo.UpdateProgress(media.ID, models.StatusDownloaded, 1.0, completedAt)
 					}
