@@ -129,9 +129,6 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		},
 	}
 
-	// Pass the notifiers when creating the PostProcessor
-	m.postProcessor = NewPostProcessor(cfg, logger, models.NewMediaRepository(db), m.notifiers)
-
 	// --- Initialize Notifiers ---
 	for _, notifierName := range cfg.Automation.Notifications {
 		switch notifierName {
@@ -144,6 +141,28 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 			// Add other notifiers here in the future
 		}
 	}
+
+	// test
+	for _, notifierName := range cfg.Automation.Notifications {
+		switch notifierName {
+		case "pushbullet":
+			if cfg.Notifications.Pushbullet.APIKey != "" {
+				client := notifications.NewPushbulletClient(cfg.Notifications.Pushbullet.APIKey, logger)
+				// Test the connection immediately
+				if err := client.Test(); err != nil {
+					logger.Error("Pushbullet initialization test failed:", err)
+				} else {
+					logger.Info("Pushbullet initialized successfully")
+				}
+				m.notifiers = append(m.notifiers, client)
+				logger.Info("Pushbullet notifier enabled.")
+			} else {
+				logger.Error("Pushbullet API key is empty!")
+			}
+		}
+	}
+
+	m.postProcessor = NewPostProcessor(cfg, logger, models.NewMediaRepository(db), m.notifiers)
 
 	// --- Initialize Clients based on new Config Structure ---
 
@@ -248,9 +267,10 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 func (m *Manager) startSearchQueueWorker() {
 	m.logger.Info("Search queue worker started.")
 	for media := range m.searchQueue {
-		if media.Type == models.MediaTypeMovie {
+		switch media.Type {
+		case models.MediaTypeMovie:
 			m.searchAndDownloadMovie(&media)
-		} else if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+		case models.MediaTypeTVShow, models.MediaTypeAnime:
 			m.searchAndDownloadNextEpisode(&media)
 		}
 		time.Sleep(30 * time.Second)
@@ -258,7 +278,6 @@ func (m *Manager) startSearchQueueWorker() {
 }
 
 func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, year int, language, minQuality, maxQuality string, autoDownload bool, startSeason, startEpisode int) (*models.Media, error) {
-	m.logger.Info("=== STARTING AddMedia FUNCTION ===")
 	m.logger.Info("Parameters - Type:", mediaType, "ID:", id, "Title:", title, "Year:", year, "StartSeason:", startSeason, "StartEpisode:", startEpisode)
 
 	var overview, posterURL *string
@@ -403,7 +422,6 @@ func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, 
 		return nil, fmt.Errorf("failed to create media: %w", err)
 	}
 
-	m.logger.Info("=== MEDIA CREATED SUCCESSFULLY ===")
 	m.logger.Info("Media ID:", media.ID, "Title:", media.Title, "Type:", media.Type)
 
 	if autoDownload {
@@ -416,7 +434,6 @@ func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, 
 		}
 	}
 
-	m.logger.Info("=== AddMedia FUNCTION COMPLETED ===")
 	return media, nil
 }
 
@@ -481,7 +498,6 @@ func (m *Manager) searchAndDownloadNextEpisode(media *models.Media) {
 }
 
 func (m *Manager) GetAllMedia() ([]models.Media, error) {
-	m.logger.Info("=== Manager.GetAllMedia called ===")
 
 	result, err := m.mediaRepo.GetAll()
 	if err != nil {
@@ -705,7 +721,7 @@ func (m *Manager) updateDownloadStatus() {
 				continue
 			}
 
-			// If the torrent is completed, update the specific episode
+			// Only process completion once - check current status is still downloading
 			if status.IsCompleted {
 				var completedAt *time.Time
 				now := time.Now()
@@ -717,24 +733,25 @@ func (m *Manager) updateDownloadStatus() {
 						// Find the downloading episode and mark it as downloaded
 						for _, season := range show.Seasons {
 							for _, episode := range season.Episodes {
-								// This assumes only one episode downloads at a time for a given show
+								// Only process if episode is still downloading
 								if episode.Status == models.StatusDownloading {
 									// Start post-processing in a new goroutine to avoid blocking
 									go m.postProcessor.ProcessDownload(media, status, season.SeasonNumber)
 									m.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, season.SeasonNumber, episode.EpisodeNumber, models.StatusDownloaded, nil, nil)
-									//m.notifyDownloadCompleted(&media, status.Name)
 									goto ShowStatusUpdate
 								}
 							}
 						}
 					}
+				} else {
+					// For movies - only process if still downloading
+					if media.Status == models.StatusDownloading {
+						// Start post-processing in a new goroutine to avoid blocking
+						go m.postProcessor.ProcessDownload(media, status, 0)
+						// For movies, just update the main media item
+						m.mediaRepo.UpdateProgress(media.ID, models.StatusDownloaded, 1.0, completedAt)
+					}
 				}
-
-				// For movies, start post-processing with season 0
-				go m.postProcessor.ProcessDownload(media, status, 0)
-				// For movies, just update the main media item
-				m.mediaRepo.UpdateProgress(media.ID, models.StatusDownloaded, 1.0, completedAt)
-				//m.notifyDownloadCompleted(&media, status.Name)
 
 			ShowStatusUpdate:
 				// After any episode completes, always recalculate the show's overall status
@@ -1037,7 +1054,10 @@ func (m *Manager) StartDownload(id int, torrent indexers.IndexerResult) error {
 		return err
 	}
 
+	// Notidication
 	m.notifyDownloadStarted(media, torrent.Title)
+	m.logger.Info("Torrent successfully sent to download client! Hash:", hash)
+
 	m.logger.Info("Torrent successfully sent to download client! Hash:", hash)
 
 	if err := m.mediaRepo.UpdateDownloadInfo(id, models.StatusDownloading, &hash, &torrent.Title); err != nil {

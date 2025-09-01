@@ -51,6 +51,14 @@ func (c *PushbulletClient) NotifyDownloadComplete(media *models.Media, torrentNa
 	}
 }
 
+func (c *PushbulletClient) NotifyPostProcessComplete(media *models.Media, torrentName string) {
+	title := fmt.Sprintf("Ready to Watch: %s", media.Title)
+	body := fmt.Sprintf("Post-processing complete for: %s", torrentName)
+	if err := c.sendPush(title, body); err != nil {
+		c.logger.Error("Error sending Pushbullet post-process notification:", err)
+	}
+}
+
 // Test verifies the API key is valid by fetching user info.
 func (c *PushbulletClient) Test() error {
 	_, err := c.pb.Me()

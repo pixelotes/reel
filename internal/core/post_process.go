@@ -50,8 +50,8 @@ func (pp *PostProcessor) ProcessDownload(media models.Media, torrentStatus torre
 
 	pp.renameFiles(&media, destinationPath)
 
-	// Send notification at the very end of the pipeline.
-	pp.notifyDownloadCompleted(&media, torrentStatus.Name)
+	// Send post-processing completion notification
+	pp.notifyPostProcessCompleted(&media, torrentStatus.Name)
 
 	pp.logger.Info("Finished post-processing for:", media.Title)
 }
@@ -78,7 +78,7 @@ func (pp *PostProcessor) createDestinationFolder(media *models.Media, seasonNumb
 	fullPath := filepath.Join(baseDestPath, mediaFolderName)
 
 	// If it's a show, add the season subfolder
-	if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+	if (media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime) && seasonNumber > 0 {
 		seasonFolderName := fmt.Sprintf("S%02d", seasonNumber)
 		fullPath = filepath.Join(fullPath, seasonFolderName)
 	}
@@ -113,10 +113,13 @@ func (pp *PostProcessor) renameFiles(media *models.Media, destination string) {
 	// In the future, this will rename files to a format like "Movie Title (2023).mkv".
 }
 
-// notifyDownloadCompleted dispatches notifications for a completed download.
-func (pp *PostProcessor) notifyDownloadCompleted(media *models.Media, torrentName string) {
-	for _, n := range pp.notifiers {
-		// Run in a goroutine to avoid blocking the main application flow.
-		go n.NotifyDownloadComplete(media, torrentName)
+func (pp *PostProcessor) notifyPostProcessCompleted(media *models.Media, torrentName string) {
+	pp.logger.Info("Sending post-processing completion notifications to", len(pp.notifiers), "notifiers")
+	for i, n := range pp.notifiers {
+		pp.logger.Info("Sending post-process notification via notifier", i)
+		go func(notifier notifications.Notifier, index int) {
+			notifier.NotifyPostProcessComplete(media, torrentName)
+			pp.logger.Info("Completed post-process notification for notifier", index)
+		}(n, i)
 	}
 }
