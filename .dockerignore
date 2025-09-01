@@ -6,4 +6,4 @@ Dockerfile
 .gitignore
 .dockerignore
 docker-compose.yml
-media
+media/

@@ -6,7 +6,7 @@ RUN go mod download
 RUN apk add --update gcc git build-base
 
 COPY . .
-RUN CGO_ENABLED=1 GOOS=linux go build -a -ldflags '-extldflags "-static"' -o reel .
+RUN CGO_ENABLED=0 go build -o reel .
 
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates tzdata
