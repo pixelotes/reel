@@ -239,52 +239,6 @@ func (ts *TorrentSelector) filterByEpisodeNumber(results []indexers.IndexerResul
 	return filtered
 }
 
-// filterBySeriesName filters torrents to only include those containing the series name
-func (ts *TorrentSelector) filterBySeriesName(results []indexers.IndexerResult, seriesTitle string, stats *FilterStats) []indexers.IndexerResult {
-	var filtered []indexers.IndexerResult
-	meaningfulWords := ts.extractMeaningfulWords(seriesTitle)
-	if len(meaningfulWords) == 0 {
-		return results
-	}
-
-	for _, r := range results {
-		titleLower := strings.ToLower(r.Title)
-		allWordsFound := true
-		for _, word := range meaningfulWords {
-			if !strings.Contains(titleLower, strings.ToLower(word)) {
-				allWordsFound = false
-				break
-			}
-		}
-		if allWordsFound {
-			filtered = append(filtered, r)
-		} else {
-			stats.SeriesName++
-			ts.logReject(fmt.Sprintf("Series name '%s' not found", strings.Join(meaningfulWords, " ")), r)
-		}
-	}
-	return filtered
-}
-
-// extractMeaningfulWords extracts meaningful words from a title, removing common stop words and symbols
-func (ts *TorrentSelector) extractMeaningfulWords(title string) []string {
-	stopWords := map[string]bool{
-		"the": true, "a": true, "an": true, "and": true, "or": true, "but": true,
-		"in": true, "on": true, "at": true, "to": true, "for": true, "of": true,
-		"with": true, "by": true, "from": true, "up": true, "about": true, "into": true,
-	}
-	cleanTitle := regexp.MustCompile(`[^\w\s]`).ReplaceAllString(title, " ")
-	words := regexp.MustCompile(`\s+`).Split(cleanTitle, -1)
-	var meaningfulWords []string
-	for _, word := range words {
-		word = strings.TrimSpace(strings.ToLower(word))
-		if len(word) > 1 && !stopWords[word] {
-			meaningfulWords = append(meaningfulWords, word)
-		}
-	}
-	return meaningfulWords
-}
-
 // filterByQuality filters torrents by resolution quality
 func (ts *TorrentSelector) filterByQuality(results []indexers.IndexerResult, minQuality, maxQuality string, stats *FilterStats) []indexers.IndexerResult {
 	minRank := RESOLUTION_RANK[minQuality]
@@ -312,6 +266,132 @@ func (ts *TorrentSelector) filterByMinSeeders(results []indexers.IndexerResult, 
 		} else {
 			stats.MinSeeders++
 			ts.logReject(fmt.Sprintf("Not enough seeders (%d < %d)", r.Seeders, ts.config.Automation.MinSeeders), r)
+		}
+	}
+	return filtered
+}
+
+// Add this new function to split camelCase words
+func (ts *TorrentSelector) splitCamelCase(word string) []string {
+	// Regular expression to find camelCase boundaries
+	camelCaseRegex := regexp.MustCompile(`([a-z])([A-Z])`)
+
+	// Insert spaces before uppercase letters that follow lowercase letters
+	spaced := camelCaseRegex.ReplaceAllString(word, "$1 $2")
+
+	// Split by spaces and return non-empty parts
+	parts := strings.Fields(spaced)
+
+	// If we got multiple parts, return them. Otherwise return the original word
+	if len(parts) > 1 {
+		return parts
+	}
+	return []string{word}
+}
+
+// Enhanced extractMeaningfulWords with punctuation removal and camelCase support
+func (ts *TorrentSelector) extractMeaningfulWords(title string) []string {
+	stopWords := map[string]bool{
+		"the": true, "a": true, "an": true, "and": true, "or": true, "but": true,
+		"in": true, "on": true, "at": true, "to": true, "for": true, "of": true,
+		"with": true, "by": true, "from": true, "up": true, "about": true, "into": true,
+	}
+
+	// Step 1: Remove dots, commas, semicolons and other punctuation (but keep spaces and alphanumeric)
+	// This converts "Dr. Stone" -> "Dr Stone" and "Steins;Gate" -> "SteinsGate"
+	cleanTitle := regexp.MustCompile(`[^\w\s]`).ReplaceAllString(title, "")
+
+	// Step 2: Split by spaces to get individual words
+	words := regexp.MustCompile(`\s+`).Split(strings.TrimSpace(cleanTitle), -1)
+	var meaningfulWords []string
+
+	for _, word := range words {
+		word = strings.TrimSpace(word)
+		if len(word) > 1 {
+			// Step 3: Check if this word contains camelCase and split if needed
+			camelParts := ts.splitCamelCase(word)
+
+			// Add the original word if it's not a stop word
+			if !stopWords[strings.ToLower(word)] {
+				meaningfulWords = append(meaningfulWords, word)
+			}
+
+			// If camelCase was split, also add the individual parts
+			if len(camelParts) > 1 {
+				for _, part := range camelParts {
+					part = strings.TrimSpace(part)
+					if len(part) > 1 && !stopWords[strings.ToLower(part)] {
+						meaningfulWords = append(meaningfulWords, part)
+					}
+				}
+			}
+		}
+	}
+
+	// Remove duplicates
+	seen := make(map[string]bool)
+	var unique []string
+	for _, word := range meaningfulWords {
+		lowerWord := strings.ToLower(word)
+		if !seen[lowerWord] {
+			seen[lowerWord] = true
+			unique = append(unique, word)
+		}
+	}
+
+	return unique
+}
+
+// Enhanced filterBySeriesName with flexible matching
+func (ts *TorrentSelector) filterBySeriesName(results []indexers.IndexerResult, seriesTitle string, stats *FilterStats) []indexers.IndexerResult {
+	var filtered []indexers.IndexerResult
+	meaningfulWords := ts.extractMeaningfulWords(seriesTitle)
+	if len(meaningfulWords) == 0 {
+		return results
+	}
+
+	for _, r := range results {
+		titleLower := strings.ToLower(r.Title)
+
+		// Try multiple matching strategies
+		matchFound := false
+
+		// Strategy 1: All words must be found individually
+		allWordsFound := true
+		for _, word := range meaningfulWords {
+			if !strings.Contains(titleLower, strings.ToLower(word)) {
+				allWordsFound = false
+				break
+			}
+		}
+		if allWordsFound {
+			matchFound = true
+		}
+
+		// Strategy 2: Try original series title as-is (for exact matches)
+		if !matchFound {
+			if strings.Contains(titleLower, strings.ToLower(seriesTitle)) {
+				matchFound = true
+			}
+		}
+
+		// Strategy 3: Try camelCase variations
+		// Convert series title camelCase to spaced version and check
+		if !matchFound {
+			camelParts := ts.splitCamelCase(seriesTitle)
+			if len(camelParts) > 1 {
+				spacedVersion := strings.ToLower(strings.Join(camelParts, " "))
+				if strings.Contains(titleLower, spacedVersion) {
+					matchFound = true
+				}
+			}
+		}
+
+		if matchFound {
+			filtered = append(filtered, r)
+		} else {
+			stats.SeriesName++
+			ts.logReject(fmt.Sprintf("Series name '%s' not found (words: %s)", seriesTitle, strings.Join(meaningfulWords, ", ")), r)
 		}
 	}
 	return filtered
