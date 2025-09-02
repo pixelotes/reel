@@ -81,4 +81,5 @@ automation:
     - "720p"
   min_seeders: 5
   keep_torrents_for_days: 7
+  keep_torrents_seed_ratio: 1.2
   notifications: [] # e.g., ["pushbullet"]

@@ -1,7 +1,10 @@
+// pixelotes/reel/reel-912718c2894dddc773eede72733de790bc7912b3/internal/clients/torrent/qbittorrent.go
 package torrent
 
 import (
+	"encoding/json" // Added line
 	"fmt"
+	"io/ioutil" // Added line
 	"net/http"
 	"net/url"
 	"strings"
@@ -13,6 +16,16 @@ type qBittorrentClient struct {
 	username   string
 	password   string
 	httpClient *http.Client
+}
+
+type qbTorrentProperties struct { // Added struct
+	Name        string  `json:"name"`
+	Size        int64   `json:"size"`
+	Progress    float64 `json:"progress"`
+	Ratio       float64 `json:"ratio"`
+	SavePath    string  `json:"save_path"`
+	State       string  `json:"state"`
+	ContentPath string  `json:"content_path"`
 }
 
 func NewQBittorrentClient(host, username, password string) *qBittorrentClient {
@@ -92,13 +105,45 @@ func (q *qBittorrentClient) AddTorrent(magnetLink string, downloadPath string) (
 
 // GetTorrentStatus is a mock implementation. A full implementation would parse the torrent list from the API.
 func (q *qBittorrentClient) GetTorrentStatus(hash string) (TorrentStatus, error) {
-	// This is a placeholder. A real implementation would need to query the
-	// /api/v2/torrents/info endpoint and find the torrent by its hash.
-	return TorrentStatus{
+	cookie, err := q.login() // Added line
+	if err != nil {          // Added line
+		return TorrentStatus{}, err // Added line
+	} // Added line
+
+	propertiesURL := fmt.Sprintf("%s/api/v2/torrents/properties?hash=%s", q.host, hash) // Added line
+	req, err := http.NewRequest("GET", propertiesURL, nil)                              // Added line
+	if err != nil {                                                                     // Added line
+		return TorrentStatus{}, err // Added line
+	} // Added line
+	req.AddCookie(cookie) // Added line
+
+	resp, err := q.httpClient.Do(req) // Added line
+	if err != nil {                   // Added line
+		return TorrentStatus{}, err // Added line
+	} // Added line
+	defer resp.Body.Close() // Added line
+
+	if resp.StatusCode != http.StatusOK { // Added line
+		return TorrentStatus{}, fmt.Errorf("failed to get torrent properties with status: %s", resp.Status) // Added line
+	} // Added line
+
+	body, err := ioutil.ReadAll(resp.Body) // Added line
+	if err != nil {                        // Added line
+		return TorrentStatus{}, err // Added line
+	} // Added line
+
+	var props qbTorrentProperties                        // Added line
+	if err := json.Unmarshal(body, &props); err != nil { // Added line
+		return TorrentStatus{}, fmt.Errorf("failed to decode torrent properties: %w", err) // Added line
+	} // Added line
+
+	return TorrentStatus{ // Modified line
 		Hash:        hash,
-		Name:        "Mock qBittorrent Download",
-		Progress:    0.5, // Mock 50% progress
-		IsCompleted: false,
+		Name:        props.Name,
+		Progress:    props.Progress,
+		IsCompleted: props.Progress >= 1.0,
+		DownloadDir: props.SavePath,
+		UploadRatio: props.Ratio,
 	}, nil
 }
 

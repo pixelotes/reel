@@ -491,8 +491,9 @@ func (m *Manager) GetAllMedia() ([]models.Media, error) {
 	return result, nil
 }
 
+// pixelotes/reel/reel-912718c2894dddc773eede72733de790bc7912b3/internal/core/manager.go
 func (m *Manager) cleanupCompletedTorrents() {
-	if m.config.Automation.KeepTorrentsForDays <= 0 {
+	if m.config.Automation.KeepTorrentsForDays <= 0 && m.config.Automation.KeepTorrentsSeedRatio <= 0 { // Modified line
 		return // Feature is disabled
 	}
 
@@ -505,12 +506,28 @@ func (m *Manager) cleanupCompletedTorrents() {
 	cleanupThreshold := time.Now().AddDate(0, 0, -m.config.Automation.KeepTorrentsForDays)
 
 	for _, media := range downloadedMedia {
-		if media.CompletedAt != nil && media.TorrentHash != nil && media.CompletedAt.Before(cleanupThreshold) {
-			m.logger.Info("Cleaning up torrent for:", media.Title)
-			if err := m.torrentClient.RemoveTorrent(*media.TorrentHash); err != nil {
-				m.logger.Error("Failed to remove torrent from client:", err)
-			} else {
-				m.mediaRepo.UpdateStatus(media.ID, models.StatusArchived)
+		if media.CompletedAt != nil && media.TorrentHash != nil {
+			status, err := m.torrentClient.GetTorrentStatus(*media.TorrentHash)
+			if err != nil {
+				m.logger.Error("Failed to get torrent status for cleanup:", err)
+				continue
+			}
+
+			shouldDelete := false
+			if m.config.Automation.KeepTorrentsForDays > 0 && media.CompletedAt.Before(cleanupThreshold) {
+				shouldDelete = true
+			}
+			if m.config.Automation.KeepTorrentsSeedRatio > 0 && status.UploadRatio >= m.config.Automation.KeepTorrentsSeedRatio {
+				shouldDelete = true
+			}
+
+			if shouldDelete {
+				m.logger.Info("Cleaning up torrent for:", media.Title)
+				if err := m.torrentClient.RemoveTorrent(*media.TorrentHash); err != nil {
+					m.logger.Error("Failed to remove torrent from client:", err)
+				} else {
+					m.mediaRepo.UpdateStatus(media.ID, models.StatusArchived)
+				}
 			}
 		}
 	}
