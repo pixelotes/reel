@@ -46,6 +46,9 @@ movies:
       api_key: "your_scarf_api_key_here"
     - type: "rss"
       url: "https://example.com/rss.xml"
+    - type: "prowlarr"
+      url: "http://prowlarr:9696"
+      api_key: "your_prowlarr_api_key_here"
 
 tv-shows:
   providers: ["tvmaze"]

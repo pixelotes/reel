@@ -142,26 +142,6 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		}
 	}
 
-	// test
-	for _, notifierName := range cfg.Automation.Notifications {
-		switch notifierName {
-		case "pushbullet":
-			if cfg.Notifications.Pushbullet.APIKey != "" {
-				client := notifications.NewPushbulletClient(cfg.Notifications.Pushbullet.APIKey, logger)
-				// Test the connection immediately
-				if err := client.Test(); err != nil {
-					logger.Error("Pushbullet initialization test failed:", err)
-				} else {
-					logger.Info("Pushbullet initialized successfully")
-				}
-				m.notifiers = append(m.notifiers, client)
-				logger.Info("Pushbullet notifier enabled.")
-			} else {
-				logger.Error("Pushbullet API key is empty!")
-			}
-		}
-	}
-
 	m.postProcessor = NewPostProcessor(cfg, logger, models.NewMediaRepository(db), m.notifiers)
 
 	// --- Initialize Clients based on new Config Structure ---
@@ -194,6 +174,8 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 			return indexers.NewScarfClient(source.URL, source.APIKey, timeout)
 		case "jackett":
 			return indexers.NewJackettClient(source.URL, source.APIKey)
+		case "prowlarr":
+			return indexers.NewProwlarrClient(source.URL, source.APIKey)
 		}
 		return nil
 	}
