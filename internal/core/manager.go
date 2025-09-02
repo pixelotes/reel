@@ -520,7 +520,7 @@ func (m *Manager) StartScheduler() {
 	m.scheduler.AddFunc("@every 30m", m.processPendingMedia)
 	m.scheduler.AddFunc("@every 6h", m.checkForNewEpisodes)
 	m.scheduler.AddFunc("@every 10s", m.updateDownloadStatus)
-	m.scheduler.AddFunc("@every 5m", m.processRSSFeeds)
+	m.scheduler.AddFunc("@every 1h", m.processRSSFeeds)
 	m.scheduler.AddFunc("@every 24h", m.cleanupCompletedTorrents)
 	m.scheduler.Start()
 	m.logger.Info("Scheduler started.")
