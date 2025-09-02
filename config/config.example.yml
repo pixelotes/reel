@@ -75,6 +75,7 @@ database:
 
 automation:
   search_interval: "1h"
+  episode_download_delay_hours: 8
   max_concurrent_downloads: 3
   quality_preferences:
     - "1080p"

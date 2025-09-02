@@ -539,6 +539,7 @@ func (m *Manager) StartScheduler() {
 	m.scheduler.AddFunc("@every 10s", m.updateDownloadStatus)
 	m.scheduler.AddFunc("@every 1h", m.processRSSFeeds)
 	m.scheduler.AddFunc("@every 24h", m.cleanupCompletedTorrents)
+	m.scheduler.AddFunc("@every 1h", m.retryFailedDownloads)
 	m.scheduler.Start()
 	m.logger.Info("Scheduler started.")
 	go m.processPendingMedia()
@@ -594,6 +595,7 @@ func (m *Manager) checkForNewEpisodes() {
 	}
 }
 
+// pixelotes/reel/reel-912718c2894dddc773eede72733de790bc7912b3/internal/core/manager.go
 func (m *Manager) updateShowMetadata(media *models.Media, provider metadata.Client) {
 	m.logger.Info("Updating metadata for show:", media.Title)
 	remoteShowSlice, err := provider.SearchTVShow(media.Title)
@@ -666,7 +668,8 @@ func (m *Manager) updateShowMetadata(media *models.Media, provider metadata.Clie
 				}
 			} else if localEpisode.Status == models.StatusTBA && remoteEpisode.AirDate != "" {
 				airDate, _ := time.Parse("2006-01-02", remoteEpisode.AirDate)
-				if airDate.Before(time.Now()) {
+				downloadDelay := time.Duration(m.config.Automation.EpisodeDownloadDelayHours) * time.Hour
+				if airDate.Add(downloadDelay).Before(time.Now()) {
 					m.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, seasonNum, localEpisode.EpisodeNumber, models.StatusPending, nil, nil)
 					// If a TBA episode becomes available, set the media status to pending
 					if media.Status == models.StatusMonitoring {
@@ -1164,6 +1167,28 @@ func (m *Manager) StartEpisodeDownload(mediaID int, seasonNumber int, episodeNum
 	}
 
 	return nil
+}
+
+func (m *Manager) retryFailedDownloads() {
+	failedMedia, err := m.mediaRepo.GetByStatus(models.StatusFailed)
+	if err != nil {
+		m.logger.Error("Failed to get failed media for retry:", err)
+		return
+	}
+
+	if len(failedMedia) > 0 {
+		m.logger.Info(fmt.Sprintf("Retrying %d failed media items.", len(failedMedia)))
+		for i := range failedMedia {
+			if failedMedia[i].AutoDownload {
+				mediaCopy := failedMedia[i]
+				if err := m.mediaRepo.UpdateStatus(mediaCopy.ID, models.StatusPending); err != nil {
+					m.logger.Error("Failed to update status for retry:", err)
+					continue
+				}
+				m.searchQueue <- mediaCopy
+			}
+		}
+	}
 }
 
 func (m *Manager) notifyDownloadStarted(media *models.Media, torrentName string) {

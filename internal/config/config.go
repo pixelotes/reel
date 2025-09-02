@@ -88,14 +88,15 @@ type Config struct {
 	} `yaml:"notifications"`
 
 	Automation struct {
-		SearchInterval         string   `yaml:"search_interval"`
-		MaxConcurrentDownloads int      `yaml:"max_concurrent_downloads"`
-		QualityPreferences     []string `yaml:"quality_preferences"`
-		MinSeeders             int      `yaml:"min_seeders"`
-		KeepTorrentsForDays    int      `yaml:"keep_torrents_for_days"`
-		KeepTorrentsSeedRatio  float64  `yaml:"keep_torrents_seed_ratio"`
-		RejectCommon           []string `yaml:"reject-common"`
-		Notifications          []string `yaml:"notifications"`
+		SearchInterval            string   `yaml:"search_interval"`
+		MaxConcurrentDownloads    int      `yaml:"max_concurrent_downloads"`
+		QualityPreferences        []string `yaml:"quality_preferences"`
+		MinSeeders                int      `yaml:"min_seeders"`
+		KeepTorrentsForDays       int      `yaml:"keep_torrents_for_days"`
+		KeepTorrentsSeedRatio     float64  `yaml:"keep_torrents_seed_ratio"`
+		EpisodeDownloadDelayHours int      `yaml:"episode_download_delay_hours"`
+		RejectCommon              []string `yaml:"reject-common"`
+		Notifications             []string `yaml:"notifications"`
 	} `yaml:"automation"`
 
 	RejectCommon []string `yaml:"reject-common"`
