@@ -27,7 +27,7 @@ func NewServer(cfg *config.Config, manager *core.Manager, logger *utils.Logger) 
 		config:     cfg,
 		manager:    manager,
 		logger:     logger,
-		apiHandler: NewAPIHandler(manager, logger),
+		apiHandler: NewAPIHandler(manager, logger, cfg),
 	}
 }
 

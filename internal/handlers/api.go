@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"reel/internal/clients/indexers"
+	"reel/internal/config"
 	"reel/internal/core"
 	"reel/internal/database/models"
 	"reel/internal/utils"
@@ -18,6 +19,7 @@ import (
 type APIHandler struct {
 	manager *core.Manager
 	logger  *utils.Logger
+	config  *config.Config
 }
 
 // A helper function to respond with JSON
@@ -34,8 +36,8 @@ func respondError(w http.ResponseWriter, code int, message string) {
 	respondJSON(w, code, map[string]string{"error": message})
 }
 
-func NewAPIHandler(manager *core.Manager, logger *utils.Logger) *APIHandler {
-	return &APIHandler{manager: manager, logger: logger}
+func NewAPIHandler(manager *core.Manager, logger *utils.Logger, config *config.Config) *APIHandler {
+	return &APIHandler{manager: manager, logger: logger, config: config}
 }
 
 // Login endpoint
@@ -46,6 +48,11 @@ func (h *APIHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+
+	if req.Password != h.config.App.UIPassword {
+		respondError(w, http.StatusUnauthorized, "Incorrect password")
 		return
 	}
 
