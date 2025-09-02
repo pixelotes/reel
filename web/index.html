@@ -645,7 +645,7 @@
                                 <p><strong>Progress:</strong> ${Math.round(media.progress * 100)}%</p>
                             ` : ''}
                             ${media.tmdb_id ? `<p><strong>TMDB ID:</strong> ${media.tmdb_id}</p>` : ''}
-                            ${media.torrent_name ? `<p><strong>Torrent:</strong> ${media.torrent_name}</p>` : ''}
+                            ${media.torrent_name ? `<p><strong>${media.type === 'movie' ? 'Torrent' : 'Latest download'}:</strong> ${media.torrent_name}</p>` : ''}
                             <p><strong>Added:</strong> ${new Date(media.added_at).toLocaleString()}</p>
                             ${media.completed_at ? `<p><strong>Completed:</strong> ${new Date(media.completed_at).toLocaleString()}</p>` : ''}
                         </div>
