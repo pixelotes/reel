@@ -74,7 +74,7 @@ func (h *APIHandler) GetMedia(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, media)
-	//h.logger.Info("GetMedia: Response sent successfully")
+	h.logger.Info("GetMedia: Response sent successfully")
 }
 
 // Add new media

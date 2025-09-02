@@ -2,6 +2,7 @@ package torrent
 
 type TorrentClient interface {
 	AddTorrent(magnetLink string, downloadPath string) (string, error)
+	AddTorrentFile(fileContent []byte, downloadPath string) (string, error)
 	GetTorrentStatus(hash string) (TorrentStatus, error)
 	RemoveTorrent(hash string) error
 }

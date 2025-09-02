@@ -1,4 +1,5 @@
 config/config.yml
 data/reel.db*
+data/*.db
 data/filter.log
 media/

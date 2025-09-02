@@ -17,13 +17,15 @@ type SourceConfig struct {
 
 type Config struct {
 	App struct {
-		Port           int    `yaml:"port"`
-		DataPath       string `yaml:"data_path"`
-		UIEnabled      bool   `yaml:"ui_enabled"`
-		UIPassword     string `yaml:"ui_password"`
-		Debug          bool   `yaml:"debug"`
-		JWTSecret      string `yaml:"jwt_secret"`
-		FilterLogLevel string `yaml:"filter_log_level"` // "none" or "detail"
+		Port                   int    `yaml:"port"`
+		DataPath               string `yaml:"data_path"`
+		UIEnabled              bool   `yaml:"ui_enabled"`
+		UIPassword             string `yaml:"ui_password"`
+		Debug                  bool   `yaml:"debug"`
+		JWTSecret              string `yaml:"jwt_secret"`
+		FilterLogLevel         string `yaml:"filter_log_level"` // "none" or "detail"
+		MagnetToTorrentEnabled bool   `yaml:"magnet_to_torrent_enabled"`
+		MagnetToTorrentTimeout int    `yaml:"magnet_to_torrent_timeout"`
 	} `yaml:"app"`
 
 	TorrentClient struct {

@@ -487,7 +487,7 @@ func (m *Manager) GetAllMedia() ([]models.Media, error) {
 		return nil, err
 	}
 
-	m.logger.Info("Manager.GetAllMedia: Retrieved", len(result), "items from repository")
+	//m.logger.Info("Manager.GetAllMedia: Retrieved", len(result), "items from repository")
 	return result, nil
 }
 
@@ -1075,7 +1075,27 @@ func (m *Manager) StartDownload(id int, torrent indexers.IndexerResult) error {
 	}
 
 	m.logger.Info("Sending to download client:", m.config.TorrentClient.Type)
-	hash, err := m.torrentClient.AddTorrent(torrent.DownloadURL, downloadPath)
+
+	var hash string
+
+	if m.config.App.MagnetToTorrentEnabled && strings.HasPrefix(torrent.DownloadURL, "magnet:") {
+		timeout := time.Duration(m.config.App.MagnetToTorrentTimeout) * time.Second
+		if timeout <= 0 {
+			timeout = 60 * time.Second // Default to 60 seconds
+		}
+		m.logger.Info("Attempting to convert magnet to .torrent with timeout:", timeout)
+		torrentFileBytes, convErr := utils.ConvertMagnetToTorrent(torrent.DownloadURL, timeout, m.config.App.DataPath)
+		if convErr == nil {
+			m.logger.Info("Magnet conversion successful, adding as .torrent file.")
+			hash, err = m.torrentClient.AddTorrentFile(torrentFileBytes, downloadPath)
+		} else {
+			m.logger.Warn("Magnet conversion failed:", convErr, "- falling back to magnet link.")
+			hash, err = m.torrentClient.AddTorrent(torrent.DownloadURL, downloadPath)
+		}
+	} else {
+		hash, err = m.torrentClient.AddTorrent(torrent.DownloadURL, downloadPath)
+	}
+
 	if err != nil {
 		m.logger.Error("Failed to add torrent to client:", err)
 		m.mediaRepo.UpdateStatus(id, models.StatusFailed)
@@ -1152,7 +1172,26 @@ func (m *Manager) StartEpisodeDownload(mediaID int, seasonNumber int, episodeNum
 		media.Title, seasonNumber, episodeNumber, torrent.Title))
 
 	// Start the torrent download
-	hash, err := m.torrentClient.AddTorrent(torrent.DownloadURL, downloadPath)
+	var hash string
+
+	if m.config.App.MagnetToTorrentEnabled && strings.HasPrefix(torrent.DownloadURL, "magnet:") {
+		timeout := time.Duration(m.config.App.MagnetToTorrentTimeout) * time.Second
+		if timeout <= 0 {
+			timeout = 60 * time.Second // Default to 60 seconds
+		}
+		m.logger.Info("Attempting to convert magnet to .torrent with timeout:", timeout)
+		torrentFileBytes, convErr := utils.ConvertMagnetToTorrent(torrent.DownloadURL, timeout, m.config.App.DataPath)
+		if convErr == nil {
+			m.logger.Info("Magnet conversion successful, adding as .torrent file.")
+			hash, err = m.torrentClient.AddTorrentFile(torrentFileBytes, downloadPath)
+		} else {
+			m.logger.Warn("Magnet conversion failed:", convErr, "- falling back to magnet link.")
+			hash, err = m.torrentClient.AddTorrent(torrent.DownloadURL, downloadPath)
+		}
+	} else {
+		hash, err = m.torrentClient.AddTorrent(torrent.DownloadURL, downloadPath)
+	}
+
 	if err != nil {
 		m.logger.Error("Failed to add episode torrent to client:", err)
 		return err

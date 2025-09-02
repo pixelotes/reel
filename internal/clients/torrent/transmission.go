@@ -2,6 +2,7 @@ package torrent
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -44,6 +45,32 @@ func (t *TransmissionClient) AddTorrent(magnetLink string, downloadPath string) 
 	method := "torrent-add"
 	args := map[string]interface{}{
 		"filename":     magnetLink,
+		"download-dir": downloadPath,
+	}
+
+	response, err := t.sendRequest(method, args)
+	if err != nil {
+		return "", err
+	}
+
+	// Extract torrent hash from response
+	if arguments, ok := response["arguments"].(map[string]interface{}); ok {
+		if torrentAdded, ok := arguments["torrent-added"].(map[string]interface{}); ok {
+			if hashString, ok := torrentAdded["hashString"].(string); ok {
+				return hashString, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("could not extract torrent hash from response")
+}
+
+func (t *TransmissionClient) AddTorrentFile(fileContent []byte, downloadPath string) (string, error) { // Added function
+	method := "torrent-add"
+	encodedMetainfo := base64.StdEncoding.EncodeToString(fileContent)
+
+	args := map[string]interface{}{
+		"metainfo":     encodedMetainfo,
 		"download-dir": downloadPath,
 	}
 

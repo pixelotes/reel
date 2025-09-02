@@ -2,9 +2,11 @@
 package torrent
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -101,6 +103,47 @@ func (q *qBittorrentClient) AddTorrent(magnetLink string, downloadPath string) (
 	// We are returning the magnet link as a placeholder for the hash.
 	// A more robust implementation would parse the magnet link to get the hash.
 	return strings.Split(strings.Split(magnetLink, "btih:")[1], "&")[0], nil
+}
+
+func (q *qBittorrentClient) AddTorrentFile(fileContent []byte, downloadPath string) (string, error) { // Added function
+	cookie, err := q.login()
+	if err != nil {
+		return "", err
+	}
+
+	addURL := fmt.Sprintf("%s/api/v2/torrents/add", q.host)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("torrents", "file.torrent")
+	if err != nil {
+		return "", err
+	}
+	part.Write(fileContent)
+	writer.WriteField("savepath", downloadPath)
+	writer.Close()
+
+	req, err := http.NewRequest("POST", addURL, body)
+	if err != nil {
+		return "", err
+	}
+
+	req.AddCookie(cookie)
+	req.Header.Add("Content-Type", writer.FormDataContentType())
+
+	resp, err := q.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to add torrent file with status: %s", resp.Status)
+	}
+
+	// This is a simplification; a more robust method would be needed to get the hash
+	// after adding a file, as qBittorrent doesn't return it directly.
+	return "hash-from-file-not-retrieved", nil
 }
 
 // GetTorrentStatus is a mock implementation. A full implementation would parse the torrent list from the API.

@@ -5,6 +5,8 @@ app:
   ui_password: "changeme"
   debug: false
   jwt_secret: "your-very-secure-jwt-secret-key-here"
+  magnet_to_torrent_enabled: true
+  magnet_to_torrent_timeout: 60
 
 torrent_client:
   type: "transmission" # or "qbittorrent"
