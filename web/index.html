@@ -248,6 +248,7 @@
                 sessionToken: '',
                 allMedia: [],
                 filteredMedia: [],
+                currentMediaId: null,
             };
 
             const RESOLUTION_RANK = {
@@ -301,9 +302,9 @@
                 setupAddMediaForm();
                 setupModal();
                 setupManualSearchModal();
-                loadMedia();
+                refreshData();
                 checkSystemStatus();
-                setInterval(loadMedia, 5000); // Refresh every 5 seconds
+                setInterval(refreshData, 5000);
             }
 
             function setupNavigation() {
@@ -348,9 +349,15 @@
                 const modal = document.getElementById('media-modal');
                 const closeBtn = modal.querySelector('.modal-close');
                 
-                closeBtn.addEventListener('click', () => modal.style.display = 'none');
+                closeBtn.addEventListener('click', () => {
+                    modal.style.display = 'none';
+                    state.currentMediaId = null; // Clear the current media ID when closing
+                });
                 window.addEventListener('click', (e) => {
-                    if (e.target === modal) modal.style.display = 'none';
+                    if (e.target === modal) {
+                        modal.style.display = 'none';
+                        state.currentMediaId = null; // Clear the current media ID when closing
+                    }
                 });
             }
 
@@ -363,6 +370,79 @@
                     if (e.target === modal) modal.style.display = 'none';
                 });
             }
+            
+            async function refreshData() {
+                const oldMediaData = JSON.stringify(state.allMedia);
+                await loadMedia();
+                const newMediaData = JSON.stringify(state.allMedia);
+
+                const modal = document.getElementById('media-modal');
+                if (modal.style.display === 'flex' && state.currentMediaId) {
+                    if (oldMediaData !== newMediaData) {
+                        const media = state.allMedia.find(m => m.id === state.currentMediaId);
+                        if(media) {
+                           updateMediaDetails(media);
+                           updateEpisodeStatuses(state.currentMediaId);
+                        }
+                    }
+                }
+            }
+            
+            async function updateMediaDetails(media) {
+                const modal = document.getElementById('media-modal');
+
+                const statusEl = modal.querySelector('#detail-status');
+                if (statusEl) {
+                    statusEl.className = `media-status status-${media.status}`;
+                    statusEl.textContent = media.status;
+                }
+                
+                const progressContainer = modal.querySelector('#detail-progress-container');
+                if(progressContainer) {
+                    if (media.status === 'downloading') {
+                        progressContainer.style.display = 'block';
+                        modal.querySelector('#detail-progress-fill').style.width = `${media.progress * 100}%`;
+                        modal.querySelector('#detail-progress-text').textContent = `Progress: ${Math.round(media.progress * 100)}%`;
+                    } else {
+                        progressContainer.style.display = 'none';
+                    }
+                }
+
+                const torrentNameEl = modal.querySelector('#detail-torrent-name');
+                if (torrentNameEl) {
+                    torrentNameEl.innerHTML = media.torrent_name ? `<p><strong>${media.type === 'movie' ? 'Torrent' : 'Latest download'}:</strong> ${media.torrent_name}</p>` : '';
+                }
+
+                const completedAtEl = modal.querySelector('#detail-completed-at');
+                if (completedAtEl) {
+                    completedAtEl.innerHTML = media.completed_at ? `<p><strong>Completed:</strong> ${new Date(media.completed_at).toLocaleString()}</p>` : '';
+                }
+            }
+
+            async function updateEpisodeStatuses(mediaId) {
+                try {
+                    const response = await fetchWithAuth(`/api/v1/media/${mediaId}/tv-details`);
+                    if (response.ok) {
+                        const show = await response.json();
+                        const modal = document.getElementById('media-modal');
+                        show.seasons.forEach(season => {
+                            season.episodes.forEach(ep => {
+                                const episodeEl = modal.querySelector(`.episode-item[data-season-number="${season.season_number}"][data-episode-number="${ep.episode_number}"]`);
+                                if (episodeEl) {
+                                    const statusEl = episodeEl.querySelector('.media-status');
+                                    if (statusEl.textContent.toLowerCase() !== ep.status.toLowerCase()) {
+                                        statusEl.className = `media-status status-${ep.status}`;
+                                        statusEl.textContent = ep.status;
+                                    }
+                                }
+                            });
+                        });
+                    }
+                } catch (e) {
+                    console.error("Could not update episode statuses", e);
+                }
+            }
+
 
             // API Functions
             async function fetchWithAuth(url, options = {}) {
@@ -384,8 +464,11 @@
                 try {
                     const response = await fetchWithAuth('/api/v1/media');
                     if (response.ok) {
-                        state.allMedia = await response.json();
-                        filterMedia();
+                        const newMedia = await response.json();
+                        if (JSON.stringify(newMedia) !== JSON.stringify(state.allMedia)) {
+                           state.allMedia = newMedia;
+                           filterMedia();
+                        }
                     }
                 } catch (error) {
                     console.error('Failed to load media:', error);
@@ -590,6 +673,7 @@
             }
 
             async function showMediaDetails(mediaId) {
+                state.currentMediaId = mediaId;
                 const media = state.allMedia.find(m => m.id === mediaId);
                 if (!media) return;
                 
@@ -608,11 +692,11 @@
                                 <h4>Seasons</h4>
                                 <div style="max-height: 250px; overflow-y: auto; border: 1px solid var(--border-color); padding: 1rem; border-radius: 4px;">
                                 ${show.seasons.map(season => `
-                                    <details class="season-details">
+                                    <details class="season-details" data-season-number="${season.season_number}">
                                         <summary>Season ${season.season_number} <button class="secondary" onclick="searchSeasonPack(${media.id}, ${season.season_number})">Search Season Pack</button></summary>
                                         <div class="episode-list">
                                             ${season.episodes.map(ep => `
-                                                <div class="episode-item">
+                                                <div class="episode-item" data-season-number="${season.season_number}" data-episode-number="${ep.episode_number}">
                                                     <span>${ep.episode_number}. ${ep.title} <em style="color:#aaa; font-size: 0.8rem;">(${ep.air_date})</em></span>
                                                     <span class="media-status status-${ep.status}">${ep.status}</span>
                                                     <button class="secondary" onclick="manualEpisodeSearch(${media.id}, ${season.season_number}, ${ep.episode_number})">🔍</button>
@@ -637,17 +721,17 @@
                             <p><strong>Type:</strong> ${media.type.charAt(0).toUpperCase() + media.type.slice(1)}</p>
                             <p><strong>Language:</strong> ${media.language ? media.language.toUpperCase() : 'N/A'}</p>
                             <p><strong>Quality Range:</strong> ${media.min_quality} - ${media.max_quality}</p>
-                            <p><strong>Status:</strong> <span class="media-status status-${media.status}">${media.status}</span></p>
-                            ${media.status === 'downloading' ? `
+                            <p><strong>Status:</strong> <span id="detail-status" class="media-status status-${media.status}">${media.status}</span></p>
+                            <div id="detail-progress-container" style="display: ${media.status === 'downloading' ? 'block' : 'none'};">
                                 <div class="progress-bar" style="height: 10px;">
-                                    <div class="progress-fill" style="width: ${media.progress * 100}%"></div>
+                                    <div id="detail-progress-fill" class="progress-fill" style="width: ${media.progress * 100}%"></div>
                                 </div>
-                                <p><strong>Progress:</strong> ${Math.round(media.progress * 100)}%</p>
-                            ` : ''}
+                                <p id="detail-progress-text"><strong>Progress:</strong> ${Math.round(media.progress * 100)}%</p>
+                            </div>
                             ${media.tmdb_id ? `<p><strong>TMDB ID:</strong> ${media.tmdb_id}</p>` : ''}
-                            ${media.torrent_name ? `<p><strong>${media.type === 'movie' ? 'Torrent' : 'Latest download'}:</strong> ${media.torrent_name}</p>` : ''}
+                            <div id="detail-torrent-name">${media.torrent_name ? `<p><strong>${media.type === 'movie' ? 'Torrent' : 'Latest download'}:</strong> ${media.torrent_name}</p>` : ''}</div>
                             <p><strong>Added:</strong> ${new Date(media.added_at).toLocaleString()}</p>
-                            ${media.completed_at ? `<p><strong>Completed:</strong> ${new Date(media.completed_at).toLocaleString()}</p>` : ''}
+                            <div id="detail-completed-at">${media.completed_at ? `<p><strong>Completed:</strong> ${new Date(media.completed_at).toLocaleString()}</p>` : ''}</div>
                         </div>
                     </div>
                     ${media.overview ? `<p><strong>Overview:</strong></p><div style="max-height: 100px; overflow-y: auto;">${media.overview}</div>` : ''}
