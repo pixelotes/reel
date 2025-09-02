@@ -74,8 +74,8 @@ Here’s a glimpse of what’s planned for the future:
   - Configurable notifications for various events.
 - Automation:
   - Automatic quality upgrades for movies.
-  - Cleanup of torrents based on upload ratios.
-  - Addition of external trackers to torrents.
+  - (Done) Cleanup of torrents based on upload ratios.
+  - (Done) Addition of external trackers to torrents.
 - Integrations:
   - More metadata providers.
   - A built-in subtitle downloader.
