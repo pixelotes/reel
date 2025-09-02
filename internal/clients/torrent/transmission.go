@@ -41,6 +41,17 @@ func getFloat(data map[string]interface{}, key string) float64 {
 	return 0.0
 }
 
+func (t *TransmissionClient) AddTrackers(hash string, trackers []string) error {
+	method := "torrent-set"
+	args := map[string]interface{}{
+		"ids":        []string{hash},
+		"trackerAdd": trackers,
+	}
+
+	_, err := t.sendRequest(method, args)
+	return err
+}
+
 func (t *TransmissionClient) AddTorrent(magnetLink string, downloadPath string) (string, error) {
 	method := "torrent-add"
 	args := map[string]interface{}{

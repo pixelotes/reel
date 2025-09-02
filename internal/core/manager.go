@@ -1102,6 +1102,8 @@ func (m *Manager) StartDownload(id int, torrent indexers.IndexerResult) error {
 		return err
 	}
 
+	m.addExtraTrackers(hash)
+
 	// Notidication
 	m.notifyDownloadStarted(media, torrent.Title)
 	m.logger.Info("Torrent successfully sent to download client! Hash:", hash)
@@ -1115,36 +1117,6 @@ func (m *Manager) StartDownload(id int, torrent indexers.IndexerResult) error {
 	return nil
 }
 
-// PerformEpisodeSearch performs a manual search for a specific episode
-func (m *Manager) PerformEpisodeSearch(mediaID int, seasonNumber int, episodeNumber int) ([]indexers.IndexerResult, error) {
-	media, err := m.mediaRepo.GetByID(mediaID)
-	if err != nil {
-		return nil, err
-	}
-	if media == nil {
-		return nil, fmt.Errorf("media not found")
-	}
-
-	if media.Type != models.MediaTypeTVShow && media.Type != models.MediaTypeAnime {
-		return nil, fmt.Errorf("media is not a TV show or anime")
-	}
-
-	// Perform search with specific season/episode
-	results, err := m.performSearch(media, seasonNumber, episodeNumber)
-	if err != nil {
-		return nil, err
-	}
-
-	// Use the TorrentSelector to filter and score the results
-	filteredResults := m.torrentSelector.FilterAndScoreTorrents(media, results, seasonNumber, episodeNumber)
-
-	m.logger.Info(fmt.Sprintf("Found %d results for %s S%02dE%02d",
-		len(filteredResults), media.Title, seasonNumber, episodeNumber))
-
-	return filteredResults, nil
-}
-
-// StartEpisodeDownload starts downloading a specific episode with a chosen torrent
 func (m *Manager) StartEpisodeDownload(mediaID int, seasonNumber int, episodeNumber int, torrent indexers.IndexerResult) error {
 	media, err := m.mediaRepo.GetByID(mediaID)
 	if err != nil {
@@ -1197,6 +1169,8 @@ func (m *Manager) StartEpisodeDownload(mediaID int, seasonNumber int, episodeNum
 		return err
 	}
 
+	m.addExtraTrackers(hash)
+
 	m.logger.Info("Episode torrent successfully sent to download client! Hash:", hash)
 
 	// Update the specific episode status in database
@@ -1206,6 +1180,50 @@ func (m *Manager) StartEpisodeDownload(mediaID int, seasonNumber int, episodeNum
 	}
 
 	return nil
+}
+
+// PerformEpisodeSearch performs a manual search for a specific episode
+func (m *Manager) PerformEpisodeSearch(mediaID int, seasonNumber int, episodeNumber int) ([]indexers.IndexerResult, error) {
+	media, err := m.mediaRepo.GetByID(mediaID)
+	if err != nil {
+		return nil, err
+	}
+	if media == nil {
+		return nil, fmt.Errorf("media not found")
+	}
+
+	if media.Type != models.MediaTypeTVShow && media.Type != models.MediaTypeAnime {
+		return nil, fmt.Errorf("media is not a TV show or anime")
+	}
+
+	// Perform search with specific season/episode
+	results, err := m.performSearch(media, seasonNumber, episodeNumber)
+	if err != nil {
+		return nil, err
+	}
+
+	// Use the TorrentSelector to filter and score the results
+	filteredResults := m.torrentSelector.FilterAndScoreTorrents(media, results, seasonNumber, episodeNumber)
+
+	m.logger.Info(fmt.Sprintf("Found %d results for %s S%02dE%02d",
+		len(filteredResults), media.Title, seasonNumber, episodeNumber))
+
+	return filteredResults, nil
+}
+
+func (m *Manager) addExtraTrackers(hash string) {
+	if len(m.config.ExtraTrackersList) > 0 {
+		go func() {
+			time.Sleep(10 * time.Second)
+			m.logger.Info("Adding extra trackers to torrent:", hash)
+			err := m.torrentClient.AddTrackers(hash, m.config.ExtraTrackersList)
+			if err != nil {
+				m.logger.Error("Failed to add extra trackers:", err)
+			} else {
+				m.logger.Info("Successfully added extra trackers.")
+			}
+		}()
+	}
 }
 
 func (m *Manager) retryFailedDownloads() {

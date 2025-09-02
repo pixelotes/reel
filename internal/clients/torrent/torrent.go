@@ -5,6 +5,7 @@ type TorrentClient interface {
 	AddTorrentFile(fileContent []byte, downloadPath string) (string, error)
 	GetTorrentStatus(hash string) (TorrentStatus, error)
 	RemoveTorrent(hash string) error
+	AddTrackers(hash string, trackers []string) error
 }
 
 type TorrentStatus struct {

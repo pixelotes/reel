@@ -24,6 +24,10 @@ reject-common:
   - \bhdcam\b
   - \btelecine\b
 
+extra_trackers_list:
+  - udp://tracker-1
+  - upd://tracker-2
+
 metadata:
   language: "en"
   tmdb:

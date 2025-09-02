@@ -39,6 +39,37 @@ func NewQBittorrentClient(host, username, password string) *qBittorrentClient {
 	}
 }
 
+func (q *qBittorrentClient) AddTrackers(hash string, trackers []string) error { // Added function
+	cookie, err := q.login()
+	if err != nil {
+		return err
+	}
+
+	addTrackersURL := fmt.Sprintf("%s/api/v2/torrents/addTrackers", q.host)
+	data := url.Values{}
+	data.Set("hash", hash)
+	data.Set("urls", strings.Join(trackers, "\n"))
+
+	req, err := http.NewRequest("POST", addTrackersURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		return err
+	}
+
+	req.AddCookie(cookie)
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := q.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to add trackers with status: %s", resp.Status)
+	}
+	return nil
+}
+
 // login authenticates with the qBittorrent Web API and gets a session cookie.
 func (q *qBittorrentClient) login() (*http.Cookie, error) {
 	loginURL := fmt.Sprintf("%s/api/v2/auth/login", q.host)

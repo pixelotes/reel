@@ -101,7 +101,8 @@ type Config struct {
 		Notifications             []string `yaml:"notifications"`
 	} `yaml:"automation"`
 
-	RejectCommon []string `yaml:"reject-common"`
+	RejectCommon      []string `yaml:"reject-common"`
+	ExtraTrackersList []string `yaml:"extra_trackers_list"`
 }
 
 func Load(path string) (*Config, error) {
