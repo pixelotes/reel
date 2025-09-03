@@ -1,5 +1,6 @@
 config/config.yml
 data/reel.db*
+data/*.db
 LICENSE
 README.md
 Dockerfile
