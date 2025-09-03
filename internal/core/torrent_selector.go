@@ -187,7 +187,7 @@ func (ts *TorrentSelector) filterByRejectPatterns(results []indexers.IndexerResu
 	for _, r := range results {
 		rejected := false
 		var matchedPattern string
-		for _, rejectPattern := range ts.config.Automation.RejectCommon {
+		for _, rejectPattern := range ts.config.RejectCommon {
 			regex, err := regexp.Compile("(?i)" + rejectPattern)
 			if err != nil {
 				ts.logger.Error("Invalid regex pattern:", rejectPattern, "Error:", err)
