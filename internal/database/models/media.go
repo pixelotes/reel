@@ -29,28 +29,34 @@ const (
 	StatusArchived       MediaStatus = "archived"
 )
 
+type MediaTitle struct {
+	Language string `json:"language"`
+	Title    string `json:"title"`
+}
+
 type Media struct {
-	ID           int         `json:"id" db:"id"`
-	Type         MediaType   `json:"type" db:"type"`
-	IMDBId       string      `json:"imdb_id,omitempty" db:"imdb_id"`
-	TMDBId       *int        `json:"tmdb_id,omitempty" db:"tmdb_id"`
-	TVShowID     *int        `json:"tv_show_id,omitempty" db:"tv_show_id"`
-	Title        string      `json:"title" db:"title"`
-	Year         int         `json:"year" db:"year"`
-	Language     string      `json:"language" db:"language"`
-	MinQuality   string      `json:"min_quality" db:"min_quality"`
-	MaxQuality   string      `json:"max_quality" db:"max_quality"`
-	Status       MediaStatus `json:"status" db:"status"`
-	TorrentHash  *string     `json:"torrent_hash,omitempty" db:"torrent_hash"`
-	TorrentName  *string     `json:"torrent_name,omitempty" db:"torrent_name"`
-	DownloadPath *string     `json:"download_path,omitempty" db:"download_path"`
-	Progress     float64     `json:"progress" db:"progress"`
-	AddedAt      time.Time   `json:"added_at" db:"added_at"`
-	CompletedAt  *time.Time  `json:"completed_at,omitempty" db:"completed_at"`
-	Overview     *string     `json:"overview,omitempty" db:"overview"`
-	PosterURL    *string     `json:"poster_url,omitempty" db:"poster_url"`
-	Rating       *float64    `json:"rating,omitempty" db:"rating"`
-	AutoDownload bool        `json:"auto_download" db:"auto_download"`
+	ID           int          `json:"id" db:"id"`
+	Type         MediaType    `json:"type" db:"type"`
+	IMDBId       string       `json:"imdb_id,omitempty" db:"imdb_id"`
+	TMDBId       *int         `json:"tmdb_id,omitempty" db:"tmdb_id"`
+	TVShowID     *int         `json:"tv_show_id,omitempty" db:"tv_show_id"`
+	Title        string       `json:"title" db:"title"` // Main/Original Title
+	Titles       []MediaTitle `json:"titles"`           // All titles
+	Year         int          `json:"year" db:"year"`
+	Language     string       `json:"language" db:"language"`
+	MinQuality   string       `json:"min_quality" db:"min_quality"`
+	MaxQuality   string       `json:"max_quality" db:"max_quality"`
+	Status       MediaStatus  `json:"status" db:"status"`
+	TorrentHash  *string      `json:"torrent_hash,omitempty" db:"torrent_hash"`
+	TorrentName  *string      `json:"torrent_name,omitempty" db:"torrent_name"`
+	DownloadPath *string      `json:"download_path,omitempty" db:"download_path"`
+	Progress     float64      `json:"progress" db:"progress"`
+	AddedAt      time.Time    `json:"added_at" db:"added_at"`
+	CompletedAt  *time.Time   `json:"completed_at,omitempty" db:"completed_at"`
+	Overview     *string      `json:"overview,omitempty" db:"overview"`
+	PosterURL    *string      `json:"poster_url,omitempty" db:"poster_url"`
+	Rating       *float64     `json:"rating,omitempty" db:"rating"`
+	AutoDownload bool         `json:"auto_download" db:"auto_download"`
 }
 
 type TVShow struct {
@@ -85,35 +91,39 @@ func NewMediaRepository(db *sql.DB) *MediaRepository {
 }
 
 func (r *MediaRepository) Create(media *Media) error {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+
 	query := `
         INSERT INTO media (type, imdb_id, tmdb_id, title, year, language, min_quality, max_quality, 
                           status, overview, poster_url, rating, auto_download, tv_show_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
-
-	fmt.Printf("DEBUG: Creating media - Title: %s, Type: %s, TMDB ID: %v, TV Show ID: %v\n",
-		media.Title, media.Type, media.TMDBId, media.TVShowID)
-
-	result, err := r.db.Exec(query, media.Type, media.IMDBId, media.TMDBId, media.Title,
+	result, err := tx.Exec(query, media.Type, media.IMDBId, media.TMDBId, media.Title,
 		media.Year, media.Language, media.MinQuality, media.MaxQuality, media.Status,
 		media.Overview, media.PosterURL, media.Rating, media.AutoDownload, media.TVShowID)
 
 	if err != nil {
-		fmt.Printf("ERROR: Insert failed: %v\n", err)
-		fmt.Printf("ERROR: Query was: %s\n", query)
-		fmt.Printf("ERROR: Values were: %v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v\n",
-			media.Type, media.IMDBId, media.TMDBId, media.Title, media.Year, media.Language,
-			media.MinQuality, media.MaxQuality, media.Status, media.Overview, media.PosterURL,
-			media.Rating, media.AutoDownload, media.TVShowID)
+		tx.Rollback()
 		return err
 	}
 
 	id, _ := result.LastInsertId()
 	media.ID = int(id)
-	media.AddedAt = time.Now()
 
-	fmt.Printf("DEBUG: Media created successfully with ID: %d\n", media.ID)
-	return nil
+	// Insert into media_titles
+	for _, title := range media.Titles {
+		_, err := tx.Exec("INSERT INTO media_titles (media_id, language, title) VALUES (?, ?, ?)",
+			media.ID, title.Language, title.Title)
+		if err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 func scanMedia(row interface {
@@ -194,41 +204,42 @@ func (r *MediaRepository) GetAll() ([]Media, error) {
                overview, poster_url, rating, auto_download, tv_show_id
         FROM media ORDER BY added_at DESC
     `
-
-	//fmt.Printf("DEBUG: Executing GetAll query: %s\n", query)
-
 	rows, err := r.db.Query(query)
 	if err != nil {
-		fmt.Printf("ERROR: Query failed: %v\n", err)
 		return nil, err
 	}
 	defer rows.Close()
 
 	var mediaList []Media
-	rowCount := 0
+	mediaMap := make(map[int]*Media)
 
 	for rows.Next() {
-		rowCount++
-		fmt.Printf("DEBUG: Processing row %d\n", rowCount)
-
 		media, err := scanMedia(rows)
 		if err != nil {
-			fmt.Printf("ERROR: Failed to scan row %d: %v\n", rowCount, err)
 			return nil, err
 		}
-
-		fmt.Printf("DEBUG: Scanned media - ID: %d, Title: %s, Type: %s, TV Show ID: %v\n",
-			media.ID, media.Title, media.Type, media.TVShowID)
-
 		mediaList = append(mediaList, *media)
+		mediaMap[media.ID] = &mediaList[len(mediaList)-1]
 	}
 
-	if err = rows.Err(); err != nil {
-		fmt.Printf("ERROR: Rows iteration error: %v\n", err)
+	// Now fetch all titles
+	titleRows, err := r.db.Query("SELECT media_id, language, title FROM media_titles")
+	if err != nil {
 		return nil, err
 	}
+	defer titleRows.Close()
 
-	fmt.Printf("DEBUG: GetAll returning %d media items\n", len(mediaList))
+	for titleRows.Next() {
+		var mediaID int
+		var lang, title string
+		if err := titleRows.Scan(&mediaID, &lang, &title); err != nil {
+			return nil, err
+		}
+		if media, ok := mediaMap[mediaID]; ok {
+			media.Titles = append(media.Titles, MediaTitle{Language: lang, Title: title})
+		}
+	}
+
 	return mediaList, nil
 }
 
