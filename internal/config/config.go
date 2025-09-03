@@ -69,6 +69,7 @@ type Config struct {
 		DownloadFolder    string         `yaml:"download_folder"`
 		DestinationFolder string         `yaml:"destination_folder"`
 		MoveMethod        string         `yaml:"move_method"`
+		SearchLanguages   []string       `yaml:"search_languages"`
 	} `yaml:"tv-shows"`
 
 	Anime struct {
@@ -77,6 +78,7 @@ type Config struct {
 		DownloadFolder    string         `yaml:"download_folder"`
 		DestinationFolder string         `yaml:"destination_folder"`
 		MoveMethod        string         `yaml:"move_method"`
+		SearchLanguages   []string       `yaml:"search_languages"`
 	} `yaml:"anime"`
 
 	Database struct {

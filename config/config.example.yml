@@ -58,6 +58,7 @@ movies:
 
 tv-shows:
   providers: ["tvmaze"]
+  search_languages: ["en"]
   download_folder: "/downloads/shows"
   destination_folder: "/media/shows"
   move_method: "move" # or "symlink"
@@ -68,6 +69,7 @@ tv-shows:
 
 anime:
   providers: ["anidb"]
+  search_languages: ["en", "ja"]
   download_folder: "/downloads/anime"
   destination_folder: "/media/anime"
   move_method: "move" # or "symlink"
