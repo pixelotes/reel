@@ -436,10 +436,29 @@ func (h *APIHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filePath)
 }
 
-// GetSubtitles (dummy)
+// GetSubtitles handles serving the subtitle file.
 func (h *APIHandler) GetSubtitles(w http.ResponseWriter, r *http.Request) {
-	// In a real implementation, you would find and return the VTT subtitles.
-	// For now, just return a placeholder response.
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, "subtitles placeholder")
+	vars := mux.Vars(r)
+	mediaID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+
+	seasonNumber, _ := strconv.Atoi(r.URL.Query().Get("season"))
+	episodeNumber, _ := strconv.Atoi(r.URL.Query().Get("episode"))
+	lang := r.URL.Query().Get("lang")
+	if lang == "" {
+		lang = "en" // Default to English
+	}
+
+	filePath, err := h.manager.GetSubtitleFilePath(mediaID, seasonNumber, episodeNumber, lang)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Subtitle file not found")
+		return
+	}
+
+	// Set the correct Content-Type for WebVTT
+	w.Header().Set("Content-Type", "text/vtt")
+	http.ServeFile(w, r, filePath)
 }

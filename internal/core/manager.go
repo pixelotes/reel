@@ -1327,3 +1327,26 @@ func (m *Manager) GetMediaFilePath(mediaID int, seasonNumber int, episodeNumber 
 
 	return "", fmt.Errorf("no video file found in %s", fullPath)
 }
+
+func (m *Manager) GetSubtitleFilePath(mediaID int, seasonNumber int, episodeNumber int, lang string) (string, error) {
+	videoPath, err := m.GetMediaFilePath(mediaID, seasonNumber, episodeNumber)
+	if err != nil {
+		return "", err
+	}
+
+	baseName := strings.TrimSuffix(videoPath, filepath.Ext(videoPath))
+
+	// Try to find a language-specific subtitle file first
+	langSubPath := fmt.Sprintf("%s.%s.srt", baseName, lang)
+	if _, err := os.Stat(langSubPath); err == nil {
+		return langSubPath, nil
+	}
+
+	// If not found, try to find a default subtitle file
+	defaultSubPath := fmt.Sprintf("%s.srt", baseName)
+	if _, err := os.Stat(defaultSubPath); err == nil {
+		return defaultSubPath, nil
+	}
+
+	return "", fmt.Errorf("no subtitle file found for language '%s'", lang)
+}
