@@ -413,3 +413,19 @@ func (h *APIHandler) GetEpisodeDetails(w http.ResponseWriter, r *http.Request) {
 
 	respondError(w, http.StatusNotFound, "Episode not found")
 }
+
+// StreamVideo (dummy)
+func (h *APIHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
+	// In a real implementation, you would stream the video file.
+	// For now, just return a placeholder response.
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, "video stream placeholder")
+}
+
+// GetSubtitles (dummy)
+func (h *APIHandler) GetSubtitles(w http.ResponseWriter, r *http.Request) {
+	// In a real implementation, you would find and return the VTT subtitles.
+	// For now, just return a placeholder response.
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, "subtitles placeholder")
+}
