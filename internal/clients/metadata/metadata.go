@@ -25,12 +25,14 @@ type Episode struct {
 
 // TVShowResult is a standardized struct for TV show metadata.
 type TVShowResult struct {
-	ID        string            `json:"id"`
-	Title     string            `json:"title"`
-	Year      int               `json:"year"`
-	Overview  string            `json:"overview"`
-	PosterURL string            `json:"poster_url"`
-	Rating    float64           `json:"rating"`
-	Status    string            `json:"status"`
-	Seasons   map[int][]Episode `json:"seasons"`
+	ID           string            `json:"id"`
+	Title        string            `json:"title"`
+	EnglishTitle string            `json:"english_title"`
+	RomajiTitle  string            `json:"romaji_title"`
+	Year         int               `json:"year"`
+	Overview     string            `json:"overview"`
+	PosterURL    string            `json:"poster_url"`
+	Rating       float64           `json:"rating"`
+	Status       string            `json:"status"`
+	Seasons      map[int][]Episode `json:"seasons"`
 }

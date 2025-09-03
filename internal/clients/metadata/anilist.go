@@ -109,12 +109,14 @@ query ($search: String) {
 		}
 
 		result := &TVShowResult{
-			ID:        strconv.Itoa(anime.ID),
-			Title:     animeTitle,
-			Year:      anime.StartDate.Year,
-			Overview:  anime.Description,
-			PosterURL: anime.BannerImage,
-			Seasons:   make(map[int][]Episode),
+			ID:           strconv.Itoa(anime.ID),
+			Title:        animeTitle,
+			EnglishTitle: anime.Title.English,
+			RomajiTitle:  anime.Title.Romaji,
+			Year:         anime.StartDate.Year,
+			Overview:     anime.Description,
+			PosterURL:    anime.BannerImage,
+			Seasons:      make(map[int][]Episode),
 		}
 
 		for i := 1; i <= anime.Episodes; i++ {

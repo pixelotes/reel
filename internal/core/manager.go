@@ -266,62 +266,96 @@ func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, 
 	var rating *float64
 	var tvShowData *metadata.TVShowResult
 	var metadataID *int
+	var allTitles []models.MediaTitle
 
 	m.logger.Info("Looking for metadata providers for type:", mediaType)
 	providers := m.metadataClients[mediaType]
 	m.logger.Info("Found", len(providers), "metadata providers")
 
 	if len(providers) > 0 {
-		client := providers[0]
-		m.logger.Info("Using first metadata provider")
-
-		switch mediaType {
-		case models.MediaTypeMovie:
-			m.logger.Info("Processing movie metadata...")
-			movieData, err := client.SearchMovie(title, year)
-			if err != nil {
-				m.logger.Error("Movie metadata search failed:", err)
-			} else if len(movieData) > 0 {
-				m.logger.Info("Movie metadata found - ID:", movieData[0].ID, "Title:", movieData[0].Title)
-				if tmdbID, parseErr := strconv.Atoi(movieData[0].ID); parseErr == nil {
-					metadataID = &tmdbID
-					m.logger.Info("Parsed TMDB ID:", *metadataID)
-				} else {
-					m.logger.Error("Failed to parse TMDB ID:", movieData[0].ID, "Error:", parseErr)
+		if mediaType == models.MediaTypeAnime {
+			// Hybrid approach for Anime
+			var aniListProvider, traktProvider metadata.Client
+			for _, p := range providers {
+				// This is a simple way to identify clients. A better way would be to have a GetName() method on the client interface.
+				if _, ok := p.(*metadata.AniListClient); ok {
+					aniListProvider = p
 				}
-				overview = &movieData[0].Overview
-				posterURL = &movieData[0].PosterURL
-				rating = &movieData[0].Rating
-				if title == "" {
-					title = movieData[0].Title
+				if _, ok := p.(*metadata.TraktClient); ok {
+					traktProvider = p
 				}
-				if year == 0 {
-					year = movieData[0].Year
-				}
-				m.logger.Info("Movie data processed successfully")
-			} else {
-				m.logger.Info("No movie metadata found")
 			}
-		case models.MediaTypeTVShow, models.MediaTypeAnime:
-			m.logger.Info("Processing TV show/anime metadata...")
-			tvShowDataSlice, err := client.SearchTVShow(title)
-			if err != nil {
-				m.logger.Error("TV show/anime metadata search failed:", err)
-			} else if len(tvShowDataSlice) > 0 {
-				tvShowData = tvShowDataSlice[0]
-				m.logger.Info("TV show/anime metadata found - ID:", tvShowData.ID, "Title:", tvShowData.Title)
-				overview = &tvShowData.Overview
-				posterURL = &tvShowData.PosterURL
-				rating = &tvShowData.Rating
-				if title == "" {
-					title = tvShowData.Title
+
+			if aniListProvider != nil && traktProvider != nil {
+				m.logger.Info("Using hybrid provider strategy for Anime: AniList (titles) + Trakt (episodes)")
+				// 1. Get titles from AniList
+				aniListResults, err := aniListProvider.SearchTVShow(title)
+				if err != nil || len(aniListResults) == 0 {
+					m.logger.Error("Failed to get title metadata from AniList:", err)
+					return nil, fmt.Errorf("failed to find anime on AniList")
 				}
-				if year == 0 {
-					year = tvShowData.Year
+				animeTitleData := aniListResults[0]
+
+				// 2. Get episode data from Trakt using the title from AniList
+				traktResults, err := traktProvider.SearchTVShow(animeTitleData.Title)
+				if err != nil || len(traktResults) == 0 {
+					m.logger.Error("Failed to get episode metadata from Trakt:", err)
+					return nil, fmt.Errorf("failed to find anime on Trakt")
 				}
-				m.logger.Info("TV show/anime data processed successfully")
-			} else {
-				m.logger.Info("No TV show/anime metadata found")
+				animeEpisodeData := traktResults[0]
+
+				// 3. Merge the results
+				tvShowData = animeTitleData
+				tvShowData.Seasons = animeEpisodeData.Seasons // Use the reliable episode data
+
+				if tvShowData.EnglishTitle != "" {
+					allTitles = append(allTitles, models.MediaTitle{Language: "en", Title: tvShowData.EnglishTitle})
+				}
+				if tvShowData.RomajiTitle != "" {
+					allTitles = append(allTitles, models.MediaTitle{Language: "ja", Title: tvShowData.RomajiTitle})
+				}
+			}
+		} else {
+			// Standard approach for Movies and TV Shows
+			client := providers[0]
+			m.logger.Info("Using first metadata provider")
+
+			switch mediaType {
+			case models.MediaTypeMovie:
+				movieData, err := client.SearchMovie(title, year)
+				if err == nil && len(movieData) > 0 {
+					if tmdbID, parseErr := strconv.Atoi(movieData[0].ID); parseErr == nil {
+						metadataID = &tmdbID
+					}
+					overview = &movieData[0].Overview
+					posterURL = &movieData[0].PosterURL
+					rating = &movieData[0].Rating
+					if title == "" {
+						title = movieData[0].Title
+					}
+					if year == 0 {
+						year = movieData[0].Year
+					}
+				}
+			case models.MediaTypeTVShow:
+				tvShowDataSlice, err := client.SearchTVShow(title)
+				if err == nil && len(tvShowDataSlice) > 0 {
+					tvShowData = tvShowDataSlice[0]
+					allTitles = append(allTitles, models.MediaTitle{Language: "en", Title: tvShowData.Title})
+				}
+			}
+		}
+
+		// Common processing after metadata is fetched
+		if tvShowData != nil {
+			overview = &tvShowData.Overview
+			posterURL = &tvShowData.PosterURL
+			rating = &tvShowData.Rating
+			if title == "" {
+				title = tvShowData.Title
+			}
+			if year == 0 {
+				year = tvShowData.Year
 			}
 		}
 	}
@@ -331,26 +365,21 @@ func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, 
 		m.logger.Info("Creating TV show/anime database entries...")
 		show := &models.TVShow{
 			Status:   tvShowData.Status,
-			TVmazeID: tvShowData.ID, // Using TVmazeID for both for now
+			TVmazeID: tvShowData.ID,
 		}
 
-		m.logger.Info("Creating TV show/anime record...")
 		if err := m.mediaRepo.CreateTVShow(show); err != nil {
 			m.logger.Error("CRITICAL: Failed to create TV show/anime:", err)
 			return nil, fmt.Errorf("failed to create tv show/anime: %w", err)
 		}
-		m.logger.Info("TV show/anime created with ID:", show.ID)
 		tvShowID = &show.ID
 
-		m.logger.Info("Creating", len(tvShowData.Seasons), "seasons...")
 		for seasonNum, episodes := range tvShowData.Seasons {
-			m.logger.Info("Creating season", seasonNum, "with", len(episodes), "episodes")
 			season := &models.Season{ShowID: show.ID, SeasonNumber: seasonNum}
 			if err := m.mediaRepo.CreateSeason(season); err != nil {
 				m.logger.Error("CRITICAL: Failed to create season:", seasonNum, "Error:", err)
 				return nil, fmt.Errorf("failed to create season: %w", err)
 			}
-			m.logger.Info("Season", seasonNum, "created with ID:", season.ID)
 
 			for _, ep := range episodes {
 				status := models.StatusPending
@@ -376,7 +405,6 @@ func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, 
 				}
 			}
 		}
-		m.logger.Info("All TV show/anime data created successfully")
 	}
 
 	m.logger.Info("Creating main media record...")
@@ -385,6 +413,7 @@ func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, 
 		TMDBId:       metadataID,
 		TVShowID:     tvShowID,
 		Title:        title,
+		Titles:       allTitles,
 		Year:         year,
 		Language:     language,
 		MinQuality:   minQuality,
@@ -396,18 +425,12 @@ func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, 
 		AutoDownload: autoDownload,
 	}
 
-	m.logger.Info("About to create media record - TMDB ID:", metadataID, "TV Show ID:", tvShowID)
-
 	if err := m.mediaRepo.Create(media); err != nil {
 		m.logger.Error("CRITICAL: Failed to create media entry:", err)
-		m.logger.Error("Media details - Title:", media.Title, "Type:", media.Type, "TMDB ID:", media.TMDBId, "TV Show ID:", media.TVShowID)
 		return nil, fmt.Errorf("failed to create media: %w", err)
 	}
 
-	m.logger.Info("Media ID:", media.ID, "Title:", media.Title, "Type:", media.Type)
-
 	if autoDownload {
-		m.logger.Info("Adding to search queue...")
 		select {
 		case m.searchQueue <- *media:
 			m.logger.Info("Added to search queue successfully")
