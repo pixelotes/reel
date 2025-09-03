@@ -73,15 +73,15 @@ func (h *APIHandler) GetMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logger.Info("GetMedia: Retrieved", len(media), "media items from manager")
+	//h.logger.Info("GetMedia: Retrieved", len(media), "media items from manager")
 
 	// Log each media item for debugging
-	for i, m := range media {
-		h.logger.Info("Media", i, "- ID:", m.ID, "Title:", m.Title, "Type:", m.Type, "TV Show ID:", m.TVShowID)
-	}
+	//for i, m := range media {
+	//h.logger.Info("Media", i, "- ID:", m.ID, "Title:", m.Title, "Type:", m.Type, "TV Show ID:", m.TVShowID)
+	//}
 
 	respondJSON(w, http.StatusOK, media)
-	h.logger.Info("GetMedia: Response sent successfully")
+	//h.logger.Info("GetMedia: Response sent successfully")
 }
 
 // Add new media
@@ -416,10 +416,24 @@ func (h *APIHandler) GetEpisodeDetails(w http.ResponseWriter, r *http.Request) {
 
 // StreamVideo (dummy)
 func (h *APIHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
-	// In a real implementation, you would stream the video file.
-	// For now, just return a placeholder response.
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, "video stream placeholder")
+	vars := mux.Vars(r)
+	mediaID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+
+	seasonNumber, _ := strconv.Atoi(r.URL.Query().Get("season"))
+	episodeNumber, _ := strconv.Atoi(r.URL.Query().Get("episode"))
+
+	filePath, err := h.manager.GetMediaFilePath(mediaID, seasonNumber, episodeNumber)
+	if err != nil {
+		h.logger.Error("Could not get media file path:", err)
+		respondError(w, http.StatusNotFound, "Media file not found")
+		return
+	}
+
+	http.ServeFile(w, r, filePath)
 }
 
 // GetSubtitles (dummy)

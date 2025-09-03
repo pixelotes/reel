@@ -1,5 +1,6 @@
 config/config.yml
 data/reel.db*
+data/.torrent*
 data/*.db
 data/filter.log
 media/

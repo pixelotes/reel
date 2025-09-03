@@ -5,6 +5,8 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -1260,4 +1262,68 @@ func (m *Manager) notifyDownloadCompleted(media *models.Media, torrentName strin
 		// Run in a goroutine to avoid blocking the main application flow.
 		go n.NotifyDownloadComplete(media, torrentName)
 	}
+}
+
+func (m *Manager) GetMediaFilePath(mediaID int, seasonNumber int, episodeNumber int) (string, error) {
+	media, err := m.mediaRepo.GetByID(mediaID)
+	if err != nil {
+		return "", err
+	}
+	if media == nil {
+		return "", fmt.Errorf("media with ID %d not found", mediaID)
+	}
+
+	var baseDestPath string
+	switch media.Type {
+	case models.MediaTypeMovie:
+		baseDestPath = m.config.Movies.DestinationFolder
+	case models.MediaTypeTVShow:
+		baseDestPath = m.config.TVShows.DestinationFolder
+	case models.MediaTypeAnime:
+		baseDestPath = m.config.Anime.DestinationFolder
+	default:
+		return "", fmt.Errorf("unknown media type: %s", media.Type)
+	}
+
+	safeTitle := utils.SanitizeFilename(media.Title)
+	mediaFolderName := fmt.Sprintf("%s (%d)", safeTitle, media.Year)
+	fullPath := filepath.Join(baseDestPath, mediaFolderName)
+
+	if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+		if seasonNumber <= 0 {
+			return "", fmt.Errorf("season number must be provided for TV shows")
+		}
+		seasonFolderName := fmt.Sprintf("S%02d", seasonNumber)
+		fullPath = filepath.Join(fullPath, seasonFolderName)
+	}
+
+	// Scan the directory for a video file
+	files, err := os.ReadDir(fullPath)
+	if err != nil {
+		return "", fmt.Errorf("could not read destination directory '%s': %w", fullPath, err)
+	}
+
+	videoExtensions := map[string]bool{".mkv": true, ".mp4": true, ".avi": true, ".mov": true}
+
+	for _, file := range files {
+		if !file.IsDir() {
+			ext := strings.ToLower(filepath.Ext(file.Name()))
+			if videoExtensions[ext] {
+				// If it's a TV show/anime, match the episode number
+				if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+					if episodeNumber <= 0 {
+						return "", fmt.Errorf("episode number must be provided for TV shows")
+					}
+					episodePattern := fmt.Sprintf("S%02dE%02d", seasonNumber, episodeNumber)
+					if strings.Contains(strings.ToUpper(file.Name()), episodePattern) {
+						return filepath.Join(fullPath, file.Name()), nil
+					}
+				} else { // It's a movie, return the first video file found
+					return filepath.Join(fullPath, file.Name()), nil
+				}
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no video file found in %s", fullPath)
 }

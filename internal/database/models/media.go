@@ -209,7 +209,7 @@ func (r *MediaRepository) GetAll() ([]Media, error) {
 
 	for rows.Next() {
 		rowCount++
-		fmt.Printf("DEBUG: Processing row %d\n", rowCount)
+		//fmt.Printf("DEBUG: Processing row %d\n", rowCount)
 
 		media, err := scanMedia(rows)
 		if err != nil {
@@ -217,8 +217,8 @@ func (r *MediaRepository) GetAll() ([]Media, error) {
 			return nil, err
 		}
 
-		fmt.Printf("DEBUG: Scanned media - ID: %d, Title: %s, Type: %s, TV Show ID: %v\n",
-			media.ID, media.Title, media.Type, media.TVShowID)
+		//fmt.Printf("DEBUG: Scanned media - ID: %d, Title: %s, Type: %s, TV Show ID: %v\n",
+		//	media.ID, media.Title, media.Type, media.TVShowID)
 
 		mediaList = append(mediaList, *media)
 	}
@@ -228,7 +228,7 @@ func (r *MediaRepository) GetAll() ([]Media, error) {
 		return nil, err
 	}
 
-	fmt.Printf("DEBUG: GetAll returning %d media items\n", len(mediaList))
+	//fmt.Printf("DEBUG: GetAll returning %d media items\n", len(mediaList))
 	return mediaList, nil
 }
 
