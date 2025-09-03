@@ -895,52 +895,70 @@ func (m *Manager) performSearch(media *models.Media, season, episode int) ([]ind
 		return nil, nil
 	}
 
-	baseQuery := media.Title
+	var searchLanguages []string
+	if media.Type == models.MediaTypeTVShow {
+		searchLanguages = m.config.TVShows.SearchLanguages
+	} else if media.Type == models.MediaTypeAnime {
+		searchLanguages = m.config.Anime.SearchLanguages
+	}
+	// Default to media's primary title if no languages are configured
+	if len(searchLanguages) == 0 {
+		searchLanguages = []string{""} // An empty string will trigger use of media.Title
+	}
+
 	tmdbIDStr := ""
 	if media.TMDBId != nil {
 		tmdbIDStr = strconv.Itoa(*media.TMDBId)
 	}
 
-	var allResults []indexers.IndexerResult
-	for _, clientWithMode := range clients {
-		client := clientWithMode.Client
-		searchMode := clientWithMode.Source.SearchMode
-		query := baseQuery
-
-		var results []indexers.IndexerResult
-		var err error
-
-		if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
-			if searchMode == "search" && season > 0 && episode > 0 {
-				query = fmt.Sprintf("%s S%02dE%02d", baseQuery, season, episode)
-			}
-			results, err = client.SearchTVShows(query, season, episode, searchMode)
-
-			// Fallback for "search" mode if no results are found
-			if len(results) == 0 && searchMode == "search" && season > 0 && episode > 0 {
-				query = fmt.Sprintf("%s %dx%02d", baseQuery, season, episode)
-				var fallbackResults []indexers.IndexerResult
-				fallbackResults, err = client.SearchTVShows(query, season, episode, searchMode)
-				if err == nil {
-					results = append(results, fallbackResults...)
+	for _, lang := range searchLanguages {
+		var allResults []indexers.IndexerResult
+		titleToSearch := media.Title
+		if lang != "" {
+			for _, t := range media.Titles {
+				if t.Language == lang {
+					titleToSearch = t.Title
+					break
 				}
 			}
-		} else { // Movie
-			if media.Year > 0 {
-				query = fmt.Sprintf("%s %d", baseQuery, media.Year)
+		}
+		m.logger.Info("Performing search for '", titleToSearch, "' in language '", lang, "'")
+
+		for _, clientWithMode := range clients {
+			client := clientWithMode.Client
+			searchMode := clientWithMode.Source.SearchMode
+			query := titleToSearch
+
+			var results []indexers.IndexerResult
+			var err error
+
+			if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+				if searchMode == "search" && season > 0 && episode > 0 {
+					query = fmt.Sprintf("%s S%02dE%02d", titleToSearch, season, episode)
+				}
+				results, err = client.SearchTVShows(query, season, episode, searchMode)
+			} else { // Movie
+				if media.Year > 0 {
+					query = fmt.Sprintf("%s %d", titleToSearch, media.Year)
+				}
+				results, err = client.SearchMovies(query, tmdbIDStr, searchMode)
 			}
-			results, err = client.SearchMovies(query, tmdbIDStr, searchMode)
+
+			if err != nil {
+				m.logger.Error("Search failed for indexer:", err)
+				continue
+			}
+			allResults = append(allResults, results...)
 		}
 
-		if err != nil {
-			m.logger.Error("Search failed for indexer:", err)
-			continue
+		if len(allResults) > 0 {
+			m.logger.Info(fmt.Sprintf("Found %d total results for %s", len(allResults), titleToSearch))
+			return allResults, nil
 		}
-		allResults = append(allResults, results...)
 	}
 
-	m.logger.Info(fmt.Sprintf("Found %d total results for %s", len(allResults), media.Title))
-	return allResults, nil
+	m.logger.Info("No results found after searching all configured languages for", media.Title)
+	return nil, nil
 }
 
 func (m *Manager) processRSSFeeds() {
