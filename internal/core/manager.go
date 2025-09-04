@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -115,6 +116,12 @@ type Manager struct {
 	scheduler       *cron.Cron
 	searchQueue     chan models.Media
 	httpClient      *http.Client
+}
+
+type SubtitleTrack struct {
+	Language string `json:"language"`
+	Label    string `json:"label"`
+	FilePath string `json:"-"` // Don't expose file path to frontend
 }
 
 func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
@@ -1355,4 +1362,194 @@ func (m *Manager) GetSubtitleFilePath(mediaID int, seasonNumber int, episodeNumb
 	}
 
 	return "", fmt.Errorf("no subtitle file found for language '%s'", lang)
+}
+
+func (m *Manager) GetAllSubtitleFiles(mediaID int, seasonNumber int, episodeNumber int) ([]SubtitleTrack, error) {
+	videoPath, err := m.GetMediaFilePath(mediaID, seasonNumber, episodeNumber)
+	if err != nil {
+		return nil, err
+	}
+
+	baseName := strings.TrimSuffix(videoPath, filepath.Ext(videoPath))
+	videoDir := filepath.Dir(videoPath)
+
+	// Read all files in the directory
+	files, err := os.ReadDir(videoDir)
+	if err != nil {
+		return nil, fmt.Errorf("could not read video directory: %w", err)
+	}
+
+	var subtitles []SubtitleTrack
+	foundEnglish := false
+
+	// First pass: look for language-specific subtitle files
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		fileName := file.Name()
+		fileExt := filepath.Ext(fileName)
+
+		// Only process .srt files
+		if strings.ToLower(fileExt) != ".srt" {
+			continue
+		}
+
+		// Check if this subtitle file belongs to our video
+		fileBaseName := strings.TrimSuffix(fileName, fileExt)
+		videoBaseName := filepath.Base(baseName)
+
+		// Skip if this subtitle doesn't match our video file
+		if !strings.HasPrefix(fileBaseName, videoBaseName) {
+			continue
+		}
+
+		// Extract language code from filename
+		// Expected format: videoname.lang.srt or videoname.srt
+		parts := strings.Split(fileBaseName, ".")
+
+		var langCode string
+		var label string
+
+		if len(parts) >= 2 && parts[len(parts)-1] != videoBaseName {
+			// Has language code: videoname.en.srt
+			langCode = parts[len(parts)-1]
+			label = getLanguageLabel(langCode)
+		} else if fileName == videoBaseName+".srt" {
+			// Default subtitle file without language code
+			langCode = "default"
+			label = "Default"
+		} else {
+			// Skip files that don't match our expected pattern
+			continue
+		}
+
+		if langCode == "en" || langCode == "eng" {
+			foundEnglish = true
+		}
+
+		subtitles = append(subtitles, SubtitleTrack{
+			Language: langCode,
+			Label:    label,
+			FilePath: filepath.Join(videoDir, fileName),
+		})
+	}
+
+	// Second pass: if no English subtitle found, include the default one as English
+	if !foundEnglish {
+		defaultSubPath := baseName + ".srt"
+		if _, err := os.Stat(defaultSubPath); err == nil {
+			// Check if we already added this as "default" and update it
+			for i, sub := range subtitles {
+				if sub.Language == "default" {
+					subtitles[i].Language = "en"
+					subtitles[i].Label = "English (Default)"
+					foundEnglish = true
+					break
+				}
+			}
+		}
+	}
+
+	// Sort subtitles: English first, then alphabetically by label
+	sort.Slice(subtitles, func(i, j int) bool {
+		if subtitles[i].Language == "en" {
+			return true
+		}
+		if subtitles[j].Language == "en" {
+			return false
+		}
+		return subtitles[i].Label < subtitles[j].Label
+	})
+
+	return subtitles, nil
+}
+
+// Helper function to convert language codes to readable labels
+func getLanguageLabel(langCode string) string {
+	languageMap := map[string]string{
+		"en": "English",
+		"es": "Spanish",
+		"fr": "French",
+		"de": "German",
+		"it": "Italian",
+		"pt": "Portuguese",
+		"ru": "Russian",
+		"ja": "Japanese",
+		"ko": "Korean",
+		"zh": "Chinese",
+		"ar": "Arabic",
+		"hi": "Hindi",
+		"th": "Thai",
+		"tr": "Turkish",
+		"pl": "Polish",
+		"nl": "Dutch",
+		"sv": "Swedish",
+		"da": "Danish",
+		"no": "Norwegian",
+		"fi": "Finnish",
+		"cs": "Czech",
+		"hu": "Hungarian",
+		"ro": "Romanian",
+		"bg": "Bulgarian",
+		"hr": "Croatian",
+		"sk": "Slovak",
+		"sl": "Slovenian",
+		"et": "Estonian",
+		"lv": "Latvian",
+		"lt": "Lithuanian",
+		"uk": "Ukrainian",
+		"be": "Belarusian",
+		"mk": "Macedonian",
+		"sr": "Serbian",
+		"bs": "Bosnian",
+		"me": "Montenegrin",
+		"sq": "Albanian",
+		"el": "Greek",
+		"he": "Hebrew",
+		"fa": "Persian",
+		"ur": "Urdu",
+		"bn": "Bengali",
+		"ta": "Tamil",
+		"te": "Telugu",
+		"ml": "Malayalam",
+		"kn": "Kannada",
+		"gu": "Gujarati",
+		"pa": "Punjabi",
+		"mr": "Marathi",
+		"ne": "Nepali",
+		"si": "Sinhala",
+		"my": "Burmese",
+		"km": "Khmer",
+		"lo": "Lao",
+		"vi": "Vietnamese",
+		"id": "Indonesian",
+		"ms": "Malay",
+		"tl": "Filipino",
+		"sw": "Swahili",
+		"am": "Amharic",
+		"yo": "Yoruba",
+		"ig": "Igbo",
+		"ha": "Hausa",
+		"zu": "Zulu",
+		"af": "Afrikaans",
+		"ca": "Catalan",
+		"eu": "Basque",
+		"gl": "Galician",
+		"cy": "Welsh",
+		"ga": "Irish",
+		"gd": "Scottish Gaelic",
+		"is": "Icelandic",
+		"fo": "Faroese",
+		"mt": "Maltese",
+		"lb": "Luxembourgish",
+	}
+
+	if label, exists := languageMap[langCode]; exists {
+		return label
+	}
+
+	// If not found in map, return the code in uppercase
+	return strings.ToUpper(langCode)
 }

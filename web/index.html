@@ -843,12 +843,107 @@
                 
                 // Wait for player to be ready before adding subtitles
                 player.ready(() => {
-                    loadSubtitles(player, mediaId, seasonNumber, episodeNumber);
+                    loadAllSubtitles(player, mediaId, seasonNumber, episodeNumber);
                 });
 
                 modal.style.display = 'flex';
                 player.play();
             };
+
+            async function loadAllSubtitles(player, mediaId, seasonNumber, episodeNumber) {
+                try {
+                    // First, get the list of available subtitles
+                    let subtitlesListUrl = `/api/v1/subtitles/${mediaId}/available`;
+                    const params = new URLSearchParams();
+                    
+                    if (seasonNumber > 0) params.append('season', seasonNumber);
+                    if (episodeNumber > 0) params.append('episode', episodeNumber);
+                    
+                    if (params.toString()) {
+                        subtitlesListUrl += '?' + params.toString();
+                    }
+
+                    const subtitlesListResponse = await fetchWithAuth(subtitlesListUrl);
+                    if (!subtitlesListResponse.ok) {
+                        console.log('No subtitles available for this video');
+                        return;
+                    }
+
+                    const availableSubtitles = await subtitlesListResponse.json();
+                    if (!availableSubtitles || availableSubtitles.length === 0) {
+                        console.log('No subtitles available for this video');
+                        return;
+                    }
+
+                    console.log('Available subtitles:', availableSubtitles);
+
+                    // Load each subtitle track
+                    const trackPromises = availableSubtitles.map(async (subtitle, index) => {
+                        try {
+                            // Build subtitle URL for each language
+                            let subUrl = `/api/v1/stream/subtitles/${mediaId}`;
+                            const subParams = new URLSearchParams();
+                            
+                            if (seasonNumber > 0) subParams.append('season', seasonNumber);
+                            if (episodeNumber > 0) subParams.append('episode', episodeNumber);
+                            subParams.append('lang', subtitle.language);
+                            
+                            if (subParams.toString()) {
+                                subUrl += '?' + subParams.toString();
+                            }
+
+                            const response = await fetchWithAuth(subUrl);
+                            if (!response.ok) {
+                                console.warn(`Failed to load ${subtitle.label} subtitles`);
+                                return null;
+                            }
+
+                            const vttContent = await response.text();
+                            
+                            // Create blob URL for the VTT content
+                            const vttBlob = new Blob([vttContent], { type: 'text/vtt' });
+                            const vttUrl = URL.createObjectURL(vttBlob);
+                            
+                            // Add the subtitle track
+                            const track = player.addRemoteTextTrack({
+                                kind: 'subtitles',
+                                src: vttUrl,
+                                srclang: subtitle.language,
+                                label: subtitle.label,
+                                default: index === 0 // Make the first subtitle track (should be English) default
+                            }, false);
+                            
+                            console.log(`Loaded ${subtitle.label} subtitles successfully`);
+                            
+                            return {
+                                track: track,
+                                vttUrl: vttUrl
+                            };
+                        } catch (error) {
+                            console.warn(`Failed to load ${subtitle.label} subtitles:`, error);
+                            return null;
+                        }
+                    });
+
+                    // Wait for all subtitle tracks to load
+                    const loadedTracks = await Promise.all(trackPromises);
+                    const successfulTracks = loadedTracks.filter(track => track !== null);
+
+                    if (successfulTracks.length > 0) {
+                        console.log(`Successfully loaded ${successfulTracks.length} subtitle tracks`);
+                        
+                        // Clean up blob URLs when video ends or player is disposed
+                        player.one(['dispose', 'ended'], () => {
+                            successfulTracks.forEach(trackInfo => {
+                                URL.revokeObjectURL(trackInfo.vttUrl);
+                            });
+                        });
+                    }
+
+                } catch (error) {
+                    console.log('Could not load subtitles:', error);
+                }
+            }
 
             function loadSubtitles(player, mediaId, seasonNumber, episodeNumber) {
                 // Build subtitle URL

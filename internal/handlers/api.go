@@ -448,20 +448,41 @@ func (h *APIHandler) GetSubtitles(w http.ResponseWriter, r *http.Request) {
 
 	seasonNumber, _ := strconv.Atoi(r.URL.Query().Get("season"))
 	episodeNumber, _ := strconv.Atoi(r.URL.Query().Get("episode"))
-	lang := r.URL.Query().Get("lang")
-	if lang == "" {
-		lang = "en" // Default to English
+	requestedLang := r.URL.Query().Get("lang")
+	if requestedLang == "" {
+		requestedLang = "en" // Default to English
 	}
 
-	filePath, err := h.manager.GetSubtitleFilePath(mediaID, seasonNumber, episodeNumber, lang)
+	// Get all available subtitles
+	subtitles, err := h.manager.GetAllSubtitleFiles(mediaID, seasonNumber, episodeNumber)
 	if err != nil {
-		h.logger.Debug("Subtitle file not found:", err)
-		respondError(w, http.StatusNotFound, "Subtitle file not found")
+		h.logger.Debug("No subtitle files found:", err)
+		respondError(w, http.StatusNotFound, "No subtitle files found")
 		return
 	}
 
+	if len(subtitles) == 0 {
+		respondError(w, http.StatusNotFound, "No subtitle files found")
+		return
+	}
+
+	// Find the requested language
+	var selectedSubtitle *core.SubtitleTrack
+	for _, sub := range subtitles {
+		if sub.Language == requestedLang {
+			selectedSubtitle = &sub
+			break
+		}
+	}
+
+	// If requested language not found, use the first available (which should be English or default)
+	if selectedSubtitle == nil {
+		selectedSubtitle = &subtitles[0]
+		h.logger.Debug("Requested language not found, using:", selectedSubtitle.Language)
+	}
+
 	// Convert SRT to VTT
-	vttContent, err := utils.ConvertSRTToVTT(filePath)
+	vttContent, err := utils.ConvertSRTToVTT(selectedSubtitle.FilePath)
 	if err != nil {
 		h.logger.Error("Failed to convert SRT to VTT:", err)
 		respondError(w, http.StatusInternalServerError, "Failed to process subtitles")
@@ -475,4 +496,29 @@ func (h *APIHandler) GetSubtitles(w http.ResponseWriter, r *http.Request) {
 
 	// Serve the converted content
 	http.ServeContent(w, r, "subtitles.vtt", time.Now(), vttContent)
+}
+
+// Add a new endpoint to get all available subtitle languages
+func (h *APIHandler) GetAvailableSubtitles(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	mediaID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+
+	seasonNumber, _ := strconv.Atoi(r.URL.Query().Get("season"))
+	episodeNumber, _ := strconv.Atoi(r.URL.Query().Get("episode"))
+
+	// Get all available subtitles
+	subtitles, err := h.manager.GetAllSubtitleFiles(mediaID, seasonNumber, episodeNumber)
+	if err != nil {
+		h.logger.Debug("No subtitle files found:", err)
+		t := []string{}
+		respondJSON(w, http.StatusOK, t) // Return empty array instead of error
+		return
+	}
+
+	// Return the list of available subtitles (without file paths)
+	respondJSON(w, http.StatusOK, subtitles)
 }

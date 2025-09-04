@@ -65,6 +65,10 @@ func (s *Server) Start() error {
 	protected.HandleFunc("/stream/video/{id}", s.apiHandler.StreamVideo).Methods("GET")
 	protected.HandleFunc("/stream/subtitles/{id}", s.apiHandler.GetSubtitles).Methods("GET")
 
+	//Subtitles
+	protected.HandleFunc("/stream/subtitles/{id:[0-9]+}", s.apiHandler.GetSubtitles).Methods("GET")
+	protected.HandleFunc("/subtitles/{id:[0-9]+}/available", s.apiHandler.GetAvailableSubtitles).Methods("GET")
+
 	// Web UI (if enabled)
 	if s.config.App.UIEnabled {
 		router.PathPrefix("/").Handler(http.FileServer(http.FS(web.Files)))
