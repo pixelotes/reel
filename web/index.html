@@ -265,7 +265,7 @@
                     class="video-js vjs-big-play-centered vjs-fluid"
                     controls
                     preload="auto"
-                    data-setup='{"fluid": true}'
+                    data-setup='{"fluid": true, html5: {vtt:{allowNativeVtt: false}}}'
                 >
                 </video>
             </div>
@@ -409,16 +409,29 @@
                 const closeBtn = modal.querySelector('.modal-close');
                 const player = videojs('reel-player');
 
-                closeBtn.addEventListener('click', () => {
+                const closeModal = () => {
                     modal.style.display = 'none';
                     player.pause();
-                    player.src('');
-                });
+                    player.src(''); // Clear the source
+                    
+                    // Clean up any remaining text tracks
+                    const tracks = player.remoteTextTracks();
+                    for (let i = tracks.length - 1; i >= 0; i--) {
+                        player.removeRemoteTextTrack(tracks[i]);
+                    }
+                };
+
+                closeBtn.addEventListener('click', closeModal);
                 window.addEventListener('click', (e) => {
                     if (e.target === modal) {
-                        modal.style.display = 'none';
-                        player.pause();
-                        player.src('');
+                        closeModal();
+                    }
+                });
+                
+                // Handle escape key
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape' && modal.style.display === 'flex') {
+                        closeModal();
                     }
                 });
             }
@@ -724,6 +737,14 @@
                 });
             }
 
+            function srt2webvtt(srt) {
+                const webvtt = "WEBVTT\n\n" + srt
+                    .replace(/(\d+)\s*\n/g, '')
+                    .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2')
+                    .trim()
+                return webvtt;
+            }
+
             async function showMediaDetails(mediaId) {
                 state.currentMediaId = mediaId;
                 const media = state.allMedia.find(m => m.id === mediaId);
@@ -805,27 +826,78 @@
             window.playVideo = function(mediaId, seasonNumber = 0, episodeNumber = 0) {
                 const modal = document.getElementById('video-player-modal');
                 const player = videojs('reel-player');
+
+                // Clear any existing text tracks
+                const existingTracks = player.remoteTextTracks();
+                for (let i = existingTracks.length - 1; i >= 0; i--) {
+                    player.removeRemoteTextTrack(existingTracks[i]);
+                }
+
+                // Set up video source
                 let videoUrl = `/api/v1/stream/video/${mediaId}`;
-                if (seasonNumber > 0) {
+                if (seasonNumber > 0 && episodeNumber > 0) {
                     videoUrl += `?season=${seasonNumber}&episode=${episodeNumber}`;
                 }
 
-                player.src({
-                    src: videoUrl,
-                    type: 'video/mp4' // Assuming mp4 for now
+                player.src({ src: videoUrl, type: 'video/mp4' });
+                
+                // Wait for player to be ready before adding subtitles
+                player.ready(() => {
+                    loadSubtitles(player, mediaId, seasonNumber, episodeNumber);
                 });
-
-                // Dummy subtitles for now
-                player.addRemoteTextTrack({
-                    kind: 'subtitles',
-                    src: `/api/v1/stream/subtitles/${mediaId}?lang=en`,
-                    srclang: 'en',
-                    label: 'English'
-                }, false);
-
 
                 modal.style.display = 'flex';
                 player.play();
+            };
+
+            function loadSubtitles(player, mediaId, seasonNumber, episodeNumber) {
+                // Build subtitle URL
+                let subUrl = `/api/v1/stream/subtitles/${mediaId}`;
+                const params = new URLSearchParams();
+                
+                if (seasonNumber > 0) params.append('season', seasonNumber);
+                if (episodeNumber > 0) params.append('episode', episodeNumber);
+                params.append('lang', 'en');
+                
+                if (params.toString()) {
+                    subUrl += '?' + params.toString();
+                }
+
+                // Fetch and add subtitles
+                fetchWithAuth(subUrl)
+                    .then(response => {
+                        if (!response.ok) {
+                            console.log('No subtitles available for this video');
+                            return;
+                        }
+                        return response.text();
+                    })
+                    .then(vttContent => {
+                        if (!vttContent) return;
+                        
+                        // Create blob URL for the VTT content
+                        const vttBlob = new Blob([vttContent], { type: 'text/vtt' });
+                        const vttUrl = URL.createObjectURL(vttBlob);
+                        
+                        // Add the subtitle track
+                        const track = player.addRemoteTextTrack({
+                            kind: 'subtitles',
+                            src: vttUrl,
+                            srclang: 'en',
+                            label: 'English',
+                            default: true // Make this the default subtitle track
+                        }, false); // false = don't add to the DOM, let Video.js handle it
+                        
+                        console.log('Subtitles loaded successfully');
+                        
+                        // Clean up blob URL when video ends or player is disposed
+                        player.one('dispose', () => {
+                            URL.revokeObjectURL(vttUrl);
+                        });
+                    })
+                    .catch(error => {
+                        console.log('Could not load subtitles:', error);
+                    });
             }
 
             window.manualMovieSearch = async function(mediaId) {

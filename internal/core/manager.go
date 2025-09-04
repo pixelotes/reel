@@ -51,11 +51,12 @@ var QUALITY_SCORES = map[string]int{
 }
 
 var RESOLUTION_SYNONYMS = map[string][]string{
+	"4320p": {"4320p", "8k"},
 	"2160p": {"2160p", "4k", "uhd"},
 	"1440p": {"1440p", "2k"},
 	"1080p": {"1080p", "fhd"},
 	"720p":  {"720p", "hd", "hdtv", "xvid"},
-	"480p":  {"480p", "sd", "msd"},
+	"480p":  {"480p", "576p", "sd", "msd", "dvdrip", "ntsc", "pal"},
 	"360p":  {"360p"},
 }
 
@@ -66,6 +67,7 @@ var RESOLUTION_RANK = map[string]int{
 	"1080p": 3,
 	"1440p": 4,
 	"2160p": 5,
+	"4320p": 6,
 }
 
 // Ordered from highest to lowest for matching
@@ -1338,13 +1340,17 @@ func (m *Manager) GetSubtitleFilePath(mediaID int, seasonNumber int, episodeNumb
 
 	// Try to find a language-specific subtitle file first
 	langSubPath := fmt.Sprintf("%s.%s.srt", baseName, lang)
+	m.logger.Debug("Checking for subtitle file:", langSubPath)
 	if _, err := os.Stat(langSubPath); err == nil {
+		m.logger.Debug("Found language-specific subtitle file:", langSubPath)
 		return langSubPath, nil
 	}
 
 	// If not found, try to find a default subtitle file
 	defaultSubPath := fmt.Sprintf("%s.srt", baseName)
+	m.logger.Debug("Checking for subtitle file:", defaultSubPath)
 	if _, err := os.Stat(defaultSubPath); err == nil {
+		m.logger.Debug("Found default subtitle file:", defaultSubPath)
 		return defaultSubPath, nil
 	}
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"reel/internal/clients/indexers"
 	"reel/internal/config"
@@ -436,7 +437,7 @@ func (h *APIHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filePath)
 }
 
-// GetSubtitles handles serving the subtitle file.
+// GetSubtitles handles finding, converting, and serving the subtitle file.
 func (h *APIHandler) GetSubtitles(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	mediaID, err := strconv.Atoi(vars["id"])
@@ -454,11 +455,24 @@ func (h *APIHandler) GetSubtitles(w http.ResponseWriter, r *http.Request) {
 
 	filePath, err := h.manager.GetSubtitleFilePath(mediaID, seasonNumber, episodeNumber, lang)
 	if err != nil {
+		h.logger.Debug("Subtitle file not found:", err)
 		respondError(w, http.StatusNotFound, "Subtitle file not found")
 		return
 	}
 
-	// Set the correct Content-Type for WebVTT
-	w.Header().Set("Content-Type", "text/vtt")
-	http.ServeFile(w, r, filePath)
+	// Convert SRT to VTT
+	vttContent, err := utils.ConvertSRTToVTT(filePath)
+	if err != nil {
+		h.logger.Error("Failed to convert SRT to VTT:", err)
+		respondError(w, http.StatusInternalServerError, "Failed to process subtitles")
+		return
+	}
+
+	// Set headers for proper caching and content type
+	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600") // Cache for 1 hour
+	w.Header().Set("Access-Control-Allow-Origin", "*")      // Allow CORS for subtitles
+
+	// Serve the converted content
+	http.ServeContent(w, r, "subtitles.vtt", time.Now(), vttContent)
 }
