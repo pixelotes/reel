@@ -414,7 +414,7 @@ func (h *APIHandler) GetEpisodeDetails(w http.ResponseWriter, r *http.Request) {
 	respondError(w, http.StatusNotFound, "Episode not found")
 }
 
-// StreamVideo (dummy)
+// StreamVideo handles serving the video file for playback.
 func (h *APIHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	mediaID, err := strconv.Atoi(vars["id"])
@@ -429,7 +429,7 @@ func (h *APIHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 	filePath, err := h.manager.GetMediaFilePath(mediaID, seasonNumber, episodeNumber)
 	if err != nil {
 		h.logger.Error("Could not get media file path:", err)
-		respondError(w, http.StatusNotFound, "Media file not found")
+		respondError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
