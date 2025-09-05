@@ -60,7 +60,7 @@ type Config struct {
 		Sources           []SourceConfig `yaml:"sources"`
 		DownloadFolder    string         `yaml:"download_folder"`
 		DestinationFolder string         `yaml:"destination_folder"`
-		MoveMethod        string         `yaml:"move_method"`
+		MoveMethod        []string       `yaml:"move_method"`
 	} `yaml:"movies"`
 
 	TVShows struct {
@@ -68,7 +68,7 @@ type Config struct {
 		Sources           []SourceConfig `yaml:"sources"`
 		DownloadFolder    string         `yaml:"download_folder"`
 		DestinationFolder string         `yaml:"destination_folder"`
-		MoveMethod        string         `yaml:"move_method"`
+		MoveMethod        []string       `yaml:"move_method"`
 	} `yaml:"tv-shows"`
 
 	Anime struct {
@@ -76,7 +76,7 @@ type Config struct {
 		Sources           []SourceConfig `yaml:"sources"`
 		DownloadFolder    string         `yaml:"download_folder"`
 		DestinationFolder string         `yaml:"destination_folder"`
-		MoveMethod        string         `yaml:"move_method"`
+		MoveMethod        []string       `yaml:"move_method"`
 	} `yaml:"anime"`
 
 	Database struct {
