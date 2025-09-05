@@ -7,6 +7,7 @@ app:
   jwt_secret: "your-very-secure-jwt-secret-key-here"
   magnet_to_torrent_enabled: true
   magnet_to_torrent_timeout: 60
+  filter_log_level: "detail"
 
 torrent_client:
   type: "transmission" # or "qbittorrent"
@@ -18,11 +19,6 @@ torrent_client:
 notifications:
   pushbullet:
     api_key: ""
-
-reject-common:
-  - \bscreener\b
-  - \bhdcam\b
-  - \btelecine\b
 
 extra_trackers_list:
   - udp://tracker-1
@@ -90,3 +86,7 @@ automation:
   keep_torrents_for_days: 7
   keep_torrents_seed_ratio: 1.2
   notifications: [] # e.g., ["pushbullet"]
+  reject-common:
+  - \bscreener\b
+  - \bhdcam\b
+  - \btelecine\b
