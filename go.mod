@@ -76,7 +76,6 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rs/dnscache v0.0.0-20211102005908-e0241e321417 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
-	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/tidwall/btree v1.6.0 // indirect
 	github.com/wlynxg/anet v0.0.3 // indirect
 	go.etcd.io/bbolt v1.3.6 // indirect
