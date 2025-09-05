@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"reel/internal/clients/indexers"
 	"reel/internal/config"
@@ -73,15 +74,15 @@ func (h *APIHandler) GetMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logger.Info("GetMedia: Retrieved", len(media), "media items from manager")
+	//h.logger.Info("GetMedia: Retrieved", len(media), "media items from manager")
 
 	// Log each media item for debugging
-	for i, m := range media {
-		h.logger.Info("Media", i, "- ID:", m.ID, "Title:", m.Title, "Type:", m.Type, "TV Show ID:", m.TVShowID)
-	}
+	//for i, m := range media {
+	//h.logger.Info("Media", i, "- ID:", m.ID, "Title:", m.Title, "Type:", m.Type, "TV Show ID:", m.TVShowID)
+	//}
 
 	respondJSON(w, http.StatusOK, media)
-	h.logger.Info("GetMedia: Response sent successfully")
+	//h.logger.Info("GetMedia: Response sent successfully")
 }
 
 // Add new media
@@ -412,4 +413,112 @@ func (h *APIHandler) GetEpisodeDetails(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondError(w, http.StatusNotFound, "Episode not found")
+}
+
+// StreamVideo handles serving the video file for playback.
+func (h *APIHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	mediaID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+
+	seasonNumber, _ := strconv.Atoi(r.URL.Query().Get("season"))
+	episodeNumber, _ := strconv.Atoi(r.URL.Query().Get("episode"))
+
+	filePath, err := h.manager.GetMediaFilePath(mediaID, seasonNumber, episodeNumber)
+	if err != nil {
+		h.logger.Error("Could not get media file path:", err)
+		respondError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	http.ServeFile(w, r, filePath)
+}
+
+// GetSubtitles handles finding, converting, and serving the subtitle file.
+func (h *APIHandler) GetSubtitles(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	mediaID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+
+	seasonNumber, _ := strconv.Atoi(r.URL.Query().Get("season"))
+	episodeNumber, _ := strconv.Atoi(r.URL.Query().Get("episode"))
+	requestedLang := r.URL.Query().Get("lang")
+	if requestedLang == "" {
+		requestedLang = "en" // Default to English
+	}
+
+	// Get all available subtitles
+	subtitles, err := h.manager.GetAllSubtitleFiles(mediaID, seasonNumber, episodeNumber)
+	if err != nil {
+		h.logger.Debug("No subtitle files found:", err)
+		respondError(w, http.StatusNotFound, "No subtitle files found")
+		return
+	}
+
+	if len(subtitles) == 0 {
+		respondError(w, http.StatusNotFound, "No subtitle files found")
+		return
+	}
+
+	// Find the requested language
+	var selectedSubtitle *core.SubtitleTrack
+	for _, sub := range subtitles {
+		if sub.Language == requestedLang {
+			selectedSubtitle = &sub
+			break
+		}
+	}
+
+	// If requested language not found, use the first available (which should be English or default)
+	if selectedSubtitle == nil {
+		selectedSubtitle = &subtitles[0]
+		h.logger.Debug("Requested language not found, using:", selectedSubtitle.Language)
+	}
+
+	// Convert SRT to VTT
+	vttContent, err := utils.ConvertSRTToVTT(selectedSubtitle.FilePath)
+	if err != nil {
+		h.logger.Error("Failed to convert SRT to VTT:", err)
+		respondError(w, http.StatusInternalServerError, "Failed to process subtitles")
+		return
+	}
+
+	// Set headers for proper caching and content type
+	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600") // Cache for 1 hour
+	w.Header().Set("Access-Control-Allow-Origin", "*")      // Allow CORS for subtitles
+
+	// Serve the converted content
+	http.ServeContent(w, r, "subtitles.vtt", time.Now(), vttContent)
+}
+
+// Add a new endpoint to get all available subtitle languages
+func (h *APIHandler) GetAvailableSubtitles(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	mediaID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+
+	seasonNumber, _ := strconv.Atoi(r.URL.Query().Get("season"))
+	episodeNumber, _ := strconv.Atoi(r.URL.Query().Get("episode"))
+
+	// Get all available subtitles
+	subtitles, err := h.manager.GetAllSubtitleFiles(mediaID, seasonNumber, episodeNumber)
+	if err != nil {
+		h.logger.Debug("No subtitle files found:", err)
+		t := []string{}
+		respondJSON(w, http.StatusOK, t) // Return empty array instead of error
+		return
+	}
+
+	// Return the list of available subtitles (without file paths)
+	respondJSON(w, http.StatusOK, subtitles)
 }

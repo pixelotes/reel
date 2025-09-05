@@ -5,6 +5,9 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -49,11 +52,12 @@ var QUALITY_SCORES = map[string]int{
 }
 
 var RESOLUTION_SYNONYMS = map[string][]string{
+	"4320p": {"4320p", "8k"},
 	"2160p": {"2160p", "4k", "uhd"},
 	"1440p": {"1440p", "2k"},
 	"1080p": {"1080p", "fhd"},
 	"720p":  {"720p", "hd", "hdtv", "xvid"},
-	"480p":  {"480p", "sd", "msd"},
+	"480p":  {"480p", "576p", "sd", "msd", "dvdrip", "ntsc", "pal"},
 	"360p":  {"360p"},
 }
 
@@ -64,6 +68,7 @@ var RESOLUTION_RANK = map[string]int{
 	"1080p": 3,
 	"1440p": 4,
 	"2160p": 5,
+	"4320p": 6,
 }
 
 // Ordered from highest to lowest for matching
@@ -111,6 +116,12 @@ type Manager struct {
 	scheduler       *cron.Cron
 	searchQueue     chan models.Media
 	httpClient      *http.Client
+}
+
+type SubtitleTrack struct {
+	Language string `json:"language"`
+	Label    string `json:"label"`
+	FilePath string `json:"-"` // Don't expose file path to frontend
 }
 
 func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
@@ -1260,4 +1271,285 @@ func (m *Manager) notifyDownloadCompleted(media *models.Media, torrentName strin
 		// Run in a goroutine to avoid blocking the main application flow.
 		go n.NotifyDownloadComplete(media, torrentName)
 	}
+}
+
+func (m *Manager) GetMediaFilePath(mediaID int, seasonNumber int, episodeNumber int) (string, error) {
+	media, err := m.mediaRepo.GetByID(mediaID)
+	if err != nil {
+		return "", err
+	}
+	if media == nil {
+		return "", fmt.Errorf("media with ID %d not found", mediaID)
+	}
+
+	var baseDestPath string
+	switch media.Type {
+	case models.MediaTypeMovie:
+		baseDestPath = m.config.Movies.DestinationFolder
+	case models.MediaTypeTVShow:
+		baseDestPath = m.config.TVShows.DestinationFolder
+	case models.MediaTypeAnime:
+		baseDestPath = m.config.Anime.DestinationFolder
+	default:
+		return "", fmt.Errorf("unknown media type: %s", media.Type)
+	}
+
+	safeTitle := utils.SanitizeFilename(media.Title)
+	mediaFolderName := fmt.Sprintf("%s (%d)", safeTitle, media.Year)
+	fullPath := filepath.Join(baseDestPath, mediaFolderName)
+
+	if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+		if seasonNumber <= 0 {
+			return "", fmt.Errorf("season number must be provided for TV shows")
+		}
+		seasonFolderName := fmt.Sprintf("S%02d", seasonNumber)
+		fullPath = filepath.Join(fullPath, seasonFolderName)
+	}
+
+	// Scan the directory for a video file
+	files, err := os.ReadDir(fullPath)
+	if err != nil {
+		return "", fmt.Errorf("could not read destination directory '%s': %w", fullPath, err)
+	}
+
+	videoExtensions := map[string]bool{".mkv": true, ".mp4": true, ".avi": true, ".mov": true}
+
+	for _, file := range files {
+		if !file.IsDir() {
+			ext := strings.ToLower(filepath.Ext(file.Name()))
+			if videoExtensions[ext] {
+				// If it's a TV show/anime, match the episode number
+				if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+					if episodeNumber <= 0 {
+						return "", fmt.Errorf("episode number must be provided for TV shows")
+					}
+					episodePattern := fmt.Sprintf("S%02dE%02d", seasonNumber, episodeNumber)
+					if strings.Contains(strings.ToUpper(file.Name()), episodePattern) {
+						return filepath.Join(fullPath, file.Name()), nil
+					}
+				} else { // It's a movie, return the first video file found
+					return filepath.Join(fullPath, file.Name()), nil
+				}
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no video file found in %s", fullPath)
+}
+
+func (m *Manager) GetSubtitleFilePath(mediaID int, seasonNumber int, episodeNumber int, lang string) (string, error) {
+	videoPath, err := m.GetMediaFilePath(mediaID, seasonNumber, episodeNumber)
+	if err != nil {
+		return "", err
+	}
+
+	baseName := strings.TrimSuffix(videoPath, filepath.Ext(videoPath))
+
+	// Try to find a language-specific subtitle file first
+	langSubPath := fmt.Sprintf("%s.%s.srt", baseName, lang)
+	m.logger.Debug("Checking for subtitle file:", langSubPath)
+	if _, err := os.Stat(langSubPath); err == nil {
+		m.logger.Debug("Found language-specific subtitle file:", langSubPath)
+		return langSubPath, nil
+	}
+
+	// If not found, try to find a default subtitle file
+	defaultSubPath := fmt.Sprintf("%s.srt", baseName)
+	m.logger.Debug("Checking for subtitle file:", defaultSubPath)
+	if _, err := os.Stat(defaultSubPath); err == nil {
+		m.logger.Debug("Found default subtitle file:", defaultSubPath)
+		return defaultSubPath, nil
+	}
+
+	return "", fmt.Errorf("no subtitle file found for language '%s'", lang)
+}
+
+func (m *Manager) GetAllSubtitleFiles(mediaID int, seasonNumber int, episodeNumber int) ([]SubtitleTrack, error) {
+	videoPath, err := m.GetMediaFilePath(mediaID, seasonNumber, episodeNumber)
+	if err != nil {
+		return nil, err
+	}
+
+	baseName := strings.TrimSuffix(videoPath, filepath.Ext(videoPath))
+	videoDir := filepath.Dir(videoPath)
+
+	// Read all files in the directory
+	files, err := os.ReadDir(videoDir)
+	if err != nil {
+		return nil, fmt.Errorf("could not read video directory: %w", err)
+	}
+
+	var subtitles []SubtitleTrack
+	foundEnglish := false
+
+	// First pass: look for language-specific subtitle files
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		fileName := file.Name()
+		fileExt := filepath.Ext(fileName)
+
+		// Only process .srt files
+		if strings.ToLower(fileExt) != ".srt" {
+			continue
+		}
+
+		// Check if this subtitle file belongs to our video
+		fileBaseName := strings.TrimSuffix(fileName, fileExt)
+		videoBaseName := filepath.Base(baseName)
+
+		// Skip if this subtitle doesn't match our video file
+		if !strings.HasPrefix(fileBaseName, videoBaseName) {
+			continue
+		}
+
+		// Extract language code from filename
+		// Expected format: videoname.lang.srt or videoname.srt
+		parts := strings.Split(fileBaseName, ".")
+
+		var langCode string
+		var label string
+
+		if len(parts) >= 2 && parts[len(parts)-1] != videoBaseName {
+			// Has language code: videoname.en.srt
+			langCode = parts[len(parts)-1]
+			label = getLanguageLabel(langCode)
+		} else if fileName == videoBaseName+".srt" {
+			// Default subtitle file without language code
+			langCode = "default"
+			label = "Default"
+		} else {
+			// Skip files that don't match our expected pattern
+			continue
+		}
+
+		if langCode == "en" || langCode == "eng" {
+			foundEnglish = true
+		}
+
+		subtitles = append(subtitles, SubtitleTrack{
+			Language: langCode,
+			Label:    label,
+			FilePath: filepath.Join(videoDir, fileName),
+		})
+	}
+
+	// Second pass: if no English subtitle found, include the default one as English
+	if !foundEnglish {
+		defaultSubPath := baseName + ".srt"
+		if _, err := os.Stat(defaultSubPath); err == nil {
+			// Check if we already added this as "default" and update it
+			for i, sub := range subtitles {
+				if sub.Language == "default" {
+					subtitles[i].Language = "en"
+					subtitles[i].Label = "English (Default)"
+					foundEnglish = true
+					break
+				}
+			}
+		}
+	}
+
+	// Sort subtitles: English first, then alphabetically by label
+	sort.Slice(subtitles, func(i, j int) bool {
+		if subtitles[i].Language == "en" {
+			return true
+		}
+		if subtitles[j].Language == "en" {
+			return false
+		}
+		return subtitles[i].Label < subtitles[j].Label
+	})
+
+	return subtitles, nil
+}
+
+// Helper function to convert language codes to readable labels
+func getLanguageLabel(langCode string) string {
+	languageMap := map[string]string{
+		"en": "English",
+		"es": "Spanish",
+		"fr": "French",
+		"de": "German",
+		"it": "Italian",
+		"pt": "Portuguese",
+		"ru": "Russian",
+		"ja": "Japanese",
+		"ko": "Korean",
+		"zh": "Chinese",
+		"ar": "Arabic",
+		"hi": "Hindi",
+		"th": "Thai",
+		"tr": "Turkish",
+		"pl": "Polish",
+		"nl": "Dutch",
+		"sv": "Swedish",
+		"da": "Danish",
+		"no": "Norwegian",
+		"fi": "Finnish",
+		"cs": "Czech",
+		"hu": "Hungarian",
+		"ro": "Romanian",
+		"bg": "Bulgarian",
+		"hr": "Croatian",
+		"sk": "Slovak",
+		"sl": "Slovenian",
+		"et": "Estonian",
+		"lv": "Latvian",
+		"lt": "Lithuanian",
+		"uk": "Ukrainian",
+		"be": "Belarusian",
+		"mk": "Macedonian",
+		"sr": "Serbian",
+		"bs": "Bosnian",
+		"me": "Montenegrin",
+		"sq": "Albanian",
+		"el": "Greek",
+		"he": "Hebrew",
+		"fa": "Persian",
+		"ur": "Urdu",
+		"bn": "Bengali",
+		"ta": "Tamil",
+		"te": "Telugu",
+		"ml": "Malayalam",
+		"kn": "Kannada",
+		"gu": "Gujarati",
+		"pa": "Punjabi",
+		"mr": "Marathi",
+		"ne": "Nepali",
+		"si": "Sinhala",
+		"my": "Burmese",
+		"km": "Khmer",
+		"lo": "Lao",
+		"vi": "Vietnamese",
+		"id": "Indonesian",
+		"ms": "Malay",
+		"tl": "Filipino",
+		"sw": "Swahili",
+		"am": "Amharic",
+		"yo": "Yoruba",
+		"ig": "Igbo",
+		"ha": "Hausa",
+		"zu": "Zulu",
+		"af": "Afrikaans",
+		"ca": "Catalan",
+		"eu": "Basque",
+		"gl": "Galician",
+		"cy": "Welsh",
+		"ga": "Irish",
+		"gd": "Scottish Gaelic",
+		"is": "Icelandic",
+		"fo": "Faroese",
+		"mt": "Maltese",
+		"lb": "Luxembourgish",
+	}
+
+	if label, exists := languageMap[langCode]; exists {
+		return label
+	}
+
+	// If not found in map, return the code in uppercase
+	return strings.ToUpper(langCode)
 }

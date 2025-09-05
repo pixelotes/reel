@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>🎬 Reel</title>
+    <link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet" />
     <style>
         :root {
             --bg-color: #1e1e1e; --text-color: #d4d4d4; --primary-color: #007acc;
@@ -77,7 +78,8 @@
         /* Modal Styles */
         .modal-backdrop { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.6); align-items: center; justify-content: center; }
         .modal-content { background-color: var(--header-bg); margin: auto; padding: 2rem; border: 1px solid var(--border-color); width: 80%; max-width: 900px; border-radius: 8px; position: relative; max-height: 80vh; overflow-y: auto; }
-        .modal-close { color: #aaa; position: absolute; top: 1rem; right: 1.5rem; font-size: 28px; font-weight: bold; cursor: pointer; }
+        .modal-content-video { background-color: var(--header-bg); margin: auto; padding: auto; border: 1px solid var(--border-color); width: auto; max-width: 900px; border-radius: 8px; position: relative; max-height: 80vh; overflow-y: auto; }
+        .modal-close { color: #aaa; position: absolute; top: 1rem; right: 1.5rem; font-size: 28px; font-weight: bold; cursor: pointer; z-index: 10;}
         .modal-close:hover, .modal-close:focus { color: var(--text-color); }
 
         /* Filter Bar */
@@ -87,7 +89,20 @@
         /* TV Show Details */
         .season-details summary { cursor: pointer; font-weight: bold; margin: 1rem 0 0.5rem; }
         .episode-list { display: flex; flex-direction: column; gap: 0.5rem; margin-left: 1rem; }
-        .episode-item { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 1rem; }
+        .episode-item { display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: 1rem; }
+
+        /* Video Player Styles */
+        #video-player-modal .modal-content {
+            width: 90%;
+            max-width: 1200px;
+            padding: 1rem;
+            height: auto;
+            position: relative; /* Needed for absolute positioning of the close button */
+        }
+        .video-js.vjs-fluid, .video-js.vjs-16-9, .video-js.vjs-4-3 {
+            width: 100%;
+            height: auto;
+        }
     </style>
 </head>
 <body>
@@ -241,6 +256,23 @@
         </div>
     </div>
 
+    <div id="video-player-modal" class="modal-backdrop">
+        <div class="modal-content">
+            <span class="modal-close">&times;</span>
+            <div class="reel-content">
+                <video
+                    id="reel-player"
+                    class="video-js vjs-big-play-centered vjs-fluid"
+                    controls
+                    preload="auto"
+                    data-setup='{"fluid": true, html5: {vtt:{allowNativeVtt: false}}}'
+                >
+                </video>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             // App State
@@ -302,6 +334,7 @@
                 setupAddMediaForm();
                 setupModal();
                 setupManualSearchModal();
+                setupVideoPlayerModal();
                 refreshData();
                 checkSystemStatus();
                 setInterval(refreshData, 5000);
@@ -368,6 +401,38 @@
                 closeBtn.addEventListener('click', () => modal.style.display = 'none');
                 window.addEventListener('click', (e) => {
                     if (e.target === modal) modal.style.display = 'none';
+                });
+            }
+
+            function setupVideoPlayerModal() {
+                const modal = document.getElementById('video-player-modal');
+                const closeBtn = modal.querySelector('.modal-close');
+                const player = videojs('reel-player');
+
+                const closeModal = () => {
+                    modal.style.display = 'none';
+                    player.pause();
+                    player.src(''); // Clear the source
+                    
+                    // Clean up any remaining text tracks
+                    const tracks = player.remoteTextTracks();
+                    for (let i = tracks.length - 1; i >= 0; i--) {
+                        player.removeRemoteTextTrack(tracks[i]);
+                    }
+                };
+
+                closeBtn.addEventListener('click', closeModal);
+                window.addEventListener('click', (e) => {
+                    if (e.target === modal) {
+                        closeModal();
+                    }
+                });
+                
+                // Handle escape key
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape' && modal.style.display === 'flex') {
+                        closeModal();
+                    }
                 });
             }
             
@@ -672,6 +737,14 @@
                 });
             }
 
+            function srt2webvtt(srt) {
+                const webvtt = "WEBVTT\n\n" + srt
+                    .replace(/(\d+)\s*\n/g, '')
+                    .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2')
+                    .trim()
+                return webvtt;
+            }
+
             async function showMediaDetails(mediaId) {
                 state.currentMediaId = mediaId;
                 const media = state.allMedia.find(m => m.id === mediaId);
@@ -699,7 +772,9 @@
                                                 <div class="episode-item" data-season-number="${season.season_number}" data-episode-number="${ep.episode_number}">
                                                     <span>${ep.episode_number}. ${ep.title} <em style="color:#aaa; font-size: 0.8rem;">(${ep.air_date})</em></span>
                                                     <span class="media-status status-${ep.status}">${ep.status}</span>
+                                                
                                                     <button class="secondary" onclick="manualEpisodeSearch(${media.id}, ${season.season_number}, ${ep.episode_number})">🔍</button>
+                                                    <button class="secondary" ${ep.status === 'downloaded' ? `enabled` : `disabled style="border-color: red; opacity: 0.4; filter: alpha(opacity=40);"`} onclick="playVideo(${media.id}, ${season.season_number}, ${ep.episode_number})">▶️</button>
                                                 </div>
                                             `).join('')}
                                         </div>
@@ -714,7 +789,7 @@
                 }
                 
                 content.innerHTML = `
-                    <h2>${media.title} (${media.year})</h2>
+                    <h2>${media.title} (${media.year}) ${media.status === 'downloaded' ? `<button class="secondary" style="font-size: 1rem; padding: 0.2rem 0.5rem;" onclick="playVideo(${media.id})">▶️ Play</button>` : ''}</h2>
                     <div style="display: flex; gap: 2rem; margin-bottom: 2rem;">
                         ${media.poster_url ? `<img src="${media.poster_url}" alt="${media.title}" style="width: 200px; border-radius: 8px;">` : ''}
                         <div style="flex: 1;">
@@ -747,6 +822,178 @@
                     </div>
                 `;
             };
+            
+            window.playVideo = function(mediaId, seasonNumber = 0, episodeNumber = 0) {
+                const modal = document.getElementById('video-player-modal');
+                const player = videojs('reel-player');
+
+                // Clear any existing text tracks
+                const existingTracks = player.remoteTextTracks();
+                for (let i = existingTracks.length - 1; i >= 0; i--) {
+                    player.removeRemoteTextTrack(existingTracks[i]);
+                }
+
+                // Set up video source
+                let videoUrl = `/api/v1/stream/video/${mediaId}`;
+                if (seasonNumber > 0 && episodeNumber > 0) {
+                    videoUrl += `?season=${seasonNumber}&episode=${episodeNumber}`;
+                }
+
+                player.src({ src: videoUrl, type: 'video/mp4' });
+                
+                // Wait for player to be ready before adding subtitles
+                player.ready(() => {
+                    loadAllSubtitles(player, mediaId, seasonNumber, episodeNumber);
+                });
+
+                modal.style.display = 'flex';
+                player.play();
+            };
+
+            async function loadAllSubtitles(player, mediaId, seasonNumber, episodeNumber) {
+                try {
+                    // First, get the list of available subtitles
+                    let subtitlesListUrl = `/api/v1/subtitles/${mediaId}/available`;
+                    const params = new URLSearchParams();
+                    
+                    if (seasonNumber > 0) params.append('season', seasonNumber);
+                    if (episodeNumber > 0) params.append('episode', episodeNumber);
+                    
+                    if (params.toString()) {
+                        subtitlesListUrl += '?' + params.toString();
+                    }
+
+                    const subtitlesListResponse = await fetchWithAuth(subtitlesListUrl);
+                    if (!subtitlesListResponse.ok) {
+                        console.log('No subtitles available for this video');
+                        return;
+                    }
+
+                    const availableSubtitles = await subtitlesListResponse.json();
+                    if (!availableSubtitles || availableSubtitles.length === 0) {
+                        console.log('No subtitles available for this video');
+                        return;
+                    }
+
+                    console.log('Available subtitles:', availableSubtitles);
+
+                    // Load each subtitle track
+                    const trackPromises = availableSubtitles.map(async (subtitle, index) => {
+                        try {
+                            // Build subtitle URL for each language
+                            let subUrl = `/api/v1/stream/subtitles/${mediaId}`;
+                            const subParams = new URLSearchParams();
+                            
+                            if (seasonNumber > 0) subParams.append('season', seasonNumber);
+                            if (episodeNumber > 0) subParams.append('episode', episodeNumber);
+                            subParams.append('lang', subtitle.language);
+                            
+                            if (subParams.toString()) {
+                                subUrl += '?' + subParams.toString();
+                            }
+
+                            const response = await fetchWithAuth(subUrl);
+                            if (!response.ok) {
+                                console.warn(`Failed to load ${subtitle.label} subtitles`);
+                                return null;
+                            }
+
+                            const vttContent = await response.text();
+                            
+                            // Create blob URL for the VTT content
+                            const vttBlob = new Blob([vttContent], { type: 'text/vtt' });
+                            const vttUrl = URL.createObjectURL(vttBlob);
+                            
+                            // Add the subtitle track
+                            const track = player.addRemoteTextTrack({
+                                kind: 'subtitles',
+                                src: vttUrl,
+                                srclang: subtitle.language,
+                                label: subtitle.label,
+                                default: index === 0 // Make the first subtitle track (should be English) default
+                            }, false);
+                            
+                            console.log(`Loaded ${subtitle.label} subtitles successfully`);
+                            
+                            return {
+                                track: track,
+                                vttUrl: vttUrl
+                            };
+                        } catch (error) {
+                            console.warn(`Failed to load ${subtitle.label} subtitles:`, error);
+                            return null;
+                        }
+                    });
+
+                    // Wait for all subtitle tracks to load
+                    const loadedTracks = await Promise.all(trackPromises);
+                    const successfulTracks = loadedTracks.filter(track => track !== null);
+
+                    if (successfulTracks.length > 0) {
+                        console.log(`Successfully loaded ${successfulTracks.length} subtitle tracks`);
+                        
+                        // Clean up blob URLs when video ends or player is disposed
+                        player.one(['dispose', 'ended'], () => {
+                            successfulTracks.forEach(trackInfo => {
+                                URL.revokeObjectURL(trackInfo.vttUrl);
+                            });
+                        });
+                    }
+
+                } catch (error) {
+                    console.log('Could not load subtitles:', error);
+                }
+            }
+
+            function loadSubtitles(player, mediaId, seasonNumber, episodeNumber) {
+                // Build subtitle URL
+                let subUrl = `/api/v1/stream/subtitles/${mediaId}`;
+                const params = new URLSearchParams();
+                
+                if (seasonNumber > 0) params.append('season', seasonNumber);
+                if (episodeNumber > 0) params.append('episode', episodeNumber);
+                params.append('lang', 'en');
+                
+                if (params.toString()) {
+                    subUrl += '?' + params.toString();
+                }
+
+                // Fetch and add subtitles
+                fetchWithAuth(subUrl)
+                    .then(response => {
+                        if (!response.ok) {
+                            console.log('No subtitles available for this video');
+                            return;
+                        }
+                        return response.text();
+                    })
+                    .then(vttContent => {
+                        if (!vttContent) return;
+                        
+                        // Create blob URL for the VTT content
+                        const vttBlob = new Blob([vttContent], { type: 'text/vtt' });
+                        const vttUrl = URL.createObjectURL(vttBlob);
+                        
+                        // Add the subtitle track
+                        const track = player.addRemoteTextTrack({
+                            kind: 'subtitles',
+                            src: vttUrl,
+                            srclang: 'en',
+                            label: 'English',
+                            default: true // Make this the default subtitle track
+                        }, false); // false = don't add to the DOM, let Video.js handle it
+                        
+                        console.log('Subtitles loaded successfully');
+                        
+                        // Clean up blob URL when video ends or player is disposed
+                        player.one('dispose', () => {
+                            URL.revokeObjectURL(vttUrl);
+                        });
+                    })
+                    .catch(error => {
+                        console.log('Could not load subtitles:', error);
+                    });
+            }
 
             window.manualMovieSearch = async function(mediaId) {
                 const modal = document.getElementById('manual-search-modal');
