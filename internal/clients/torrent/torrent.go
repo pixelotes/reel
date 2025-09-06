@@ -6,6 +6,7 @@ type TorrentClient interface {
 	GetTorrentStatus(hash string) (TorrentStatus, error)
 	RemoveTorrent(hash string) error
 	AddTrackers(hash string, trackers []string) error
+	HealthCheck() (bool, error)
 }
 
 type TorrentStatus struct {

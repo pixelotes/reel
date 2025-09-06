@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -123,6 +124,18 @@ type SubtitleTrack struct {
 	Language string `json:"language"`
 	Label    string `json:"label"`
 	FilePath string `json:"-"` // Don't expose file path to frontend
+}
+
+type SystemStatus struct {
+	TorrentClient   ClientStatus            `json:"torrent_client"`
+	IndexerClients  map[string]ClientStatus `json:"indexer_clients"`
+	MetadataClients []string                `json:"metadata_clients"`
+}
+
+type ClientStatus struct {
+	Type   string `json:"type"`
+	Name   string `json:"name"`
+	Status bool   `json:"status"`
 }
 
 func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
@@ -872,32 +885,76 @@ func (m *Manager) SearchMetadata(query string, mediaType string) ([]interface{},
 	return results, nil
 }
 
-func (m *Manager) GetSystemStatus() map[string]bool {
-	// This should be improved to give real status
-	return map[string]bool{
-		"indexer":        true,
-		"torrent_client": true,
-		"metadata":       true,
+func (m *Manager) GetSystemStatus() (*SystemStatus, error) {
+	status := &SystemStatus{
+		IndexerClients:  make(map[string]ClientStatus),
+		MetadataClients: []string{},
 	}
-}
 
-func (m *Manager) TestIndexerConnection() bool {
-	// A basic test, a better one would ping the client
-	for _, clients := range m.indexerClients {
-		for _, client := range clients {
-			ok, err := client.Client.HealthCheck()
-			if err != nil || !ok {
-				m.logger.Error("Indexer health check failed:", err)
-				return false
+	// Torrent Client Status
+	torrentStatus, _ := m.torrentClient.HealthCheck()
+	status.TorrentClient = ClientStatus{
+		Type:   m.config.TorrentClient.Type,
+		Status: torrentStatus,
+	}
+
+	// Indexer Clients Status (deduplicated)
+	uniqueIndexers := make(map[string]config.SourceConfig)
+	allSources := append(m.config.Movies.Sources, m.config.TVShows.Sources...)
+	allSources = append(allSources, m.config.Anime.Sources...)
+	for _, source := range allSources {
+		if source.Type != "rss" {
+			uniqueIndexers[source.URL] = source
+		}
+	}
+
+	for key, source := range uniqueIndexers {
+		var client indexers.Client
+		switch source.Type {
+		case "scarf":
+			client = indexers.NewScarfClient(source.URL, source.APIKey, 30*time.Second)
+		case "jackett":
+			client = indexers.NewJackettClient(source.URL, source.APIKey)
+		case "prowlarr":
+			client = indexers.NewProwlarrClient(source.URL, source.APIKey)
+		}
+		if client != nil {
+			ok, _ := client.HealthCheck()
+
+			// Parse the indexer name from the URL
+			var indexerName string
+			parsedURL, err := url.Parse(source.URL)
+			if err == nil {
+				pathParts := strings.Split(strings.Trim(parsedURL.Path, "/"), "/")
+				if len(pathParts) > 0 {
+					indexerName = pathParts[len(pathParts)-1]
+				}
+			}
+
+			status.IndexerClients[key] = ClientStatus{
+				Type:   source.Type,
+				Name:   indexerName,
+				Status: ok,
 			}
 		}
 	}
-	return true
-}
 
-func (m *Manager) TestTorrentConnection() bool {
-	// A basic test, a better one would ping the client
-	return m.torrentClient != nil
+	// Metadata Clients
+	uniqueProviders := make(map[string]bool)
+	for _, provider := range m.config.Movies.Providers {
+		uniqueProviders[provider] = true
+	}
+	for _, provider := range m.config.TVShows.Providers {
+		uniqueProviders[provider] = true
+	}
+	for _, provider := range m.config.Anime.Providers {
+		uniqueProviders[provider] = true
+	}
+	for provider := range uniqueProviders {
+		status.MetadataClients = append(status.MetadataClients, provider)
+	}
+
+	return status, nil
 }
 
 func (m *Manager) performSearch(media *models.Media, season, episode int) ([]indexers.IndexerResult, error) {
@@ -1560,6 +1617,8 @@ func (m *Manager) UpdateMediaSettings(id int, minQuality, maxQuality string, aut
 	m.logger.Info(fmt.Sprintf("Updating settings for media ID %d: minQ=%s, maxQ=%s, auto=%t", id, minQuality, maxQuality, autoDownload))
 	return m.mediaRepo.UpdateSettings(id, minQuality, maxQuality, autoDownload)
 }
+
+// Add this function to read the config file content
 func (m *Manager) GetConfig() (string, error) {
 	// Assumes the config path is stored in the config object,
 	// but the Load function doesn't store it. We'll need to know the path.
@@ -1576,4 +1635,47 @@ func (m *Manager) GetConfig() (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func (m *Manager) TestIndexerConnection(indexerKey string) (bool, error) {
+	var clientToTest indexers.Client
+	var sourceURL string
+
+	// Find the client that matches the key.
+	for _, clients := range m.indexerClients {
+		for _, clientWithMode := range clients {
+			// A simple check to see if the key is part of the URL.
+			if strings.Contains(clientWithMode.Source.URL, indexerKey) {
+				clientToTest = clientWithMode.Client
+				sourceURL = clientWithMode.Source.URL
+				break
+			}
+		}
+		if clientToTest != nil {
+			break
+		}
+	}
+
+	if clientToTest == nil {
+		return false, fmt.Errorf("indexer '%s' not found in any configuration", indexerKey)
+	}
+
+	// Perform the actual health check on the found client.
+	ok, err := clientToTest.HealthCheck()
+	m.logger.Info(fmt.Sprintf("Testing indexer with url %s: %t", sourceURL, ok))
+	if err != nil {
+		return false, fmt.Errorf("health check for %s failed: %w", sourceURL, err)
+	}
+	if !ok {
+		return false, fmt.Errorf("indexer at %s is offline or misconfigured", sourceURL)
+	}
+
+	return true, nil
+}
+
+func (m *Manager) TestTorrentConnection() (bool, error) {
+	if m.torrentClient == nil {
+		return false, fmt.Errorf("torrent client not initialized")
+	}
+	return m.torrentClient.HealthCheck()
 }

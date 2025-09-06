@@ -51,6 +51,8 @@
         .status-skipped { background-color: var(--border-color); color: var(--text-color); }
         .status-tba { background-color: #555; color: var(--text-color); }
         .status-monitoring { background-color: #8a2be2; color: #fff; }
+        .status-online { background-color: var(--success-color); color: #000; }
+        .status-offline { background-color: var(--error-color); color: #fff; }
 
         .progress-bar { width: 100%; height: 4px; background: var(--border-color); margin-top: 0.5rem; border-radius: 2px; overflow: hidden; }
         .progress-fill { height: 100%; background: var(--success-color); transition: width 0.3s ease; }
@@ -114,6 +116,11 @@
         .settings-form .form-row { display: flex; gap: 1rem; align-items: center; }
         .settings-form .form-row label { font-weight: bold; min-width: 120px; }
         .settings-form .form-row select, .settings-form .form-row input { flex: 1; }
+
+        /* Status List */
+        .status-list { list-style: none; padding: 0; }
+        .status-list li { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--border-color); }
+        .status-list li:last-child { border-bottom: none; }
     </style>
 </head>
 <body>
@@ -237,24 +244,20 @@
         <div id="settings-page" class="page">
             <h2>Settings</h2>
             <div style="background: var(--header-bg); padding: 2rem; border-radius: 8px;">
-                <h3>Configuration</h3>
-                <pre><code id="config-display" class="language-yaml">Loading...</code></pre>
-                <div style="display: flex; gap: 1rem; margin-top: 1rem; justify-content: flex-end;">
-                    <button id="save-config-btn" disabled>Save Changes (Not Implemented)</button>
-                </div>
-                
-                <h4>Current Status</h4>
-                <div id="system-status">
-                    <p><strong>Indexer Connection:</strong> <span id="indexer-status">Checking...</span></p>
-                    <p><strong>Torrent Client:</strong> <span id="torrent-status">Checking...</span></p>
-                    <p><strong>Metadata Provider:</strong> <span id="metadata-status">Checking...</span></p>
-                </div>
-
-                <h4>Quick Actions</h4>
-                <div style="display: flex; gap: 1rem; margin-top: 1rem;">
-                    <button id="test-indexer-btn">Test Indexer Connection</button>
-                    <button id="test-torrent-btn">Test Torrent Client</button>
-                    <button id="clear-failed-btn" class="danger">Clear Failed Items</button>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
+                    <div>
+                        <h3>Configuration</h3>
+                        <pre><code id="config-display" class="language-yaml">Loading...</code></pre>
+                        <div style="display: flex; gap: 1rem; margin-top: 1rem; justify-content: flex-end;">
+                            <button id="save-config-btn" disabled>Save Changes (Not Implemented)</button>
+                        </div>
+                    </div>
+                    <div>
+                        <h3>System Status <button id="refresh-status-btn" style="font-size: 0.8rem; padding: 0.2rem 0.5rem;" onclick="checkSystemStatus">🔄</button></h3>
+                        <ul id="system-status-list" class="status-list">
+                            <li><span>Loading...</span></li>
+                        </ul>
+                    </div>
                 </div>
             </div>
         </div>
@@ -415,6 +418,8 @@
                 refreshData();
                 checkSystemStatus();
                 setInterval(refreshData, 2000);
+                document.getElementById('refresh-status-btn').addEventListener('click', checkSystemStatus);
+
             }
 
             function setupNavigation() {
@@ -429,6 +434,7 @@
                             loadMedia();
                         } else if (pageId === 'settings-page') {
                             loadConfig();
+                            checkSystemStatus();
                         }
                     }
                 });
@@ -928,6 +934,50 @@
                     } catch (error) { showToast('Failed to delete media.', 'error'); }
                 };
             };
+
+            async function checkSystemStatus() {
+                const statusList = document.getElementById('system-status-list');
+                statusList.innerHTML = '<li><span>Checking...</span></li>';
+                const metadataAPI = {
+                    'tmdb': 'https://api.themoviedb.org/3/search/movie?api_key=test',
+                    'imdb': 'https://www.imdb.com/',
+                    'tvmaze': 'https://api.tvmaze.com/',
+                    'anilist': 'https://graphql.anilist.co/',
+                    'trakt': 'https://api.trakt.tv/'
+                };
+
+                try {
+                    const response = await fetchWithAuth('/api/v1/status');
+                    if (!response.ok) throw new Error('Failed to fetch status');
+                    const status = await response.json();
+                    
+                    let html = `<li><span>Torrent Client (${status.torrent_client.type})</span><span class="media-status status-${status.torrent_client.status ? 'online' : 'offline'}">${status.torrent_client.status ? 'Online' : 'Offline'}</span></li>`;
+
+                    for (const url in status.indexer_clients) {
+                        const client = status.indexer_clients[url];
+                        const displayName = client.name ? `${client.type}/${client.name}` : client.type;
+                        html += `<li><span>Indexer (${displayName})</span><span class="media-status status-${client.status ? 'online' : 'offline'}">${client.status ? 'Online' : 'Offline'}</span></li>`;
+                    }
+
+                    for (const provider of status.metadata_clients) {
+                        const url = metadataAPI[provider];
+                        let isOnline = false;
+                        if(url) {
+                            try {
+                                const metaResponse = await fetch(url, { mode: 'no-cors' });
+                                isOnline = true;
+                            } catch (e) {
+                                isOnline = false;
+                            }
+                        }
+                        html += `<li><span>Metadata (${provider})</span><span class="media-status status-${isOnline ? 'online' : 'offline'}">${isOnline ? 'Online' : 'Offline'}</span></li>`;
+                    }
+                    
+                    statusList.innerHTML = html;
+                } catch (error) {
+                    statusList.innerHTML = '<li><span style="color:var(--error-color)">Failed to load system status</span></li>';
+                }
+            }
 
             // Settings page functionality
             async function loadConfig() {

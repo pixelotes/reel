@@ -248,3 +248,11 @@ func (t *TransmissionClient) sendRequest(method string, args interface{}) (map[s
 
 	return response, nil
 }
+
+func (t *TransmissionClient) HealthCheck() (bool, error) {
+	_, err := t.sendRequest("session-get", nil)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
