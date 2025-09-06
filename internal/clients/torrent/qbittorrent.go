@@ -251,3 +251,11 @@ func (q *qBittorrentClient) RemoveTorrent(hash string) error {
 	}
 	return nil
 }
+
+func (q *qBittorrentClient) HealthCheck() (bool, error) {
+	_, err := q.login()
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}

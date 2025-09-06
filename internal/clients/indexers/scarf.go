@@ -131,5 +131,20 @@ func (s *ScarfClient) SearchTVShows(query string, season int, episode int, searc
 }
 
 func (s *ScarfClient) HealthCheck() (bool, error) {
-	return true, nil
+	// Parse the full Torznab URL to extract the base scheme and host.
+	parsedURL, err := url.Parse(s.baseURL)
+	if err != nil {
+		return false, fmt.Errorf("could not parse scarf base url: %w", err)
+	}
+
+	// Construct the correct health check URL (e.g., http://localhost:8080/health).
+	healthURL := fmt.Sprintf("%s://%s/health", parsedURL.Scheme, parsedURL.Host)
+
+	resp, err := s.httpClient.Get(healthURL)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode == http.StatusOK, nil
 }

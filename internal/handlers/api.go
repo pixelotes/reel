@@ -199,18 +199,39 @@ func (h *APIHandler) SearchMetadata(w http.ResponseWriter, r *http.Request) {
 
 // System status
 func (h *APIHandler) GetSystemStatus(w http.ResponseWriter, r *http.Request) {
-	status := h.manager.GetSystemStatus()
+	status, err := h.manager.GetSystemStatus()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get system status")
+		return
+	}
 	respondJSON(w, http.StatusOK, status)
 }
 
 // Test connections
 func (h *APIHandler) TestIndexer(w http.ResponseWriter, r *http.Request) {
-	ok := h.manager.TestIndexerConnection()
-	respondJSON(w, http.StatusOK, map[string]bool{"ok": ok})
+	indexerKey := r.URL.Query().Get("indexer")
+	if indexerKey == "" {
+		respondError(w, http.StatusBadRequest, "indexer parameter is required")
+		return
+	}
+
+	ok, err := h.manager.TestIndexerConnection(indexerKey)
+	if err != nil {
+		respondJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{"ok": ok})
 }
 
 func (h *APIHandler) TestTorrent(w http.ResponseWriter, r *http.Request) {
-	ok := h.manager.TestTorrentConnection()
+	ok, err := h.manager.TestTorrentConnection()
+	if err != nil {
+		h.logger.Error("Torrent connection test failed:", err)
+		// Even if there's an error, we can still return ok: false
+		respondJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
 	respondJSON(w, http.StatusOK, map[string]bool{"ok": ok})
 }
 
@@ -549,4 +570,15 @@ func (h *APIHandler) UpdateMediaSettings(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "settings updated successfully"})
+}
+
+// This handler gets the config
+func (h *APIHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
+	configContent, err := h.manager.GetConfig()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to read config file")
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte(configContent))
 }
