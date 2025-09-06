@@ -468,3 +468,10 @@ func (r *MediaRepository) GetEpisodeByDetails(mediaID int, seasonNumber int, epi
 
 	return &episode, nil
 }
+
+// UpdateSettings updates the quality and auto-download status for a media item.
+func (r *MediaRepository) UpdateSettings(id int, minQuality, maxQuality string, autoDownload bool) error {
+	query := `UPDATE media SET min_quality = ?, max_quality = ?, auto_download = ? WHERE id = ?`
+	_, err := r.db.Exec(query, minQuality, maxQuality, autoDownload, id)
+	return err
+}

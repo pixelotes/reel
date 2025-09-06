@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,29 +35,33 @@ func NewPostProcessor(cfg *config.Config, logger *utils.Logger, mediaRepo *model
 }
 
 // ProcessDownload is the main entry point for post-processing a completed download.
-func (pp *PostProcessor) ProcessDownload(media models.Media, torrentStatus torrent.TorrentStatus, seasonNumber int, episodeNumber int, downloadPath string) {
+func (pp *PostProcessor) ProcessDownload(media models.Media, torrentStatus torrent.TorrentStatus, seasonNumber int, episodeNumber int, downloadPath string) error {
 	pp.logger.Info("Starting post-processing for:", media.Title)
 
 	destinationPath := pp.createDestinationFolder(&media, seasonNumber)
 	if destinationPath == "" {
-		pp.logger.Error("Failed to create destination folder for:", media.Title)
-		return
+		err := fmt.Errorf("failed to create destination folder for: %s", media.Title)
+		pp.logger.Error(err.Error())
+		return err
 	}
 
 	mediaFiles := pp.identifyMediaFiles(downloadPath, torrentStatus.Files)
 	if len(mediaFiles) == 0 {
-		pp.logger.Error("No media files identified for:", media.Title)
-		return
+		err := fmt.Errorf("no media files identified for: %s", media.Title)
+		pp.logger.Error(err.Error())
+		return err
 	}
 
-	pp.moveOrLinkFiles(&media, mediaFiles, destinationPath)
+	if err := pp.processFilesWithFallback(&media, mediaFiles, destinationPath); err != nil {
+		return err
+	}
 
 	pp.renameFiles(&media, destinationPath, seasonNumber, episodeNumber)
 
-	// Send post-processing completion notification
 	pp.notifyPostProcessCompleted(&media, torrentStatus.Name)
 
 	pp.logger.Info("Finished post-processing for:", media.Title)
+	return nil
 }
 
 // createDestinationFolder handles the creation of the final directory for the media.
@@ -75,18 +80,15 @@ func (pp *PostProcessor) createDestinationFolder(media *models.Media, seasonNumb
 		return ""
 	}
 
-	// Sanitize folder name to remove invalid characters
 	safeTitle := utils.SanitizeFilename(media.Title)
 	mediaFolderName := fmt.Sprintf("%s (%d)", safeTitle, media.Year)
 	fullPath := filepath.Join(baseDestPath, mediaFolderName)
 
-	// If it's a show, add the season subfolder
 	if (media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime) && seasonNumber > 0 {
 		seasonFolderName := fmt.Sprintf("S%02d", seasonNumber)
 		fullPath = filepath.Join(fullPath, seasonFolderName)
 	}
 
-	// Create the directory structure. os.MkdirAll will not return an error if the path already exists.
 	err := os.MkdirAll(fullPath, os.ModePerm)
 	if err != nil {
 		pp.logger.Error("Failed to create destination folder:", fullPath, "Error:", err)
@@ -103,11 +105,9 @@ func (pp *PostProcessor) identifyMediaFiles(downloadPath string, torrentFiles []
 	subtitleExtensions := map[string]bool{".srt": true, ".sub": true, ".ass": true}
 
 	var files []string
-
 	for _, file := range torrentFiles {
 		ext := strings.ToLower(filepath.Ext(file))
 		if videoExtensions[ext] || subtitleExtensions[ext] {
-			// Construct the full path by joining the torrent's download directory with the file path
 			fullPath := filepath.Join(downloadPath, file)
 			files = append(files, fullPath)
 		}
@@ -115,38 +115,83 @@ func (pp *PostProcessor) identifyMediaFiles(downloadPath string, torrentFiles []
 	return files
 }
 
-// moveOrLinkFiles moves or symlinks the identified media files to the destination folder.
-func (pp *PostProcessor) moveOrLinkFiles(media *models.Media, files []string, destination string) {
-	var moveMethod string
+// processFilesWithFallback attempts to process files using a sequential list of methods.
+func (pp *PostProcessor) processFilesWithFallback(media *models.Media, files []string, destination string) error {
+	var moveMethods []string
 	switch media.Type {
 	case models.MediaTypeMovie:
-		moveMethod = pp.config.Movies.MoveMethod
+		moveMethods = pp.config.Movies.MoveMethod
 	case models.MediaTypeTVShow:
-		moveMethod = pp.config.TVShows.MoveMethod
+		moveMethods = pp.config.TVShows.MoveMethod
 	case models.MediaTypeAnime:
-		moveMethod = pp.config.Anime.MoveMethod
+		moveMethods = pp.config.Anime.MoveMethod
+	}
+
+	if len(moveMethods) == 0 {
+		return fmt.Errorf("no move_method defined for media type: %s", media.Type)
 	}
 
 	for _, file := range files {
-		newPath := filepath.Join(destination, filepath.Base(file))
-
-		// Wait for the file to exist to handle the race condition.
 		if !waitForFile(file, 30*time.Second) {
-			pp.logger.Error(fmt.Sprintf("Source file did not appear in time: %s", file))
-			continue // Skip to the next file
+			return fmt.Errorf("source file did not appear in time: %s", file)
 		}
 
-		var err error
-		if moveMethod == "move" {
-			err = os.Rename(file, newPath)
-		} else {
-			err = os.Link(file, newPath)
+		var lastErr error
+		success := false
+		for _, method := range moveMethods {
+			newPath := filepath.Join(destination, filepath.Base(file))
+			pp.logger.Info(fmt.Sprintf("Attempting to '%s' file: %s", method, file))
+
+			var err error
+			switch method {
+			case "symlink":
+				err = os.Symlink(file, newPath)
+			case "move":
+				err = os.Rename(file, newPath)
+			case "copy":
+				err = pp.copyFileAndRemoveOriginal(file, newPath)
+			default:
+				err = fmt.Errorf("unknown move_method: %s", method)
+			}
+
+			if err == nil {
+				pp.logger.Info(fmt.Sprintf("Successfully processed file with method: '%s'", method))
+				success = true
+				break // Success, move to the next file
+			}
+			lastErr = err
+			pp.logger.Warn(fmt.Sprintf("Method '%s' failed for file '%s': %v. Trying next method.", method, file, err))
 		}
 
-		if err != nil {
-			pp.logger.Error(fmt.Sprintf("Failed to %s file '%s' to '%s': %v", moveMethod, file, newPath, err))
+		if !success {
+			pp.logger.Error(fmt.Sprintf("All processing methods failed for file '%s'. Last error: %v", file, lastErr))
+			return fmt.Errorf("failed to process file '%s' after all fallbacks", file)
 		}
 	}
+	return nil
+}
+
+// copyFileAndRemoveOriginal performs a manual copy and then deletes the source.
+func (pp *PostProcessor) copyFileAndRemoveOriginal(src, dst string) error {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+
+	destinationFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destinationFile.Close()
+
+	_, err = io.Copy(destinationFile, sourceFile)
+	if err != nil {
+		return err
+	}
+
+	// The copy was successful, now remove the original file.
+	return os.Remove(src)
 }
 
 // waitForFile waits for a file to exist for a certain duration.

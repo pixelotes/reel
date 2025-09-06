@@ -1553,3 +1553,9 @@ func getLanguageLabel(langCode string) string {
 	// If not found in map, return the code in uppercase
 	return strings.ToUpper(langCode)
 }
+
+// UpdateMediaSettings updates the settings for a given media item.
+func (m *Manager) UpdateMediaSettings(id int, minQuality, maxQuality string, autoDownload bool) error {
+	m.logger.Info(fmt.Sprintf("Updating settings for media ID %d: minQ=%s, maxQ=%s, auto=%t", id, minQuality, maxQuality, autoDownload))
+	return m.mediaRepo.UpdateSettings(id, minQuality, maxQuality, autoDownload)
+}

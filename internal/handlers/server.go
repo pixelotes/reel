@@ -51,6 +51,7 @@ func (s *Server) Start() error {
 	protected.HandleFunc("/media/{id}/search", s.apiHandler.ManualSearch).Methods("GET")
 	protected.HandleFunc("/media/{id}/download", s.apiHandler.ManualDownload).Methods("POST")
 	protected.HandleFunc("/media/{id}/tv-details", s.apiHandler.GetTVShowDetails).Methods("GET")
+	protected.HandleFunc("/media/{id}/settings", s.apiHandler.UpdateMediaSettings).Methods("POST") // <-- NEW ROUTE
 	protected.HandleFunc("/media/clear-failed", s.apiHandler.ClearFailed).Methods("POST")
 	protected.HandleFunc("/search-metadata", s.apiHandler.SearchMetadata).Methods("GET")
 	protected.HandleFunc("/status", s.apiHandler.GetSystemStatus).Methods("GET")

@@ -7,6 +7,7 @@ app:
   jwt_secret: "your-very-secure-jwt-secret-key-here"
   magnet_to_torrent_enabled: true
   magnet_to_torrent_timeout: 60
+  filter_log_level: "detail"
 
 torrent_client:
   type: "transmission" # or "qbittorrent"
@@ -18,11 +19,6 @@ torrent_client:
 notifications:
   pushbullet:
     api_key: ""
-
-reject-common:
-  - \bscreener\b
-  - \bhdcam\b
-  - \btelecine\b
 
 extra_trackers_list:
   - udp://tracker-1
@@ -45,7 +41,7 @@ movies:
   providers: ["tmdb", "imdb"] # Order of preference
   download_folder: "/downloads/movies"
   destination_folder: "/media/movies"
-  move_method: "move" # or "symlink"
+  move_method:  ["symlink", "move", "copy"] # or ["move"], ["copy"] etc.
   sources:
     - type: "scarf"
       url: "http://localhost:8080/torznab/movies"
@@ -60,7 +56,7 @@ tv-shows:
   providers: ["tvmaze"]
   download_folder: "/downloads/shows"
   destination_folder: "/media/shows"
-  move_method: "move" # or "symlink"
+  move_method:  ["symlink", "move", "copy"] # or ["move"], ["copy"] etc.
   sources:
     - type: "scarf"
       url: "http://localhost:8080/torznab/tv"
@@ -70,7 +66,7 @@ anime:
   providers: ["anidb"]
   download_folder: "/downloads/anime"
   destination_folder: "/media/anime"
-  move_method: "move" # or "symlink"
+  move_method: ["symlink", "move", "copy"] # or ["move"], ["copy"] etc.
   sources:
     - type: "scarf"
       url: "http://localhost:8080/torznab/anime"
@@ -90,3 +86,7 @@ automation:
   keep_torrents_for_days: 7
   keep_torrents_seed_ratio: 1.2
   notifications: [] # e.g., ["pushbullet"]
+  reject-common:
+  - \bscreener\b
+  - \bhdcam\b
+  - \btelecine\b
