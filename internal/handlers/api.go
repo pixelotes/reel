@@ -522,3 +522,31 @@ func (h *APIHandler) GetAvailableSubtitles(w http.ResponseWriter, r *http.Reques
 	// Return the list of available subtitles (without file paths)
 	respondJSON(w, http.StatusOK, subtitles)
 }
+
+// UpdateMediaSettings handles updating a media item's settings.
+func (h *APIHandler) UpdateMediaSettings(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+
+	var req struct {
+		MinQuality   string `json:"min_quality"`
+		MaxQuality   string `json:"max_quality"`
+		AutoDownload bool   `json:"auto_download"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if err := h.manager.UpdateMediaSettings(id, req.MinQuality, req.MaxQuality, req.AutoDownload); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to update settings")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"status": "settings updated successfully"})
+}
