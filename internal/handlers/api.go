@@ -550,3 +550,14 @@ func (h *APIHandler) UpdateMediaSettings(w http.ResponseWriter, r *http.Request)
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "settings updated successfully"})
 }
+
+// Add this handler to get the config
+func (h *APIHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
+	configContent, err := h.manager.GetConfig()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to read config file")
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte(configContent))
+}

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>🎬 Reel</title>
     <link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <style>
         :root {
             --bg-color: #1e1e1e; --text-color: #d4d4d4; --primary-color: #007acc;
@@ -85,7 +86,7 @@
         /* Filter Bar */
         .filter-bar { display: flex; gap: 1rem; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; }
         .filter-bar select, .filter-bar input { min-width: 150px; }
-        
+
         /* TV Show Details */
         .season-details summary { cursor: pointer; font-weight: bold; margin: 1rem 0 0.5rem; }
         .episode-list { display: flex; flex-direction: column; gap: 0.5rem; margin-left: 1rem; }
@@ -237,8 +238,10 @@
             <h2>Settings</h2>
             <div style="background: var(--header-bg); padding: 2rem; border-radius: 8px;">
                 <h3>Configuration</h3>
-                <p>Settings are currently managed via configuration file or environment variables.</p>
-                <p>Current configuration will be editable via this interface in a future update.</p>
+                <pre><code id="config-display" class="language-yaml">Loading...</code></pre>
+                <div style="display: flex; gap: 1rem; margin-top: 1rem; justify-content: flex-end;">
+                    <button id="save-config-btn" disabled>Save Changes (Not Implemented)</button>
+                </div>
                 
                 <h4>Current Status</h4>
                 <div id="system-status">
@@ -329,6 +332,7 @@
 
 
     <script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             // App State
@@ -423,6 +427,8 @@
 
                         if (pageId === 'media-page') {
                             loadMedia();
+                        } else if (pageId === 'settings-page') {
+                            loadConfig();
                         }
                     }
                 });
@@ -924,6 +930,21 @@
             };
 
             // Settings page functionality
+            async function loadConfig() {
+                const configDisplay = document.getElementById('config-display');
+                try {
+                    const response = await fetchWithAuth('/api/v1/config');
+                    if (response.ok) {
+                        const configText = await response.text();
+                        configDisplay.textContent = configText;
+                        hljs.highlightElement(configDisplay);
+                    } else {
+                        configDisplay.textContent = 'Error loading config.';
+                    }
+                } catch (error) {
+                    configDisplay.textContent = 'Error loading config.';
+                }
+            }
             document.getElementById('test-indexer-btn').addEventListener('click', async () => { /* ... */ });
             document.getElementById('test-torrent-btn').addEventListener('click', async () => { /* ... */ });
             document.getElementById('clear-failed-btn').addEventListener('click', async () => {

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/xml"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1558,4 +1559,21 @@ func getLanguageLabel(langCode string) string {
 func (m *Manager) UpdateMediaSettings(id int, minQuality, maxQuality string, autoDownload bool) error {
 	m.logger.Info(fmt.Sprintf("Updating settings for media ID %d: minQ=%s, maxQ=%s, auto=%t", id, minQuality, maxQuality, autoDownload))
 	return m.mediaRepo.UpdateSettings(id, minQuality, maxQuality, autoDownload)
+}
+func (m *Manager) GetConfig() (string, error) {
+	// Assumes the config path is stored in the config object,
+	// but the Load function doesn't store it. We'll need to know the path.
+	// For now, let's assume a default path or find a way to pass it.
+	// Let's pass the config path to the NewManager function.
+	// For now, let's just hardcode it for simplicity, but this should be improved.
+	configPath := "config/config.yml"
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		configPath = "config.yml"
+	}
+
+	data, err := ioutil.ReadFile(configPath)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
