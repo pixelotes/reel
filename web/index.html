@@ -862,7 +862,7 @@
                     ${tvShowDetailsHtml}
                     ${animeSearchTermsHtml}
                     <div style="display: flex; gap: 1rem; margin-top: 2rem; border-top: 1px solid var(--border-color); padding-top: 1rem;">
-                        ${media.status !== 'downloading' && media.status !== 'downloaded' ? `<button onclick="manualMovieSearch(${media.id})">🔍 Manual Search</button>` : ''}
+                        ${media.type === 'movie' && media.status !== 'downloading' && media.status !== 'downloaded' ? `<button onclick="manualMovieSearch(${media.id})">🔍 Manual Search</button>` : ''}
                         ${media.status === 'failed' || media.status === 'pending' ? `<button onclick="retryMedia(${media.id})">🔄 Retry</button>` : ''}
                         <button onclick="showMediaSettingsModal(${media.id})">⚙️ Config</button>
                         <button onclick="deleteMedia(${media.id})" class="danger">🗑️ Delete</button>
