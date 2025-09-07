@@ -5,8 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>🎬 Reel</title>
     <link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet" />
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js'></script>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/theme/material-darker.min.css">
+    
     <style>
         :root {
             --bg-color: #1e1e1e; --text-color: #d4d4d4; --primary-color: #007acc;
@@ -124,34 +127,10 @@
         .status-list li:last-child { border-bottom: none; }
 
         /* Extra search terms */
-        #anime-search-terms-list {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-        }
-        .search-term-tag {
-            background-color: var(--primary-color);
-            color: #fff;
-            padding: 0.25rem 0.75rem;
-            border-radius: 1rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            font-size: 0.9rem;
-        }
-        .search-term-tag button {
-            background: none;
-            border: none;
-            color: #fff;
-            opacity: 0.7;
-            cursor: pointer;
-            padding: 0;
-            font-size: 1rem;
-            line-height: 1;
-        }
-        .search-term-tag button:hover {
-            opacity: 1;
-        }
+        #anime-search-terms-list { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+        .search-term-tag { background-color: var(--primary-color); color: #fff; padding: 0.25rem 0.75rem; border-radius: 1rem; display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; }
+        .search-term-tag button { background: none; border: none; color: #fff; opacity: 0.7; cursor: pointer; padding: 0; font-size: 1rem; line-height: 1; }
+        .search-term-tag button:hover { opacity: 1; }
 
         /* Settings tab */
         #settings-page .grid-container {
@@ -161,49 +140,24 @@
         }
         .config-editor-container {
             position: relative;
-            height: 300px;
-        }
-        #config-display {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            margin: 0;
-            padding: 1rem;
-            box-sizing: border-box;
-            resize: none;
-            background-color: transparent;
-            color: transparent; /* Makes the actual text invisible */
-            caret-color: var(--text-color); /* Keeps the cursor visible */
-            border: none;
-            font-family: monospace;
-            font-size: 0.9rem;
-            line-height: inherit;
-            white-space: pre;
-            overflow: auto;
-            z-index: 1; /* Puts it on top of the highlight block */
-        }
-        config-editor-container {
-            position: relative;
             height: 400px; /* Increased height for better usability */
             border: 1px solid var(--border-color);
             border-radius: 4px;
             background-color: var(--header-bg);
         }
-        #config-highlight {
-            margin: 0;
-            padding: 1rem;
-            box-sizing: border-box;
-            white-space: pre;
-            overflow: auto;
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
+        
+        /* CodeMirror Theme Styles */
+        .cm-s-material-darker.CodeMirror {
+            background-color: var(--header-bg);
+            color: var(--text-color);
             height: 100%;
-            font-family: monospace;
-            font-size: 0.9rem;
+        }
+        .cm-s-material-darker .CodeMirror-gutters {
+            background: var(--header-bg);
+            border-right: 1px solid var(--border-color);
+        }
+        .CodeMirror-cursor {
+            border-left: 1px solid var(--text-color) !important;
         }
     </style>
 </head>
@@ -336,7 +290,6 @@
                     <div>
                         <h3>Configuration</h3>
                         <div class="config-editor-container">
-                            <pre><code id="config-highlight" class="language-yaml">Loading...</code></pre>
                             <textarea id="config-display" spellcheck="false"></textarea>
                         </div>
                         <div style="display: flex; gap: 1rem; margin-top: 1rem; justify-content: flex-end;">
@@ -344,7 +297,7 @@
                         </div>
                     </div>
                     <div>
-                        <h3>System Status <button id="refresh-status-btn" style="font-size: 0.8rem; padding: 0.2rem 0.5rem;" onclick="checkSystemStatus">🔄</button></h3>
+                        <h3>System Status <button id="refresh-status-btn" style="font-size: 0.8rem; padding: 0.2rem 0.5rem;">🔄</button></h3>
                         <ul id="system-status-list" class="status-list">
                             <li><span>Loading...</span></li>
                         </ul>
@@ -427,6 +380,10 @@
 
     <script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/yaml/yaml.min.js"></script>
+    
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             // App State
@@ -436,6 +393,7 @@
                 filteredMedia: [],
                 currentMediaId: null,
                 calendar: null,
+                editor: null, // To hold the CodeMirror instance
             };
 
             const RESOLUTION_RANK = { "360p": 0, "480p": 1, "720p": 2, "1080p": 3, "1440p": 4, "2160p": 5 };
@@ -510,28 +468,8 @@
                 refreshData();
                 checkSystemStatus();
                 setInterval(refreshData, 2000);
-                setupConfigEditorSync();
                 document.getElementById('refresh-status-btn').addEventListener('click', checkSystemStatus);
                 document.getElementById('save-config-btn').addEventListener('click', saveConfig);
-            }
-
-            function setupConfigEditorSync() {
-                const configDisplay = document.getElementById('config-display');
-                const configHighlight = document.getElementById('config-highlight');
-
-                const syncScroll = () => {
-                    configHighlight.scrollTop = configDisplay.scrollTop;
-                    configHighlight.scrollLeft = configDisplay.scrollLeft;
-                };
-
-                configDisplay.addEventListener('scroll', syncScroll);
-
-                configDisplay.addEventListener('input', () => {
-                    const code = configDisplay.value;
-                    configHighlight.textContent = code;
-                    hljs.highlightElement(configHighlight);
-                    syncScroll();
-                });
             }
 
             function setupNavigation() {
@@ -1198,26 +1136,30 @@
             // Settings page functionality
             async function loadConfig() {
                 const configDisplay = document.getElementById('config-display');
-                const configHighlight = document.getElementById('config-highlight');
                 try {
                     const response = await fetchWithAuth('/api/v1/config');
                     if (response.ok) {
                         const configText = await response.text();
-                        configDisplay.value = configText;
-                        configHighlight.textContent = configText;
-                        hljs.highlightElement(configHighlight);
+                        if (!state.editor) {
+                            state.editor = CodeMirror.fromTextArea(configDisplay, {
+                                lineNumbers: true,
+                                mode: 'yaml',
+                                theme: 'material-darker',
+                                lineWrapping: true,
+                            });
+                        }
+                        state.editor.setValue(configText);
+                        setTimeout(() => state.editor.refresh(), 10);
                     } else {
                         configDisplay.value = 'Error loading config.';
-                        configHighlight.textContent = 'Error loading config.';
                     }
                 } catch (error) {
                     configDisplay.value = 'Error loading config.';
-                    configHighlight.textContent = 'Error loading config.';
                 }
             }
 
             async function saveConfig() {
-                const configContent = document.getElementById('config-display').value;
+                const configContent = state.editor.getValue();
                 try {
                     const response = await fetchWithAuth('/api/v1/config', {
                         method: 'POST',
@@ -1233,18 +1175,6 @@
                     showToast(`Error: ${error.message}`, 'error');
                 }
             }
-
-            document.getElementById('test-indexer-btn').addEventListener('click', async () => { /* ... */ });
-            document.getElementById('test-torrent-btn').addEventListener('click', async () => { /* ... */ });
-            document.getElementById('clear-failed-btn').addEventListener('click', async () => {
-                showToast('Clear all failed media? Click to confirm.', 'warning', 5000)
-                document.getElementById('toast-container').lastChild.onclick = async () => {
-                    try {
-                        const response = await fetchWithAuth('/api/v1/media/clear-failed', { method: 'POST' });
-                        if (response.ok) { showToast('Failed items cleared.'); loadMedia(); }
-                    } catch (error) { showToast('Failed to clear items.', 'error'); }
-                };
-            });
         });
     </script>
 </body>
