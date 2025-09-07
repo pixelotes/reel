@@ -596,6 +596,10 @@ func (h *APIHandler) GetAnimeSearchTerms(w http.ResponseWriter, r *http.Request)
 		respondError(w, http.StatusInternalServerError, "Failed to get search terms")
 		return
 	}
+	if terms == nil {
+		respondJSON(w, http.StatusOK, []models.AnimeSearchTerm{})
+		return
+	}
 
 	respondJSON(w, http.StatusOK, terms)
 }

@@ -121,6 +121,36 @@
         .status-list { list-style: none; padding: 0; }
         .status-list li { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--border-color); }
         .status-list li:last-child { border-bottom: none; }
+
+        /* Extra search terms */
+        #anime-search-terms-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+        .search-term-tag {
+            background-color: var(--primary-color);
+            color: #fff;
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.9rem;
+        }
+        .search-term-tag button {
+            background: none;
+            border: none;
+            color: #fff;
+            opacity: 0.7;
+            cursor: pointer;
+            padding: 0;
+            font-size: 1rem;
+            line-height: 1;
+        }
+        .search-term-tag button:hover {
+            opacity: 1;
+        }
     </style>
 </head>
 <body>
@@ -788,18 +818,37 @@
                     } catch (e) { tvShowDetailsHtml = '<p style="color:var(--error-color)">Could not load season details.</p>'; }
                 }
                 
+                let animeSearchTermsHtml = '';
+                if (media.type === 'anime') {
+                    animeSearchTermsHtml = `
+                        <div id="anime-search-terms-section" style="margin-top: 1rem;">
+                            <h4>Alternative Search Terms</h4>
+                            <div id="anime-search-terms-list"></div>
+                            <div class="form-row" style="margin-top: 0.5rem;">
+                                <input type="text" id="new-search-term-input" placeholder="Add a new search term...">
+                                <button type="button" onclick="addSearchTerm(${media.id})">Add</button>
+                            </div>
+                        </div>
+                    `;
+                }
+                
                 content.innerHTML = `<h2>${media.title} (${media.year}) ${media.status === 'downloaded' ? `<button class="secondary" style="font-size: 1rem; padding: 0.2rem 0.5rem;" onclick="playVideo(${media.id})">▶️ Play</button>` : ''}</h2>
                     <div style="display: flex; gap: 2rem; margin-bottom: 2rem;">
                         ${media.poster_url ? `<img src="${media.poster_url}" alt="${media.title}" style="width: 200px; border-radius: 8px;">` : ''}
                         <div style="flex: 1;"><p><strong>Type:</strong> ${media.type.charAt(0).toUpperCase() + media.type.slice(1)}</p><p><strong>Quality Range:</strong> ${media.min_quality} - ${media.max_quality}</p><p><strong>Status:</strong> <span id="detail-status" class="media-status status-${media.status}">${media.status}</span></p><div id="detail-progress-container" style="display: ${media.status === 'downloading' ? 'block' : 'none'};"><div class="progress-bar" style="height: 10px;"><div id="detail-progress-fill" class="progress-fill" style="width: ${media.progress * 100}%"></div></div><p id="detail-progress-text"><strong>Progress:</strong> ${Math.round(media.progress * 100)}%</p></div><p><strong>Added:</strong> ${new Date(media.added_at).toLocaleString()}</p><div id="detail-completed-at">${media.completed_at ? `<p><strong>Completed:</strong> ${new Date(media.completed_at).toLocaleString()}</p>` : ''}</div></div></div>
                     ${media.overview ? `<p><strong>Overview:</strong></p><div style="max-height: 100px; overflow-y: auto;">${media.overview}</div>` : ''}
                     ${tvShowDetailsHtml}
+                    ${animeSearchTermsHtml}
                     <div style="display: flex; gap: 1rem; margin-top: 2rem; border-top: 1px solid var(--border-color); padding-top: 1rem;">
                         ${media.status !== 'downloading' && media.status !== 'downloaded' ? `<button onclick="manualMovieSearch(${media.id})">🔍 Manual Search</button>` : ''}
                         ${media.status === 'failed' || media.status === 'pending' ? `<button onclick="retryMedia(${media.id})">🔄 Retry</button>` : ''}
                         <button onclick="showMediaSettingsModal(${media.id})">⚙️ Config</button>
                         <button onclick="deleteMedia(${media.id})" class="danger">🗑️ Delete</button>
                     </div>`;
+
+                if (media.type === 'anime') {
+                    loadAnimeSearchTerms(mediaId);
+                }
             };
 
             window.showMediaSettingsModal = (mediaId) => {
@@ -978,6 +1027,59 @@
                     statusList.innerHTML = '<li><span style="color:var(--error-color)">Failed to load system status</span></li>';
                 }
             }
+
+            async function loadAnimeSearchTerms(mediaId) {
+                const list = document.getElementById('anime-search-terms-list');
+                try {
+                    const response = await fetchWithAuth(`/api/v1/media/${mediaId}/anime-search-terms`);
+                    if (!response.ok) throw new Error('Failed to load search terms');
+                    const terms = await response.json();
+                    if (terms && terms.length > 0) {
+                        list.innerHTML = terms.map(term => `
+                            <div class="search-term-tag">
+                                <span>${term.term}</span>
+                                <button onclick="deleteSearchTerm(${term.id}, ${mediaId})">&times;</button>
+                            </div>
+                        `).join('');
+                    } else {
+                        list.innerHTML = '<p>No alternative search terms found.</p>';
+                    }
+                } catch (error) {
+                    list.innerHTML = `<p style="color:var(--error-color)">${error.message}</p>`;
+                }
+            }
+
+            window.addSearchTerm = async function(mediaId) {
+                const input = document.getElementById('new-search-term-input');
+                const term = input.value.trim();
+                if (!term) return;
+
+                try {
+                    const response = await fetchWithAuth(`/api/v1/media/${mediaId}/anime-search-terms`, {
+                        method: 'POST',
+                        body: { term: term }
+                    });
+                    if (!response.ok) throw new Error('Failed to add term');
+                    input.value = '';
+                    loadAnimeSearchTerms(mediaId);
+                    showToast('Search term added!');
+                } catch (error) {
+                    showToast(error.message, 'error');
+                }
+            };
+
+            window.deleteSearchTerm = async function(termId, mediaId) {
+                try {
+                    const response = await fetchWithAuth(`/api/v1/media/anime-search-terms/${termId}`, {
+                        method: 'DELETE'
+                    });
+                    if (!response.ok) throw new Error('Failed to delete term');
+                    loadAnimeSearchTerms(mediaId);
+                    showToast('Search term deleted!');
+                } catch (error) {
+                    showToast(error.message, 'error');
+                }
+            };
 
             // Settings page functionality
             async function loadConfig() {
