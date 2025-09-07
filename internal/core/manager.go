@@ -138,6 +138,12 @@ type ClientStatus struct {
 	Status bool   `json:"status"`
 }
 
+type CalendarEvent struct {
+	Title  string `json:"title"`
+	Start  string `json:"start"`
+	AllDay bool   `json:"allDay"`
+}
+
 func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 	m := &Manager{
 		config:          cfg,
@@ -1745,4 +1751,35 @@ func (m *Manager) AddAnimeSearchTerm(mediaID int, term string) (*models.AnimeSea
 
 func (m *Manager) DeleteAnimeSearchTerm(id int) error {
 	return m.mediaRepo.DeleteAnimeSearchTerm(id)
+}
+
+func (m *Manager) GetCalendarEvents() ([]CalendarEvent, error) {
+	var events []CalendarEvent
+	allMedia, err := m.mediaRepo.GetAll()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, media := range allMedia {
+		if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+			show, err := m.mediaRepo.GetTVShowByMediaID(media.ID)
+			if err != nil || show == nil {
+				continue
+			}
+
+			for _, season := range show.Seasons {
+				for _, episode := range season.Episodes {
+					if episode.AirDate != "" {
+						events = append(events, CalendarEvent{
+							Title:  fmt.Sprintf("%s - S%02dE%02d", media.Title, season.SeasonNumber, episode.EpisodeNumber),
+							Start:  episode.AirDate,
+							AllDay: true,
+						})
+					}
+				}
+			}
+		}
+	}
+
+	return events, nil
 }

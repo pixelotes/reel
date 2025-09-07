@@ -645,3 +645,12 @@ func (h *APIHandler) DeleteAnimeSearchTerm(w http.ResponseWriter, r *http.Reques
 
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (h *APIHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
+	events, err := h.manager.GetCalendarEvents()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get calendar events")
+		return
+	}
+	respondJSON(w, http.StatusOK, events)
+}

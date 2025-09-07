@@ -6,6 +6,7 @@
     <title>🎬 Reel</title>
     <link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js'></script>
     <style>
         :root {
             --bg-color: #1e1e1e; --text-color: #d4d4d4; --primary-color: #007acc;
@@ -172,6 +173,7 @@
     <main id="app-container">
         <nav id="nav-buttons">
             <button data-page="media-page" class="active">Media</button>
+            <button data-page="calendar-page">Calendar</button>
             <button data-page="add-page">Add Media</button>
             <button data-page="settings-page">Settings</button>
         </nav>
@@ -197,6 +199,10 @@
                 <button id="refresh-btn">🔄</button>
             </div>
             <div id="media-grid" class="media-grid"></div>
+        </div>
+
+        <div id="calendar-page" class="page">
+            <div id='calendar'></div>
         </div>
 
         <div id="add-page" class="page">
@@ -374,6 +380,7 @@
                 allMedia: [],
                 filteredMedia: [],
                 currentMediaId: null,
+                calendar: null,
             };
 
             const RESOLUTION_RANK = { "360p": 0, "480p": 1, "720p": 2, "1080p": 3, "1440p": 4, "2160p": 5 };
@@ -465,6 +472,8 @@
                         } else if (pageId === 'settings-page') {
                             loadConfig();
                             checkSystemStatus();
+                        } else if (pageId === 'calendar-page') {
+                            initializeCalendar();
                         }
                     }
                 });
@@ -1038,7 +1047,7 @@
                         list.innerHTML = terms.map(term => `
                             <div class="search-term-tag">
                                 <span>${term.term}</span>
-                                <button onclick="deleteSearchTerm(${term.id}, ${mediaId})">&times;</button>
+                                <button class="danger" style="padding: 0.2rem 0.5rem;" onclick="deleteSearchTerm(${term.id}, ${mediaId})">X</button>
                             </div>
                         `).join('');
                     } else {
@@ -1080,6 +1089,36 @@
                     showToast(error.message, 'error');
                 }
             };
+
+            function initializeCalendar() {
+                if (state.calendar) {
+                    state.calendar.refetchEvents();
+                    return;
+                }
+                const calendarEl = document.getElementById('calendar');
+                const calendar = new FullCalendar.Calendar(calendarEl, {
+                    initialView: 'dayGridMonth',
+                    headerToolbar: {
+                        left: 'prev,next today',
+                        center: 'title',
+                        right: 'dayGridMonth,timeGridWeek,listWeek'
+                    },
+                    events: {
+                        url: '/api/v1/calendar',
+                        headers: {
+                            'Authorization': `Bearer ${state.sessionToken}`
+                        },
+                        failure: function() {
+                            showToast('Failed to load calendar events', 'error');
+                        }
+                    },
+                    eventDidMount: function(info) {
+                        // You can add tooltips or other interactions here
+                    }
+                });
+                calendar.render();
+                state.calendar = calendar;
+            }
 
             // Settings page functionality
             async function loadConfig() {

@@ -78,6 +78,9 @@ func (s *Server) Start() error {
 	protected.HandleFunc("/media/{id}/anime-search-terms", s.apiHandler.AddAnimeSearchTerm).Methods("POST")
 	protected.HandleFunc("/media/anime-search-terms/{term_id}", s.apiHandler.DeleteAnimeSearchTerm).Methods("DELETE")
 
+	// Calendar route
+	protected.HandleFunc("/calendar", s.apiHandler.GetCalendar).Methods("GET")
+
 	// Web UI (if enabled)
 	if s.config.App.UIEnabled {
 		router.PathPrefix("/").Handler(http.FileServer(http.FS(web.Files)))
