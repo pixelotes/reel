@@ -12,6 +12,17 @@ import (
 	"time"
 )
 
+// splitCamelCase splits a camelCase string into a slice of words.
+func splitCamelCase(s string) []string {
+	if s == "" {
+		return nil
+	}
+	// This regex finds positions where a lowercase letter is followed by an uppercase one.
+	re := regexp.MustCompile("([a-z0-9])([A-Z])")
+	s = re.ReplaceAllString(s, "${1} ${2}")
+	return strings.Fields(s)
+}
+
 func main() {
 	// A single endpoint now handles all torznab-related requests.
 	http.HandleFunc("/torznab/", torznabRouter)
@@ -126,10 +137,21 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 	var items []string
 	rand.Seed(time.Now().UnixNano())
 
+	// NEW: CamelCase handling
+	nameToUse := seriesName
+	splitNameParts := splitCamelCase(seriesName)
+	if len(splitNameParts) > 1 {
+		// Randomly use the original or the split name for some results
+		if rand.Intn(2) == 0 {
+			nameToUse = strings.Join(splitNameParts, " ")
+			log.Printf("Using split name variation for some results: '%s'", nameToUse)
+		}
+	}
+
 	for i := 0; i < 5; i++ {
 		wrongEp := requestedEp + rand.Intn(5) + 1
 		quality := goodQualities[rand.Intn(len(goodQualities))]
-		title := fmt.Sprintf("%s S%02dE%02d %s %s", seriesName, requestedSeason, wrongEp, quality, randomWords[rand.Intn(len(randomWords))])
+		title := fmt.Sprintf("%s S%02dE%02d %s %s", nameToUse, requestedSeason, wrongEp, quality, randomWords[rand.Intn(len(randomWords))])
 		items = append(items, generateItemXML(title, i))
 	}
 
@@ -142,7 +164,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 	for i := 30; i < 50; i++ {
 		quality := goodQualities[rand.Intn(len(goodQualities))]
 		extra := randomWords[rand.Intn(len(randomWords))]
-		title := fmt.Sprintf("%s S%02dE%02d %s %s", seriesName, requestedSeason, requestedEp, quality, extra)
+		title := fmt.Sprintf("%s S%02dE%02d %s %s", nameToUse, requestedSeason, requestedEp, quality, extra)
 		items = append(items, generateItemXML(title, i))
 	}
 
