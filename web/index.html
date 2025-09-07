@@ -409,9 +409,31 @@
             const loadingOverlay = document.getElementById('loading-overlay');
 
             // --- New UI Functions ---
+            function syncQualitySelectors(minSelector, maxSelector) {
+                minSelector.addEventListener('change', () => {
+                    if (RESOLUTION_RANK[minSelector.value] > RESOLUTION_RANK[maxSelector.value]) {
+                        maxSelector.value = minSelector.value;
+                    }
+                });
+
+                maxSelector.addEventListener('change', () => {
+                    if (RESOLUTION_RANK[maxSelector.value] < RESOLUTION_RANK[minSelector.value]) {
+                        minSelector.value = maxSelector.value;
+                    }
+                });
+            }
+
             function showLoading(show) {
                 loadingOverlay.style.display = show ? 'flex' : 'none';
             }
+
+            // Sync quality selectors
+            const minQualityAdd = document.getElementById('min-quality');
+            const maxQualityAdd = document.getElementById('max-quality');
+            syncQualitySelectors(minQualityAdd, maxQualityAdd);
+            const minQualitySettings = document.getElementById('settings-min-quality');
+            const maxQualitySettings = document.getElementById('settings-max-quality');
+            syncQualitySelectors(minQualitySettings, maxQualitySettings);
 
             function showToast(message, type = 'success', duration = 5000) {
                 const container = document.getElementById('toast-container');
