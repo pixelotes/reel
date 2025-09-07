@@ -16,6 +16,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 	"golang.org/x/net/html/charset"
+	"gopkg.in/yaml.v3"
 
 	"reel/internal/clients/indexers"
 	"reel/internal/clients/metadata"
@@ -107,6 +108,7 @@ type IndexerClientWithMode struct {
 
 type Manager struct {
 	config          *config.Config
+	db              *sql.DB
 	mediaRepo       *models.MediaRepository
 	indexerClients  map[models.MediaType][]IndexerClientWithMode
 	metadataClients map[models.MediaType][]metadata.Client
@@ -147,6 +149,7 @@ type CalendarEvent struct {
 func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 	m := &Manager{
 		config:          cfg,
+		db:              db,
 		mediaRepo:       models.NewMediaRepository(db),
 		torrentSelector: NewTorrentSelector(cfg, logger), // Assuming this exists
 		notifiers:       make([]notifications.Notifier, 0),
@@ -271,6 +274,8 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 	default:
 		logger.Fatal("Unsupported torrent client type:", cfg.TorrentClient.Type)
 	}
+
+	m.reloadConfig(cfg)
 
 	go m.startSearchQueueWorker()
 
@@ -1782,4 +1787,145 @@ func (m *Manager) GetCalendarEvents() ([]CalendarEvent, error) {
 	}
 
 	return events, nil
+}
+
+func (m *Manager) reloadConfig(cfg *config.Config) {
+	m.config = cfg
+	m.notifiers = make([]notifications.Notifier, 0)
+	m.indexerClients = make(map[models.MediaType][]IndexerClientWithMode)
+	m.metadataClients = make(map[models.MediaType][]metadata.Client)
+
+	// --- Initialize Notifiers ---
+	for _, notifierName := range cfg.Automation.Notifications {
+		switch notifierName {
+		case "pushbullet":
+			if cfg.Notifications.Pushbullet.APIKey != "" {
+				client := notifications.NewPushbulletClient(cfg.Notifications.Pushbullet.APIKey, m.logger)
+				m.notifiers = append(m.notifiers, client)
+				m.logger.Info("Pushbullet notifier enabled.")
+			}
+		}
+	}
+
+	m.postProcessor = NewPostProcessor(cfg, m.logger, models.NewMediaRepository(m.db), m.notifiers)
+
+	// Create a TMDB client instance to be shared
+	tmdbClient := metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language)
+
+	// Helper function to initialize metadata providers
+	initMetadataProvider := func(provider string) metadata.Client {
+		switch provider {
+		case "tmdb":
+			return tmdbClient
+		case "imdb":
+			return metadata.NewIMDBClient(cfg.Metadata.IMDB.APIKey)
+		case "tvmaze":
+			return metadata.NewTVmazeClient()
+		case "anilist":
+			return metadata.NewAniListClient()
+		case "trakt":
+			return metadata.NewTraktClient(cfg.Metadata.Trakt.ClientID, tmdbClient)
+		}
+		return nil
+	}
+
+	// Helper function to initialize indexer sources
+	initIndexerClient := func(source config.SourceConfig) indexers.Client {
+		switch source.Type {
+		case "scarf":
+			timeout, _ := time.ParseDuration("30s")
+			return indexers.NewScarfClient(source.URL, source.APIKey, timeout)
+		case "jackett":
+			return indexers.NewJackettClient(source.URL, source.APIKey)
+		case "prowlarr":
+			return indexers.NewProwlarrClient(source.URL, source.APIKey)
+		}
+		return nil
+	}
+
+	// Initialize Movie Clients
+	for _, providerName := range cfg.Movies.Providers {
+		if client := initMetadataProvider(providerName); client != nil {
+			m.metadataClients[models.MediaTypeMovie] = append(m.metadataClients[models.MediaTypeMovie], client)
+		}
+	}
+	for _, source := range cfg.Movies.Sources {
+		if source.Type != "rss" {
+			if client := initIndexerClient(source); client != nil {
+				m.indexerClients[models.MediaTypeMovie] = append(m.indexerClients[models.MediaTypeMovie], IndexerClientWithMode{
+					Client: client,
+					Source: source,
+				})
+			}
+		}
+	}
+
+	// Initialize TV Show Clients
+	for _, providerName := range cfg.TVShows.Providers {
+		if client := initMetadataProvider(providerName); client != nil {
+			m.metadataClients[models.MediaTypeTVShow] = append(m.metadataClients[models.MediaTypeTVShow], client)
+		}
+	}
+	for _, source := range cfg.TVShows.Sources {
+		if source.Type != "rss" {
+			if client := initIndexerClient(source); client != nil {
+				m.indexerClients[models.MediaTypeTVShow] = append(m.indexerClients[models.MediaTypeTVShow], IndexerClientWithMode{
+					Client: client,
+					Source: source,
+				})
+			}
+		}
+	}
+
+	// Initialize Anime Clients
+	for _, providerName := range cfg.Anime.Providers {
+		if client := initMetadataProvider(providerName); client != nil {
+			m.metadataClients[models.MediaTypeAnime] = append(m.metadataClients[models.MediaTypeAnime], client)
+		}
+	}
+	for _, source := range cfg.Anime.Sources {
+		if source.Type != "rss" {
+			if client := initIndexerClient(source); client != nil {
+				m.indexerClients[models.MediaTypeAnime] = append(m.indexerClients[models.MediaTypeAnime], IndexerClientWithMode{
+					Client: client,
+					Source: source,
+				})
+			}
+		}
+	}
+
+	// Setup Torrent Client
+	switch cfg.TorrentClient.Type {
+	case "transmission":
+		m.torrentClient = torrent.NewTransmissionClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password)
+	case "qbittorrent":
+		m.torrentClient = torrent.NewQBittorrentClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password)
+	default:
+		m.logger.Fatal("Unsupported torrent client type:", cfg.TorrentClient.Type)
+	}
+
+	m.logger.Info("Configuration reloaded successfully.")
+}
+
+func (m *Manager) SaveAndReloadConfig(configContent string) error {
+	configPath := "config/config.yml"
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		configPath = "config.yml"
+	}
+
+	// First, validate the new config content
+	var newCfg config.Config
+	if err := yaml.Unmarshal([]byte(configContent), &newCfg); err != nil {
+		return fmt.Errorf("new configuration is invalid: %w", err)
+	}
+
+	// If valid, write the new config to the file
+	if err := ioutil.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	// Now, reload the config in the manager
+	m.reloadConfig(&newCfg)
+
+	return nil
 }

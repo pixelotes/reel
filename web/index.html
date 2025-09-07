@@ -152,6 +152,59 @@
         .search-term-tag button:hover {
             opacity: 1;
         }
+
+        /* Settings tab */
+        #settings-page .grid-container {
+            display: grid;
+            grid-template-columns: 70% 1fr; /* Adjust the column widths */
+            gap: 2rem;
+        }
+        .config-editor-container {
+            position: relative;
+            height: 300px;
+        }
+        #config-display {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 1rem;
+            box-sizing: border-box;
+            resize: none;
+            background-color: transparent;
+            color: transparent; /* Makes the actual text invisible */
+            caret-color: var(--text-color); /* Keeps the cursor visible */
+            border: none;
+            font-family: monospace;
+            font-size: 0.9rem;
+            line-height: inherit;
+            white-space: pre;
+            overflow: auto;
+            z-index: 1; /* Puts it on top of the highlight block */
+        }
+        config-editor-container {
+            position: relative;
+            height: 400px; /* Increased height for better usability */
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            background-color: var(--header-bg);
+        }
+        #config-highlight {
+            margin: 0;
+            padding: 1rem;
+            box-sizing: border-box;
+            white-space: pre;
+            overflow: auto;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            font-family: monospace;
+            font-size: 0.9rem;
+        }
     </style>
 </head>
 <body>
@@ -276,16 +329,18 @@
                 <button type="submit">Add to Library</button>
             </form>
         </div>
-
         <div id="settings-page" class="page">
             <h2>Settings</h2>
             <div style="background: var(--header-bg); padding: 2rem; border-radius: 8px;">
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
+                <div class="grid-container">
                     <div>
                         <h3>Configuration</h3>
-                        <pre><code id="config-display" class="language-yaml">Loading...</code></pre>
+                        <div class="config-editor-container">
+                            <pre><code id="config-highlight" class="language-yaml">Loading...</code></pre>
+                            <textarea id="config-display" spellcheck="false"></textarea>
+                        </div>
                         <div style="display: flex; gap: 1rem; margin-top: 1rem; justify-content: flex-end;">
-                            <button id="save-config-btn" disabled>Save Changes (Not Implemented)</button>
+                            <button id="save-config-btn">Save Changes</button>
                         </div>
                     </div>
                     <div>
@@ -455,8 +510,28 @@
                 refreshData();
                 checkSystemStatus();
                 setInterval(refreshData, 2000);
+                setupConfigEditorSync();
                 document.getElementById('refresh-status-btn').addEventListener('click', checkSystemStatus);
+                document.getElementById('save-config-btn').addEventListener('click', saveConfig);
+            }
 
+            function setupConfigEditorSync() {
+                const configDisplay = document.getElementById('config-display');
+                const configHighlight = document.getElementById('config-highlight');
+
+                const syncScroll = () => {
+                    configHighlight.scrollTop = configDisplay.scrollTop;
+                    configHighlight.scrollLeft = configDisplay.scrollLeft;
+                };
+
+                configDisplay.addEventListener('scroll', syncScroll);
+
+                configDisplay.addEventListener('input', () => {
+                    const code = configDisplay.value;
+                    configHighlight.textContent = code;
+                    hljs.highlightElement(configHighlight);
+                    syncScroll();
+                });
             }
 
             function setupNavigation() {
@@ -1123,19 +1198,42 @@
             // Settings page functionality
             async function loadConfig() {
                 const configDisplay = document.getElementById('config-display');
+                const configHighlight = document.getElementById('config-highlight');
                 try {
                     const response = await fetchWithAuth('/api/v1/config');
                     if (response.ok) {
                         const configText = await response.text();
-                        configDisplay.textContent = configText;
-                        hljs.highlightElement(configDisplay);
+                        configDisplay.value = configText;
+                        configHighlight.textContent = configText;
+                        hljs.highlightElement(configHighlight);
                     } else {
-                        configDisplay.textContent = 'Error loading config.';
+                        configDisplay.value = 'Error loading config.';
+                        configHighlight.textContent = 'Error loading config.';
                     }
                 } catch (error) {
-                    configDisplay.textContent = 'Error loading config.';
+                    configDisplay.value = 'Error loading config.';
+                    configHighlight.textContent = 'Error loading config.';
                 }
             }
+
+            async function saveConfig() {
+                const configContent = document.getElementById('config-display').value;
+                try {
+                    const response = await fetchWithAuth('/api/v1/config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'text/plain' },
+                        body: configContent
+                    });
+                    const result = await response.json();
+                    if (!response.ok) {
+                        throw new Error(result.error || 'Failed to save config');
+                    }
+                    showToast('Configuration saved and reloaded successfully!');
+                } catch (error) {
+                    showToast(`Error: ${error.message}`, 'error');
+                }
+            }
+
             document.getElementById('test-indexer-btn').addEventListener('click', async () => { /* ... */ });
             document.getElementById('test-torrent-btn').addEventListener('click', async () => { /* ... */ });
             document.getElementById('clear-failed-btn').addEventListener('click', async () => {

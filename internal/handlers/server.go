@@ -72,6 +72,7 @@ func (s *Server) Start() error {
 
 	// Add this line for the config endpoint
 	protected.HandleFunc("/config", s.apiHandler.GetConfig).Methods("GET")
+	protected.HandleFunc("/config", s.apiHandler.SaveConfig).Methods("POST")
 
 	// Anime search term routes
 	protected.HandleFunc("/media/{id}/anime-search-terms", s.apiHandler.GetAnimeSearchTerms).Methods("GET")

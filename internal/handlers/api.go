@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"strconv"
 	"strings"
@@ -653,4 +654,19 @@ func (h *APIHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, events)
+}
+
+func (h *APIHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Could not read request body")
+		return
+	}
+
+	if err := h.manager.SaveAndReloadConfig(string(body)); err != nil {
+		respondError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save and reload config: %v", err))
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"status": "Configuration saved and reloaded successfully"})
 }
