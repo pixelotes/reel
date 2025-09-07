@@ -1900,6 +1900,8 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 		m.torrentClient = torrent.NewTransmissionClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password)
 	case "qbittorrent":
 		m.torrentClient = torrent.NewQBittorrentClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password)
+	case "aria2":
+		m.torrentClient = torrent.NewAria2Client(cfg.TorrentClient.Host, cfg.TorrentClient.Secret)
 	default:
 		m.logger.Fatal("Unsupported torrent client type:", cfg.TorrentClient.Type)
 	}
