@@ -10,10 +10,11 @@ app:
   filter_log_level: "detail"
 
 torrent_client:
-  type: "transmission" # or "qbittorrent"
-  host: "localhost:9091" # e.g., localhost:8080 for qbittorrent
+  type: "transmission" # or "qbittorrent", "aria2"
+  host: "localhost:9091" # e.g., localhost:8080 for qbittorrent, http://localhost:6800/jsonrpc for aria2
   username: ""
   password: ""
+  secret: "" # for aria2
   download_path: "/downloads/media"
 
 notifications:

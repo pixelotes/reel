@@ -39,6 +39,7 @@ type Config struct {
 		Host         string `yaml:"host"`
 		Username     string `yaml:"username"`
 		Password     string `yaml:"password"`
+		Secret       string `yaml:"secret"`
 		DownloadPath string `yaml:"download_path"`
 	} `yaml:"torrent_client"`
 
