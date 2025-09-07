@@ -76,6 +76,12 @@ type Episode struct {
 	Status        MediaStatus `json:"status"`
 }
 
+type AnimeSearchTerm struct {
+	ID      int    `json:"id"`
+	MediaID int    `json:"media_id"`
+	Term    string `json:"term"`
+}
+
 type MediaRepository struct {
 	db *sql.DB
 }
@@ -473,5 +479,40 @@ func (r *MediaRepository) GetEpisodeByDetails(mediaID int, seasonNumber int, epi
 func (r *MediaRepository) UpdateSettings(id int, minQuality, maxQuality string, autoDownload bool) error {
 	query := `UPDATE media SET min_quality = ?, max_quality = ?, auto_download = ? WHERE id = ?`
 	_, err := r.db.Exec(query, minQuality, maxQuality, autoDownload, id)
+	return err
+}
+
+func (r *MediaRepository) AddAnimeSearchTerm(mediaID int, term string) (*AnimeSearchTerm, error) {
+	query := `INSERT INTO anime_search_terms (media_id, term) VALUES (?, ?)`
+	res, err := r.db.Exec(query, mediaID, term)
+	if err != nil {
+		return nil, err
+	}
+	id, _ := res.LastInsertId()
+	return &AnimeSearchTerm{ID: int(id), MediaID: mediaID, Term: term}, nil
+}
+
+func (r *MediaRepository) GetAnimeSearchTerms(mediaID int) ([]AnimeSearchTerm, error) {
+	query := `SELECT id, media_id, term FROM anime_search_terms WHERE media_id = ?`
+	rows, err := r.db.Query(query, mediaID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var terms []AnimeSearchTerm
+	for rows.Next() {
+		var t AnimeSearchTerm
+		if err := rows.Scan(&t.ID, &t.MediaID, &t.Term); err != nil {
+			return nil, err
+		}
+		terms = append(terms, t)
+	}
+	return terms, nil
+}
+
+func (r *MediaRepository) DeleteAnimeSearchTerm(id int) error {
+	query := `DELETE FROM anime_search_terms WHERE id = ?`
+	_, err := r.db.Exec(query, id)
 	return err
 }

@@ -459,7 +459,7 @@ func (m *Manager) searchAndDownloadMovie(media *models.Media) {
 		return
 	}
 
-	bestTorrent := m.torrentSelector.SelectBestTorrent(media, results, 0, 0)
+	bestTorrent := m.torrentSelector.SelectBestTorrent(media, results, 0, 0, []string{media.Title})
 	if bestTorrent == nil {
 		m.logger.Info("No suitable torrent found for:", media.Title)
 		m.mediaRepo.UpdateStatus(media.ID, models.StatusFailed)
@@ -490,7 +490,17 @@ func (m *Manager) searchAndDownloadNextEpisode(media *models.Media) {
 					continue
 				}
 
-				bestTorrent := m.torrentSelector.SelectBestTorrent(media, results, season.SeasonNumber, episode.EpisodeNumber)
+				searchTerms := []string{media.Title}
+				if media.Type == models.MediaTypeAnime {
+					animeSearchTerms, err := m.mediaRepo.GetAnimeSearchTerms(media.ID)
+					if err == nil {
+						for _, term := range animeSearchTerms {
+							searchTerms = append(searchTerms, term.Term)
+						}
+					}
+				}
+
+				bestTorrent := m.torrentSelector.SelectBestTorrent(media, results, season.SeasonNumber, episode.EpisodeNumber, searchTerms)
 				if bestTorrent != nil {
 					m.StartEpisodeDownload(media.ID, season.SeasonNumber, episode.EpisodeNumber, *bestTorrent)
 					downloadsStarted++
@@ -964,48 +974,62 @@ func (m *Manager) performSearch(media *models.Media, season, episode int) ([]ind
 		return nil, nil
 	}
 
-	baseQuery := media.Title
+	var allResults []indexers.IndexerResult
+
+	// Get search terms
+	searchTerms := []string{media.Title}
+	if media.Type == models.MediaTypeAnime {
+		animeSearchTerms, err := m.mediaRepo.GetAnimeSearchTerms(media.ID)
+		if err == nil {
+			for _, term := range animeSearchTerms {
+				searchTerms = append(searchTerms, term.Term)
+			}
+		}
+	}
+
 	tmdbIDStr := ""
 	if media.TMDBId != nil {
 		tmdbIDStr = strconv.Itoa(*media.TMDBId)
 	}
 
-	var allResults []indexers.IndexerResult
-	for _, clientWithMode := range clients {
-		client := clientWithMode.Client
-		searchMode := clientWithMode.Source.SearchMode
-		query := baseQuery
+	for _, searchTerm := range searchTerms {
+		for _, clientWithMode := range clients {
+			client := clientWithMode.Client
+			searchMode := clientWithMode.Source.SearchMode
 
-		var results []indexers.IndexerResult
-		var err error
+			var results []indexers.IndexerResult
+			var err error
 
-		if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
-			if searchMode == "search" && season > 0 && episode > 0 {
-				query = fmt.Sprintf("%s S%02dE%02d", baseQuery, season, episode)
-			}
-			results, err = client.SearchTVShows(query, season, episode, searchMode)
-
-			// Fallback for "search" mode if no results are found
-			if len(results) == 0 && searchMode == "search" && season > 0 && episode > 0 {
-				query = fmt.Sprintf("%s %dx%02d", baseQuery, season, episode)
-				var fallbackResults []indexers.IndexerResult
-				fallbackResults, err = client.SearchTVShows(query, season, episode, searchMode)
-				if err == nil {
-					results = append(results, fallbackResults...)
+			query := searchTerm
+			if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+				if searchMode == "search" && season > 0 && episode > 0 {
+					query = fmt.Sprintf("%s S%02dE%02d", searchTerm, season, episode)
 				}
-			}
-		} else { // Movie
-			if media.Year > 0 {
-				query = fmt.Sprintf("%s %d", baseQuery, media.Year)
-			}
-			results, err = client.SearchMovies(query, tmdbIDStr, searchMode)
-		}
+				results, err = client.SearchTVShows(query, season, episode, searchMode)
 
-		if err != nil {
-			m.logger.Error("Search failed for indexer:", err)
-			continue
+				// Fallback for "search" mode if no results are found
+				if len(results) == 0 && searchMode == "search" && season > 0 && episode > 0 {
+					query = fmt.Sprintf("%s %dx%02d", searchTerm, season, episode)
+					var fallbackResults []indexers.IndexerResult
+					fallbackResults, err = client.SearchTVShows(query, season, episode, searchMode)
+					if err == nil {
+						results = append(results, fallbackResults...)
+					}
+				}
+			} else { // Movie
+				if media.Year > 0 {
+					query = fmt.Sprintf("%s %d", searchTerm, media.Year)
+				}
+				results, err = client.SearchMovies(query, tmdbIDStr, searchMode)
+			}
+
+			if err != nil {
+				m.logger.Error("Search failed for indexer:", err)
+				continue
+			}
+			allResults = append(allResults, results...)
 		}
-		allResults = append(allResults, results...)
+		time.Sleep(5 * time.Second) // 5-second delay between search terms
 	}
 
 	m.logger.Info(fmt.Sprintf("Found %d total results for %s", len(allResults), media.Title))
@@ -1074,24 +1098,36 @@ func (m *Manager) matchFeedItems(items []rssItem) {
 		}
 
 		for _, media := range allMedia {
-			if !strings.Contains(strings.ToLower(item.Title), strings.ToLower(media.Title)) {
-				continue
+			searchTerms := []string{media.Title}
+			if media.Type == models.MediaTypeAnime {
+				animeSearchTerms, err := m.mediaRepo.GetAnimeSearchTerms(media.ID)
+				if err == nil {
+					for _, term := range animeSearchTerms {
+						searchTerms = append(searchTerms, term.Term)
+					}
+				}
 			}
 
-			show, err := m.mediaRepo.GetTVShowByMediaID(media.ID)
-			if err != nil || show == nil {
-				continue
-			}
+			for _, term := range searchTerms {
+				if !strings.Contains(strings.ToLower(item.Title), strings.ToLower(term)) {
+					continue
+				}
 
-			for _, season := range show.Seasons {
-				for _, episode := range season.Episodes {
-					if episode.Status == models.StatusPending {
-						bestTorrent := m.torrentSelector.SelectBestTorrent(&media, []indexers.IndexerResult{indexerResult}, season.SeasonNumber, episode.EpisodeNumber)
-						if bestTorrent != nil {
-							m.logger.Info("Found match in RSS feed for", media.Title, fmt.Sprintf("S%02dE%02d", season.SeasonNumber, episode.EpisodeNumber))
-							m.StartEpisodeDownload(media.ID, season.SeasonNumber, episode.EpisodeNumber, *bestTorrent)
-							time.Sleep(10 * time.Second) // Avoid overwhelming the download client
-							goto nextItem                // Move to the next RSS item once a match is found and downloaded
+				show, err := m.mediaRepo.GetTVShowByMediaID(media.ID)
+				if err != nil || show == nil {
+					continue
+				}
+
+				for _, season := range show.Seasons {
+					for _, episode := range season.Episodes {
+						if episode.Status == models.StatusPending {
+							bestTorrent := m.torrentSelector.SelectBestTorrent(&media, []indexers.IndexerResult{indexerResult}, season.SeasonNumber, episode.EpisodeNumber, searchTerms)
+							if bestTorrent != nil {
+								m.logger.Info("Found match in RSS feed for", media.Title, fmt.Sprintf("S%02dE%02d", season.SeasonNumber, episode.EpisodeNumber))
+								m.StartEpisodeDownload(media.ID, season.SeasonNumber, episode.EpisodeNumber, *bestTorrent)
+								time.Sleep(10 * time.Second) // Avoid overwhelming the download client
+								goto nextItem                // Move to the next RSS item once a match is found and downloaded
+							}
 						}
 					}
 				}
@@ -1116,8 +1152,18 @@ func (m *Manager) PerformSearch(id int) ([]indexers.IndexerResult, error) {
 		return nil, err
 	}
 
+	searchTerms := []string{media.Title}
+	if media.Type == models.MediaTypeAnime {
+		animeSearchTerms, err := m.mediaRepo.GetAnimeSearchTerms(media.ID)
+		if err == nil {
+			for _, term := range animeSearchTerms {
+				searchTerms = append(searchTerms, term.Term)
+			}
+		}
+	}
+
 	// Use the TorrentSelector to filter and score the results
-	filteredResults := m.torrentSelector.FilterAndScoreTorrents(media, results, 0, 0)
+	filteredResults := m.torrentSelector.FilterAndScoreTorrents(media, results, 0, 0, searchTerms)
 
 	return filteredResults, nil
 }
@@ -1271,8 +1317,18 @@ func (m *Manager) PerformEpisodeSearch(mediaID int, seasonNumber int, episodeNum
 		return nil, err
 	}
 
+	searchTerms := []string{media.Title}
+	if media.Type == models.MediaTypeAnime {
+		animeSearchTerms, err := m.mediaRepo.GetAnimeSearchTerms(media.ID)
+		if err == nil {
+			for _, term := range animeSearchTerms {
+				searchTerms = append(searchTerms, term.Term)
+			}
+		}
+	}
+
 	// Use the TorrentSelector to filter and score the results
-	filteredResults := m.torrentSelector.FilterAndScoreTorrents(media, results, seasonNumber, episodeNumber)
+	filteredResults := m.torrentSelector.FilterAndScoreTorrents(media, results, seasonNumber, episodeNumber, searchTerms)
 
 	m.logger.Info(fmt.Sprintf("Found %d results for %s S%02dE%02d",
 		len(filteredResults), media.Title, seasonNumber, episodeNumber))
@@ -1678,4 +1734,16 @@ func (m *Manager) TestTorrentConnection() (bool, error) {
 		return false, fmt.Errorf("torrent client not initialized")
 	}
 	return m.torrentClient.HealthCheck()
+}
+
+func (m *Manager) GetAnimeSearchTerms(mediaID int) ([]models.AnimeSearchTerm, error) {
+	return m.mediaRepo.GetAnimeSearchTerms(mediaID)
+}
+
+func (m *Manager) AddAnimeSearchTerm(mediaID int, term string) (*models.AnimeSearchTerm, error) {
+	return m.mediaRepo.AddAnimeSearchTerm(mediaID, term)
+}
+
+func (m *Manager) DeleteAnimeSearchTerm(id int) error {
+	return m.mediaRepo.DeleteAnimeSearchTerm(id)
 }

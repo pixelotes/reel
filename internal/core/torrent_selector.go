@@ -82,7 +82,7 @@ func getResolutionRank(title string) int {
 }
 
 // FilterAndScoreTorrents applies all filtering and scoring logic and returns a sorted list of results.
-func (ts *TorrentSelector) FilterAndScoreTorrents(media *models.Media, results []indexers.IndexerResult, season, episode int) []indexers.IndexerResult {
+func (ts *TorrentSelector) FilterAndScoreTorrents(media *models.Media, results []indexers.IndexerResult, season, episode int, searchTerms []string) []indexers.IndexerResult {
 	stats := &FilterStats{InitialCount: len(results)}
 
 	// Create a query string for logging purposes
@@ -105,7 +105,7 @@ func (ts *TorrentSelector) FilterAndScoreTorrents(media *models.Media, results [
 	// Step 2: For TV shows, filter by episode number and series name
 	if (media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime) && season > 0 && episode > 0 {
 		results = ts.filterByEpisodeNumber(results, season, episode, stats)
-		results = ts.filterBySeriesName(results, media.Title, stats)
+		results = ts.filterBySeriesName(results, searchTerms, stats)
 	}
 
 	// Step 3: Filter by quality (resolution)
@@ -168,8 +168,8 @@ func (ts *TorrentSelector) logFilterStats(query string, stats *FilterStats) {
 }
 
 // SelectBestTorrent filters and selects the best torrent based on various criteria
-func (ts *TorrentSelector) SelectBestTorrent(media *models.Media, results []indexers.IndexerResult, season, episode int) *indexers.IndexerResult {
-	filteredAndScored := ts.FilterAndScoreTorrents(media, results, season, episode)
+func (ts *TorrentSelector) SelectBestTorrent(media *models.Media, results []indexers.IndexerResult, season, episode int, searchTerms []string) *indexers.IndexerResult {
+	filteredAndScored := ts.FilterAndScoreTorrents(media, results, season, episode, searchTerms)
 
 	if len(filteredAndScored) == 0 {
 		return nil
@@ -343,46 +343,49 @@ func (ts *TorrentSelector) extractMeaningfulWords(title string) []string {
 }
 
 // Enhanced filterBySeriesName with flexible matching
-func (ts *TorrentSelector) filterBySeriesName(results []indexers.IndexerResult, seriesTitle string, stats *FilterStats) []indexers.IndexerResult {
+func (ts *TorrentSelector) filterBySeriesName(results []indexers.IndexerResult, searchTerms []string, stats *FilterStats) []indexers.IndexerResult {
 	var filtered []indexers.IndexerResult
-	meaningfulWords := ts.extractMeaningfulWords(seriesTitle)
-	if len(meaningfulWords) == 0 {
+	var allMeaningfulWords []string
+	for _, term := range searchTerms {
+		allMeaningfulWords = append(allMeaningfulWords, ts.extractMeaningfulWords(term)...)
+	}
+
+	if len(allMeaningfulWords) == 0 {
 		return results
 	}
 
 	for _, r := range results {
 		titleLower := strings.ToLower(r.Title)
-
-		// Try multiple matching strategies
 		matchFound := false
 
-		// Strategy 1: All words must be found individually
-		allWordsFound := true
-		for _, word := range meaningfulWords {
-			if !strings.Contains(titleLower, strings.ToLower(word)) {
-				allWordsFound = false
+		for _, term := range searchTerms {
+			// Strategy 1: All words must be found individually
+			meaningfulWords := ts.extractMeaningfulWords(term)
+			allWordsFound := true
+			for _, word := range meaningfulWords {
+				if !strings.Contains(titleLower, strings.ToLower(word)) {
+					allWordsFound = false
+					break
+				}
+			}
+			if allWordsFound {
+				matchFound = true
 				break
 			}
-		}
-		if allWordsFound {
-			matchFound = true
-		}
 
-		// Strategy 2: Try original series title as-is (for exact matches)
-		if !matchFound {
-			if strings.Contains(titleLower, strings.ToLower(seriesTitle)) {
+			// Strategy 2: Try original series title as-is (for exact matches)
+			if strings.Contains(titleLower, strings.ToLower(term)) {
 				matchFound = true
+				break
 			}
-		}
 
-		// Strategy 3: Try camelCase variations
-		// Convert series title camelCase to spaced version and check
-		if !matchFound {
-			camelParts := ts.splitCamelCase(seriesTitle)
+			// Strategy 3: Try camelCase variations
+			camelParts := ts.splitCamelCase(term)
 			if len(camelParts) > 1 {
 				spacedVersion := strings.ToLower(strings.Join(camelParts, " "))
 				if strings.Contains(titleLower, spacedVersion) {
 					matchFound = true
+					break
 				}
 			}
 		}
@@ -391,7 +394,7 @@ func (ts *TorrentSelector) filterBySeriesName(results []indexers.IndexerResult, 
 			filtered = append(filtered, r)
 		} else {
 			stats.SeriesName++
-			ts.logReject(fmt.Sprintf("Series name '%s' not found (words: %s)", seriesTitle, strings.Join(meaningfulWords, ", ")), r)
+			ts.logReject(fmt.Sprintf("Series name not found in title using terms: %s", strings.Join(searchTerms, ", ")), r)
 		}
 	}
 	return filtered
