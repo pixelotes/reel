@@ -72,6 +72,12 @@ anime:
       url: "http://localhost:8080/torznab/anime"
       api_key: "your_scarf_api_key_here"
 
+# Available placeholders: {title}, {year}, {season}, {episode}, {quality}
+file_renaming:
+  movie_template: "{title} ({year}) [{quality}]"
+  series_template: "{title} - S{season}E{episode} [{quality}]"
+  anime_template: "{title} - {season}x{episode} [{quality}]"
+
 database:
   path: "./data/reel.db"
 

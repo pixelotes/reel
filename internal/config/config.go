@@ -15,6 +15,12 @@ type SourceConfig struct {
 	SearchMode string `yaml:"search_mode,omitempty"`
 }
 
+type FileRenamingConfig struct {
+	MovieTemplate  string `yaml:"movie_template"`
+	SeriesTemplate string `yaml:"series_template"`
+	AnimeTemplate  string `yaml:"anime_template"`
+}
+
 type Config struct {
 	App struct {
 		Port                   int    `yaml:"port"`
@@ -103,6 +109,8 @@ type Config struct {
 
 	RejectCommon      []string `yaml:"reject-common"`
 	ExtraTrackersList []string `yaml:"extra_trackers_list"`
+
+	FileRenaming FileRenamingConfig `yaml:"file_renaming"`
 }
 
 func Load(path string) (*Config, error) {

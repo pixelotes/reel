@@ -843,11 +843,10 @@ func (m *Manager) RetryMedia(id int) error {
 		return fmt.Errorf("media with id %d not found", id)
 	}
 
-	if media.Status == models.StatusFailed || media.Status == models.StatusPending {
+	if media.Status == models.StatusFailed {
 		if err := m.mediaRepo.UpdateStatus(media.ID, models.StatusPending); err != nil {
 			return err
 		}
-		m.searchQueue <- *media
 	}
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,7 +57,7 @@ func (pp *PostProcessor) ProcessDownload(media models.Media, torrentStatus torre
 		return err
 	}
 
-	pp.renameFiles(&media, destinationPath, seasonNumber, episodeNumber)
+	pp.renameFiles(&media, destinationPath, seasonNumber, episodeNumber, torrentStatus.Name)
 
 	pp.notifyPostProcessCompleted(&media, torrentStatus.Name)
 
@@ -214,25 +215,85 @@ func waitForFile(filePath string, timeout time.Duration) bool {
 	}
 }
 
+func (pp *PostProcessor) parseQualityFromTorrentName(torrentName string) string {
+	lowerName := strings.ToLower(torrentName)
+	// Check for resolutions first
+	for _, res := range SUPPORTED_RESOLUTIONS {
+		if strings.Contains(lowerName, res) {
+			return res
+		}
+	}
+	// Fallback to other quality indicators
+	if strings.Contains(lowerName, "web-dl") || strings.Contains(lowerName, "webdl") {
+		return "WEB-DL"
+	}
+	if strings.Contains(lowerName, "bluray") {
+		return "BluRay"
+	}
+	if strings.Contains(lowerName, "webrip") {
+		return "WEBRip"
+	}
+	if strings.Contains(lowerName, "bdrip") {
+		return "BDRip"
+	}
+	if strings.Contains(lowerName, "brrip") {
+		return "BRRip"
+	}
+	if strings.Contains(lowerName, "hdtv") {
+		return "HDTV"
+	}
+	if strings.Contains(lowerName, "dvdrip") {
+		return "DVDRip"
+	}
+	if strings.Contains(lowerName, "xvid") {
+		return "Xvid" // Not really a quality, but it's quite common
+	}
+	return "Unknown"
+}
+
 // renameFiles renames the moved/linked files to a clean, standardized format.
-func (pp *PostProcessor) renameFiles(media *models.Media, destination string, season, episode int) {
+func (pp *PostProcessor) renameFiles(media *models.Media, destination string, season, episode int, torrentName string) {
 	files, err := os.ReadDir(destination)
 	if err != nil {
 		pp.logger.Error("Failed to read destination directory:", err)
 		return
 	}
 
+	quality := pp.parseQualityFromTorrentName(torrentName)
+
 	for _, file := range files {
 		oldPath := filepath.Join(destination, file.Name())
 		ext := filepath.Ext(file.Name())
-		quality := media.MaxQuality
 
 		var newName string
-		if media.Type == models.MediaTypeMovie {
-			newName = fmt.Sprintf("%s (%d) [%s]%s", media.Title, media.Year, quality, ext)
-		} else {
-			newName = fmt.Sprintf("%s - S%02dE%02d [%s]%s", media.Title, season, episode, quality, ext)
+		var template string
+		switch media.Type {
+		case models.MediaTypeMovie:
+			template = pp.config.FileRenaming.MovieTemplate
+		case models.MediaTypeTVShow:
+			template = pp.config.FileRenaming.SeriesTemplate
+		case models.MediaTypeAnime:
+			template = pp.config.FileRenaming.AnimeTemplate
 		}
+
+		if template == "" {
+			// Fallback to old naming scheme if no template is provided
+			if media.Type == models.MediaTypeMovie {
+				newName = fmt.Sprintf("%s (%d) [%s]%s", media.Title, media.Year, quality, ext)
+			} else {
+				newName = fmt.Sprintf("%s - S%02dE%02d [%s]%s", media.Title, season, episode, quality, ext)
+			}
+		} else {
+			r := strings.NewReplacer(
+				"{title}", media.Title,
+				"{year}", strconv.Itoa(media.Year),
+				"{season}", fmt.Sprintf("%02d", season),
+				"{episode}", fmt.Sprintf("%02d", episode),
+				"{quality}", quality,
+			)
+			newName = r.Replace(template) + ext
+		}
+
 		newPath := filepath.Join(destination, newName)
 
 		err := os.Rename(oldPath, newPath)

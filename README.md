@@ -70,7 +70,7 @@ Here’s a glimpse of what’s planned for the future:
 - Expanded Support: More download clients and Torznab servers.
 - Customization:
   - Configurable scoring for torrents.
-  - Customizable file renaming patterns.
+  - (Done) Customizable file renaming patterns.
   - Configurable notifications for various events.
 - Automation:
   - Automatic quality upgrades for movies.
