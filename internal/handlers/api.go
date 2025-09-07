@@ -582,3 +582,62 @@ func (h *APIHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte(configContent))
 }
+
+func (h *APIHandler) GetAnimeSearchTerms(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+
+	terms, err := h.manager.GetAnimeSearchTerms(id)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get search terms")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, terms)
+}
+
+func (h *APIHandler) AddAnimeSearchTerm(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+
+	var req struct {
+		Term string `json:"term"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	term, err := h.manager.AddAnimeSearchTerm(id, req.Term)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to add search term")
+		return
+	}
+
+	respondJSON(w, http.StatusCreated, term)
+}
+
+func (h *APIHandler) DeleteAnimeSearchTerm(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	termID, err := strconv.Atoi(vars["term_id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid term ID")
+		return
+	}
+
+	if err := h.manager.DeleteAnimeSearchTerm(termID); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to delete search term")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}

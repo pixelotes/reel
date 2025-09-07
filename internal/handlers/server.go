@@ -73,6 +73,11 @@ func (s *Server) Start() error {
 	// Add this line for the config endpoint
 	protected.HandleFunc("/config", s.apiHandler.GetConfig).Methods("GET")
 
+	// Anime search term routes
+	protected.HandleFunc("/media/{id}/anime-search-terms", s.apiHandler.GetAnimeSearchTerms).Methods("GET")
+	protected.HandleFunc("/media/{id}/anime-search-terms", s.apiHandler.AddAnimeSearchTerm).Methods("POST")
+	protected.HandleFunc("/media/anime-search-terms/{term_id}", s.apiHandler.DeleteAnimeSearchTerm).Methods("DELETE")
+
 	// Web UI (if enabled)
 	if s.config.App.UIEnabled {
 		router.PathPrefix("/").Handler(http.FileServer(http.FS(web.Files)))
