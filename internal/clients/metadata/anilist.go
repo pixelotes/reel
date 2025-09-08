@@ -38,10 +38,10 @@ type aniListSearchResponse struct {
 	} `json:"data"`
 }
 
-func NewAniListClient() *AniListClient {
+func NewAniListClient(timeout time.Duration) *AniListClient {
 	return &AniListClient{
 		httpClient: &http.Client{
-			Timeout: 15 * time.Second,
+			Timeout: timeout,
 		},
 	}
 }

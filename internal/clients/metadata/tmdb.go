@@ -40,12 +40,12 @@ type tmdbSearchResponse struct {
 	TotalResults int `json:"total_results"`
 }
 
-func NewTMDBClient(apiKey, language string) *TMDBClient {
+func NewTMDBClient(apiKey, language string, timeout time.Duration) *TMDBClient {
 	return &TMDBClient{
 		apiKey:   apiKey,
 		language: language,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: timeout,
 		},
 	}
 }

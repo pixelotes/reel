@@ -12,7 +12,7 @@ import (
 type TraktClient struct {
 	httpClient *http.Client
 	clientID   string
-	tmdbClient *TMDBClient // Add this
+	tmdbClient *TMDBClient
 }
 
 // Trakt search result structs
@@ -35,12 +35,12 @@ type traktEpisode struct {
 	FirstAired string `json:"first_aired"`
 }
 
-func NewTraktClient(clientID string, tmdbClient *TMDBClient) *TraktClient {
+func NewTraktClient(clientID string, tmdbClient *TMDBClient, timeout time.Duration) *TraktClient {
 	return &TraktClient{
 		clientID:   clientID,
 		tmdbClient: tmdbClient,
 		httpClient: &http.Client{
-			Timeout: 15 * time.Second,
+			Timeout: timeout,
 		},
 	}
 }

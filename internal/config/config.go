@@ -32,6 +32,7 @@ type Config struct {
 		FilterLogLevel         string `yaml:"filter_log_level"` // "none" or "detail"
 		MagnetToTorrentEnabled bool   `yaml:"magnet_to_torrent_enabled"`
 		MagnetToTorrentTimeout int    `yaml:"magnet_to_torrent_timeout"`
+		SearchTimeout          int    `yaml:"search_timeout"`
 	} `yaml:"app"`
 
 	TorrentClient struct {
@@ -45,6 +46,7 @@ type Config struct {
 
 	Metadata struct {
 		Language string `yaml:"language"`
+		Timeout  int    `yaml:"timeout"`
 		TMDB     struct {
 			APIKey string `yaml:"api_key"`
 		} `yaml:"tmdb"`
@@ -57,7 +59,7 @@ type Config struct {
 		AniList struct {
 			// AniList doesn't require an API key for public queries
 		} `yaml:"anilist"`
-		Trakt struct { // Add this section
+		Trakt struct {
 			ClientID string `yaml:"client_id"`
 		} `yaml:"trakt"`
 	} `yaml:"metadata"`

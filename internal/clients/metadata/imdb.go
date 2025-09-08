@@ -1,16 +1,24 @@
 package metadata
 
-import "fmt"
+import (
+	"fmt"
+	"net/http"
+	"time"
+)
 
 // IMDBClient is a placeholder for a real IMDb client.
 // Note: IMDb does not have an official public API for this purpose.
 // A real implementation would likely require web scraping or a third-party service.
 type IMDBClient struct {
-	apiKey string
+	apiKey     string
+	httpClient *http.Client
 }
 
-func NewIMDBClient(apiKey string) *IMDBClient {
-	return &IMDBClient{apiKey: apiKey}
+func NewIMDBClient(apiKey string, timeout time.Duration) *IMDBClient {
+	return &IMDBClient{
+		apiKey:     apiKey,
+		httpClient: &http.Client{Timeout: timeout},
+	}
 }
 
 func (c *IMDBClient) SearchMovie(title string, year int) ([]*MovieResult, error) {

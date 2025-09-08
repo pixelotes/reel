@@ -7,6 +7,7 @@ app:
   jwt_secret: "your-very-secure-jwt-secret-key-here"
   magnet_to_torrent_enabled: true
   magnet_to_torrent_timeout: 60
+  search_timeout: 120
   filter_log_level: "detail"
 
 torrent_client:
@@ -27,6 +28,7 @@ extra_trackers_list:
 
 metadata:
   language: "en"
+  timeout: 10
   tmdb:
     api_key: "your_tmdb_api_key_here"
   imdb:

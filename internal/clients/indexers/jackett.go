@@ -18,11 +18,11 @@ type JackettClient struct {
 	httpClient *http.Client
 }
 
-func NewJackettClient(baseURL, apiKey string) *JackettClient {
+func NewJackettClient(baseURL, apiKey string, timeout time.Duration) *JackettClient {
 	return &JackettClient{
 		baseURL:    baseURL,
 		apiKey:     apiKey,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: &http.Client{Timeout: timeout},
 	}
 }
 

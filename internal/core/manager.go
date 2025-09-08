@@ -158,9 +158,21 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		searchQueue:     make(chan models.Media, 100),
 		indexerClients:  make(map[models.MediaType][]IndexerClientWithMode),
 		metadataClients: make(map[models.MediaType][]metadata.Client),
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		httpClient:      &http.Client{},
+	}
+
+	// --- Initialize Indexer Search Timeout ---
+	searchTimeout := time.Duration(cfg.App.SearchTimeout) * time.Second
+	if cfg.App.SearchTimeout <= 0 {
+		searchTimeout = 30 * time.Second // Default if not set or invalid
+	}
+	// The manager's generic http client can use the indexer timeout
+	m.httpClient.Timeout = searchTimeout
+
+	// --- Initialize Metadata Client Timeout ---
+	metadataTimeout := time.Duration(cfg.Metadata.Timeout) * time.Second
+	if cfg.Metadata.Timeout <= 0 {
+		metadataTimeout = 15 * time.Second // Default if not set or invalid
 	}
 
 	// --- Initialize Notifiers ---
@@ -181,7 +193,7 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 	// --- Initialize Clients based on new Config Structure ---
 
 	// Create a TMDB client instance to be shared
-	tmdbClient := metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language)
+	tmdbClient := metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language, metadataTimeout)
 
 	// Helper function to initialize metadata providers
 	initMetadataProvider := func(provider string) metadata.Client {
@@ -189,27 +201,30 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		case "tmdb":
 			return tmdbClient // Return the shared instance
 		case "imdb":
-			return metadata.NewIMDBClient(cfg.Metadata.IMDB.APIKey)
+			return metadata.NewIMDBClient(cfg.Metadata.IMDB.APIKey, metadataTimeout)
 		case "tvmaze":
-			return metadata.NewTVmazeClient()
+			return metadata.NewTVmazeClient(metadataTimeout)
 		case "anilist":
-			return metadata.NewAniListClient()
+			return metadata.NewAniListClient(metadataTimeout)
 		case "trakt":
-			return metadata.NewTraktClient(cfg.Metadata.Trakt.ClientID, tmdbClient) // Pass TMDB client
+			return metadata.NewTraktClient(cfg.Metadata.Trakt.ClientID, tmdbClient, metadataTimeout) // Pass TMDB client
 		}
 		return nil
 	}
 
 	// Helper function to initialize indexer sources
 	initIndexerClient := func(source config.SourceConfig) indexers.Client {
+		timeout := time.Duration(m.config.App.SearchTimeout) * time.Second
+		if m.config.App.SearchTimeout == 0 {
+			timeout = 30 * time.Second
+		}
 		switch source.Type {
 		case "scarf":
-			timeout, _ := time.ParseDuration("30s")
 			return indexers.NewScarfClient(source.URL, source.APIKey, timeout)
 		case "jackett":
-			return indexers.NewJackettClient(source.URL, source.APIKey)
+			return indexers.NewJackettClient(source.URL, source.APIKey, timeout)
 		case "prowlarr":
-			return indexers.NewProwlarrClient(source.URL, source.APIKey)
+			return indexers.NewProwlarrClient(source.URL, source.APIKey, timeout)
 		}
 		return nil
 	}
@@ -934,9 +949,9 @@ func (m *Manager) GetSystemStatus() (*SystemStatus, error) {
 		case "scarf":
 			client = indexers.NewScarfClient(source.URL, source.APIKey, 30*time.Second)
 		case "jackett":
-			client = indexers.NewJackettClient(source.URL, source.APIKey)
+			client = indexers.NewJackettClient(source.URL, source.APIKey, m.httpClient.Timeout)
 		case "prowlarr":
-			client = indexers.NewProwlarrClient(source.URL, source.APIKey)
+			client = indexers.NewProwlarrClient(source.URL, source.APIKey, m.httpClient.Timeout)
 		}
 		if client != nil {
 			ok, _ := client.HealthCheck()
@@ -1795,6 +1810,18 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 	m.indexerClients = make(map[models.MediaType][]IndexerClientWithMode)
 	m.metadataClients = make(map[models.MediaType][]metadata.Client)
 
+	// --- Initialize Timeouts ---
+	searchTimeout := time.Duration(cfg.App.SearchTimeout) * time.Second
+	if cfg.App.SearchTimeout <= 0 {
+		searchTimeout = 30 * time.Second
+	}
+	m.httpClient.Timeout = searchTimeout
+
+	metadataTimeout := time.Duration(cfg.Metadata.Timeout) * time.Second
+	if cfg.Metadata.Timeout <= 0 {
+		metadataTimeout = 15 * time.Second
+	}
+
 	// --- Initialize Notifiers ---
 	for _, notifierName := range cfg.Automation.Notifications {
 		switch notifierName {
@@ -1810,7 +1837,7 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 	m.postProcessor = NewPostProcessor(cfg, m.logger, models.NewMediaRepository(m.db), m.notifiers)
 
 	// Create a TMDB client instance to be shared
-	tmdbClient := metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language)
+	tmdbClient := metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language, metadataTimeout)
 
 	// Helper function to initialize metadata providers
 	initMetadataProvider := func(provider string) metadata.Client {
@@ -1818,13 +1845,13 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 		case "tmdb":
 			return tmdbClient
 		case "imdb":
-			return metadata.NewIMDBClient(cfg.Metadata.IMDB.APIKey)
+			return metadata.NewIMDBClient(cfg.Metadata.IMDB.APIKey, metadataTimeout)
 		case "tvmaze":
-			return metadata.NewTVmazeClient()
+			return metadata.NewTVmazeClient(metadataTimeout)
 		case "anilist":
-			return metadata.NewAniListClient()
+			return metadata.NewAniListClient(metadataTimeout)
 		case "trakt":
-			return metadata.NewTraktClient(cfg.Metadata.Trakt.ClientID, tmdbClient)
+			return metadata.NewTraktClient(cfg.Metadata.Trakt.ClientID, tmdbClient, metadataTimeout)
 		}
 		return nil
 	}
@@ -1833,12 +1860,11 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 	initIndexerClient := func(source config.SourceConfig) indexers.Client {
 		switch source.Type {
 		case "scarf":
-			timeout, _ := time.ParseDuration("30s")
-			return indexers.NewScarfClient(source.URL, source.APIKey, timeout)
+			return indexers.NewScarfClient(source.URL, source.APIKey, searchTimeout)
 		case "jackett":
-			return indexers.NewJackettClient(source.URL, source.APIKey)
+			return indexers.NewJackettClient(source.URL, source.APIKey, searchTimeout)
 		case "prowlarr":
-			return indexers.NewProwlarrClient(source.URL, source.APIKey)
+			return indexers.NewProwlarrClient(source.URL, source.APIKey, searchTimeout)
 		}
 		return nil
 	}
