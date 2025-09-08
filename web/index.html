@@ -27,6 +27,7 @@
         button { background-color: var(--primary-color); border-color: var(--primary-color); cursor: pointer; font-weight: bold; }
         button:hover { opacity: 0.9; }
         button:disabled { background-color: #555; cursor: not-allowed; }
+        button:focus { outline: 1px solid var(--primary-color); }
         button.secondary { background-color: var(--header-bg); color: var(--text-color); }
         button.danger { background-color: var(--error-color); border-color: var(--error-color); }
 
@@ -183,6 +184,21 @@
             display: flex;
             gap: 1rem; /* Creates space between items in the same row */
         }
+
+        /* Log Viewer Styles */
+        #log-container {
+            background-color: var(--header-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 1rem;
+            height: 60vh;
+            overflow-y: scroll;
+            font-family: monospace;
+            font-size: 0.9rem;
+            white-space: pre-wrap;
+            color: var(--text-color);
+            line-height: 1.5;
+        }
     </style>
 </head>
 <body>
@@ -205,8 +221,8 @@
         <nav id="nav-buttons">
             <button data-page="media-page" class="active">Media</button>
             <button data-page="calendar-page">Calendar</button>
-            <!--<button data-page="add-page">Add Media</button>-->
             <button data-page="settings-page">Settings</button>
+            <button data-page="logs-page">Logs</button>
         </nav>
 
         <div id="media-page" class="page active">
@@ -237,77 +253,6 @@
             <div id='calendar'></div>
         </div>
 
-        <div id="add-page" class="page">
-            <form id="add-media-form">
-                <h2>Add New Media</h2>
-                
-                <div class="form-row">
-                    <select name="type" id="media-type" required>
-                        <option value="movie">Movie</option>
-                        <option value="tvshow">TV Show</option>
-                        <option value="anime">Anime</option>
-                    </select>
-                </div>
-
-                <div class="form-row">
-                    <input type="text" name="search-query" id="search-query" placeholder="Search by title..." required>
-                    <button type="button" id="search-metadata-btn">Search</button>
-                </div>
-
-                <div id="metadata-results" class="search-results"></div>
-
-                <input type="hidden" name="id" id="id-input">
-
-                <div class="form-row">
-                    <input type="text" name="title" id="title-input" placeholder="Title" required>
-                    <input type="number" name="year" id="year-input" placeholder="Year" min="1900" max="2030">
-                </div>
-
-                <div id="tv-show-options" class="form-row" style="display: none;">
-                    <select name="start_season" id="start-season-select"></select>
-                    <select name="start_episode" id="start-episode-select"></select>
-                </div>
-
-                <div class="form-row">
-                    <select name="language" id="language-select">
-                        <option value="en">English</option>
-                        <option value="es">Spanish</option>
-                        <option value="fr">French</option>
-                        <option value="de">German</option>
-                        <option value="it">Italian</option>
-                        <option value="pt">Portuguese</option>
-                    </select>
-                </div>
-
-                <div class="form-row">
-                    <select name="min_quality" id="min-quality" required>
-                        <option value="360p">360p</option>
-                        <option value="480p">480p</option>
-                        <option value="720p" selected>720p</option>
-                        <option value="1080p">1080p</option>
-                        <option value="1440p">1440p</option>
-                        <option value="2160p">2160p (4K)</option>
-                    </select>
-                    <select name="max_quality" id="max-quality" required>
-                        <option value="360p">360p</option>
-                        <option value="480p">480p</option>
-                        <option value="720p">720p</option>
-                        <option value="1080p" selected>1080p</option>
-                        <option value="1440p">1440p</option>
-                        <option value="2160p">2160p (4K)</option>
-                    </select>
-                </div>
-
-                <div class="form-row">
-                    <label style="display: flex; align-items: center; gap: 0.5rem;">
-                        <input type="checkbox" name="auto_download" id="auto-download-checkbox" checked>
-                        Start downloading automatically
-                    </label>
-                </div>
-
-                <button type="submit">Add to Library</button>
-            </form>
-        </div>
         <div id="settings-page" class="page">
             <h2>Settings</h2>
             <div style="background: var(--header-bg); padding: 2rem; border-radius: 8px;">
@@ -326,17 +271,17 @@
                         <ul id="system-status-list" class="status-list">
                             <li><span>Loading...</span></li>
                         </ul>
-                        <div style="margin-top: 1rem;">
-                            <h3>Actions</h3>
-                            <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-                                 <button id="test-torrent-btn">Test Torrent Client</button>
-                                 <button id="test-indexer-btn">Test Indexers</button>
-                                 <button class="danger" id="clear-failed-btn">Clear all failed</button>
-                            </div>
-                        </div>
                     </div>
                 </div>
             </div>
+        </div>
+        <div id="logs-page" class="page">
+            <h2>Application Logs</h2>
+            <div class="filter-bar">
+                <input type="search" id="log-filter" placeholder="Filter logs..." style="flex: 1;">
+                <button id="clear-logs-btn" class="danger">Clear Logs</button>
+            </div>
+            <div id="log-container"></div>
         </div>
     </main>
 
@@ -427,6 +372,13 @@
                         </select>
                     </div>
                 </div>
+
+            <div>
+                <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal;">
+                    <input type="checkbox" name="auto_download" id="modal-auto-download-checkbox" checked>
+                    Start downloading automatically
+                </label>
+            </div>
     
                 <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1rem;">
                     <button type="button" class="secondary" id="modal-add-cancel-btn">Cancel</button>
@@ -608,7 +560,7 @@
                 setupNavigation();
                 setupAddMediaModal(); // Setup the new modal
                 setupFilters();
-                setupAddMediaForm(); // Keep old tab for now
+                // setupAddMediaForm(); // Keep old tab for now
                 setupModal('media-modal');
                 setupModal('manual-search-modal');
                 setupModal('settings-modal', 'settings-cancel-btn');
@@ -633,9 +585,9 @@
                 });
 
                 // Sync quality selectors
-                const minQualityAdd = document.getElementById('min-quality');
-                const maxQualityAdd = document.getElementById('max-quality');
-                syncQualitySelectors(minQualityAdd, maxQualityAdd);
+                // const minQualityAdd = document.getElementById('min-quality');
+                // const maxQualityAdd = document.getElementById('max-quality');
+                // syncQualitySelectors(minQualityAdd, maxQualityAdd);
                 const minQualitySettings = document.getElementById('settings-min-quality');
                 const maxQualitySettings = document.getElementById('settings-max-quality');
                 syncQualitySelectors(minQualitySettings, maxQualitySettings);
@@ -661,6 +613,8 @@
                             checkSystemStatus();
                         } else if (pageId === 'calendar-page') {
                             initializeCalendar();
+                        } else if (pageId === 'logs-page') {
+                            initializeLogViewer();
                         }
                     }
                 });
@@ -680,6 +634,7 @@
                 refreshBtn.addEventListener('click', loadMedia);
             }
 
+            /*
             function setupAddMediaForm() {
                 const searchBtn = document.getElementById('search-metadata-btn');
                 searchBtn.addEventListener('click', searchMetadata);
@@ -687,6 +642,7 @@
                 mediaTypeSelect.addEventListener('change', () => updateTVShowOptionsVisibility(mediaTypeSelect, tvShowOptions));
                 updateTVShowOptionsVisibility(mediaTypeSelect, tvShowOptions); // Check on initial load
             }
+            */
 
             function setupModal(modalId, cancelBtnId = null) {
                 const modal = document.getElementById(modalId);
@@ -847,6 +803,7 @@
                 }
             }
 
+            /*
             async function addMedia(e) {
                 e.preventDefault();
                 const formData = new FormData(e.target);
@@ -882,6 +839,7 @@
                     showToast(`Error: ${error.message}`, 'error');
                 }
             }
+            */
 
             async function addMediaFromModal(e) {
                 e.preventDefault();
@@ -902,7 +860,7 @@
                         id: form.querySelector('#modal-id-input').value,
                         min_quality: minQuality,
                         max_quality: maxQuality,
-                        auto_download: true, // Assuming default true for modal
+                        auto_download: form.querySelector('#modal-auto-download-checkbox').checked,
                     };
                     if (body.type === 'tvshow' || body.type === 'anime') {
                         body.start_season = parseInt(form.querySelector('#modal-start-season-select').value);
@@ -926,6 +884,7 @@
                 }
             }
 
+            /*
             async function searchMetadata() {
                 const query = document.getElementById('search-query').value;
                 const type = document.getElementById('media-type').value;
@@ -945,6 +904,7 @@
                     resultsContainer.innerHTML = '<p style="color:var(--error-color)">Search error</p>';
                 }
             }
+            */
             
             async function searchMetadataInModal() {
                 const query = document.getElementById('modal-search-query').value;
@@ -1413,6 +1373,53 @@
                 } catch (error) {
                     showToast(`Error: ${error.message}`, 'error');
                 }
+            }
+
+            // Logs Page Functionality
+            let logWebSocket;
+            function initializeLogViewer() {
+                const logContainer = document.getElementById('log-container');
+                const logFilter = document.getElementById('log-filter');
+                const clearLogsBtn = document.getElementById('clear-logs-btn');
+                
+                logContainer.innerHTML = ''; // Clear previous logs
+
+                // Close existing connection if it exists
+                if (logWebSocket && logWebSocket.readyState < 2) {
+                    logWebSocket.close();
+                }
+                
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${wsProtocol}//${window.location.host}/api/v1/logs/ws`;
+
+                logWebSocket = new WebSocket(wsUrl);
+
+                logWebSocket.onopen = () => {
+                    logContainer.innerHTML += '<div style="color: var(--success-color);">[WebSocket] Connection established. Waiting for logs...</div>';
+                };
+
+                logWebSocket.onmessage = (event) => {
+                    const logLine = document.createElement('div');
+                    logLine.className = 'log-line';
+                    logLine.textContent = event.data;
+                    logContainer.appendChild(logLine);
+                    logContainer.scrollTop = logContainer.scrollHeight;
+                    applyLogFilter();
+                };
+
+                logWebSocket.onclose = () => {
+                    logContainer.innerHTML += '<div style="color: var(--error-color);">[WebSocket] Connection closed.</div>';
+                };
+
+                logFilter.addEventListener('input', applyLogFilter);
+                clearLogsBtn.addEventListener('click', () => logContainer.innerHTML = '');
+            }
+            function applyLogFilter() {
+                const filterText = document.getElementById('log-filter').value.toLowerCase();
+                document.querySelectorAll('#log-container .log-line').forEach(line => {
+                    const lineVisible = line.textContent.toLowerCase().includes(filterText);
+                    line.style.display = lineVisible ? '' : 'none';
+                });
             }
         });
     </script>

@@ -86,6 +86,9 @@ func (s *Server) Start() error {
 		router.PathPrefix("/").Handler(http.FileServer(http.Dir("./web")))
 	}
 
+	// Add the WebSocket route for logs
+	api.HandleFunc("/logs/ws", s.handleLogsWebsocket)
+
 	s.httpServer = &http.Server{
 		Addr:         fmt.Sprintf(":%d", s.config.App.Port),
 		Handler:      router,
