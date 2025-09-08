@@ -9,7 +9,6 @@ import (
 	"reel/internal/config"
 	"reel/internal/core"
 	"reel/internal/utils"
-	"reel/web"
 
 	"github.com/gorilla/mux"
 )
@@ -84,7 +83,7 @@ func (s *Server) Start() error {
 
 	// Web UI (if enabled)
 	if s.config.App.UIEnabled {
-		router.PathPrefix("/").Handler(http.FileServer(http.FS(web.Files)))
+		router.PathPrefix("/").Handler(http.FileServer(http.Dir("./web")))
 	}
 
 	s.httpServer = &http.Server{
