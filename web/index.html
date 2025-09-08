@@ -205,7 +205,7 @@
     <div id="toast-container"></div>
     <div id="loading-overlay">
         <div class="spinner"></div>
-        <p>Sending to client...</p>
+        <p id="loading-message">Sending to client...</p>
     </div>
 
     <div id="login-screen">
@@ -509,8 +509,12 @@
                 });
             }
 
-            function showLoading(show) {
+            function showLoading(show, message = 'Loading...') {
+                const loadingMessage = document.getElementById('loading-message');
                 loadingOverlay.style.display = show ? 'flex' : 'none';
+                if (show) {
+                    loadingMessage.textContent = message;
+                }
             }
 
             function showToast(message, type = 'success', duration = 5000) {
@@ -1124,12 +1128,17 @@
                 const content = document.getElementById('manual-search-content');
                 content.innerHTML = '<p>Searching...</p>';
                 modal.style.display = 'flex';
+                showLoading(true, 'Searching for movie...');
                 try {
                     const response = await fetchWithAuth(`/api/v1/media/${mediaId}/search`);
                     if (!response.ok) throw new Error('Search failed');
                     const results = await response.json();
                     displayManualSearchResultsInModal(results, (r) => manualDownload(mediaId, r));
-                } catch (error) { content.innerHTML = `<p style="color:var(--error-color)">Error: ${error.message}</p>`; }
+                } catch (error) { 
+                    content.innerHTML = `<p style="color:var(--error-color)">Error: ${error.message}</p>`; 
+                } finally {
+                    showLoading(false);
+                }
             };
 
             window.manualEpisodeSearch = async function(mediaId, seasonNumber, episodeNumber) {
@@ -1137,12 +1146,17 @@
                 const content = document.getElementById('manual-search-content');
                 content.innerHTML = '<p>Searching...</p>';
                 modal.style.display = 'flex';
+                showLoading(true, 'Searching for episode...');
                 try {
                     const response = await fetchWithAuth(`/api/v1/media/${mediaId}/season/${seasonNumber}/episode/${episodeNumber}/search`);
                     if (!response.ok) throw new Error('Search failed');
                     const results = await response.json();
                     displayManualSearchResultsInModal(results, (r) => manualEpisodeDownload(mediaId, seasonNumber, episodeNumber, r));
-                } catch (error) { content.innerHTML = `<p style="color:var(--error-color)">Error: ${error.message}</p>`; }
+                } catch (error) { 
+                    content.innerHTML = `<p style="color:var(--error-color)">Error: ${error.message}</p>`; 
+                } finally { 
+                    showLoading(false);
+                }
             };
 
             function displayManualSearchResultsInModal(results, downloadCallback) {
@@ -1154,7 +1168,7 @@
             }
 
             window.manualDownload = async function(mediaId, result) {
-                showLoading(true);
+                showLoading(true, 'Sending to client...');
                 try {
                     const response = await fetchWithAuth(`/api/v1/media/${mediaId}/download`, { method: 'POST', body: result });
                     if (!response.ok) throw new Error('Failed to send to client');
@@ -1166,7 +1180,7 @@
             };
 
             window.manualEpisodeDownload = async function(mediaId, seasonNumber, episodeNumber, result) {
-                showLoading(true);
+                showLoading(true, 'Sending to client...');
                 try {
                     const response = await fetchWithAuth(`/api/v1/media/${mediaId}/season/${seasonNumber}/episode/${episodeNumber}/download`, { method: 'POST', body: result });
                     if (!response.ok) throw new Error('Failed to send to client');
