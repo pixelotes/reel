@@ -161,6 +161,28 @@
         .CodeMirror-cursor {
             border-left: 1px solid var(--text-color) !important;
         }
+
+        /* Add Media Modal Form Styling */
+        #modal-add-media-form {
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem; /* Adds vertical spacing between all form rows */
+        }
+        #modal-add-media-form .form-row {
+            margin-bottom: 0; /* Remove old margin to rely on the new gap */
+        }
+        /* Styling for labels within the modal form */
+        #modal-add-media-form label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+        /* Flexbox layout for rows containing multiple items */
+        #modal-add-media-form .form-row {
+            display: flex;
+            gap: 1rem; /* Creates space between items in the same row */
+        }
     </style>
 </head>
 <body>
@@ -183,7 +205,7 @@
         <nav id="nav-buttons">
             <button data-page="media-page" class="active">Media</button>
             <button data-page="calendar-page">Calendar</button>
-            <button data-page="add-page">Add Media</button>
+            <!--<button data-page="add-page">Add Media</button>-->
             <button data-page="settings-page">Settings</button>
         </nav>
 
@@ -206,6 +228,7 @@
                 </select>
                 <input type="search" id="search-filter" placeholder="Search titles...">
                 <button id="refresh-btn">🔄</button>
+                <button id="add-media-btn">+ Add Media</button>
             </div>
             <div id="media-grid" class="media-grid"></div>
         </div>
@@ -303,6 +326,14 @@
                         <ul id="system-status-list" class="status-list">
                             <li><span>Loading...</span></li>
                         </ul>
+                        <div style="margin-top: 1rem;">
+                            <h3>Actions</h3>
+                            <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                                 <button id="test-torrent-btn">Test Torrent Client</button>
+                                 <button id="test-indexer-btn">Test Indexers</button>
+                                 <button class="danger" id="clear-failed-btn">Clear all failed</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -336,6 +367,72 @@
                 >
                 </video>
             </div>
+        </div>
+    </div>
+
+    <div id="add-media-modal" class="modal-backdrop">
+        <div class="modal-content">
+            <span class="modal-close">&times;</span>
+            <form id="modal-add-media-form">
+                <h2>Add New Media</h2>
+                
+                <div>
+                    <label for="modal-media-type">Media Type</label>
+                    <select name="type" id="modal-media-type" required>
+                        <option value="movie" selected>Movie</option>
+                        <option value="tvshow">TV Show</option>
+                        <option value="anime">Anime</option>
+                    </select>
+                </div>
+    
+                <div class="form-row">
+                    <input type="text" name="search-query" id="modal-search-query" placeholder="Search by title..." required style="flex: 1;">
+                    <button type="button" id="modal-search-metadata-btn">Search</button>
+                </div>
+    
+                <div id="modal-metadata-results" class="search-results"></div>
+    
+                <input type="hidden" name="id" id="modal-id-input">
+    
+                <div class="form-row">
+                    <input type="text" name="title" id="modal-title-input" placeholder="Title" required style="flex: 2;">
+                    <input type="number" name="year" id="modal-year-input" placeholder="Year" min="1900" max="2030" style="flex: 1;">
+                </div>
+                
+                <div id="modal-tv-show-options" style="display: none;">
+                    <label>Starting Episode</label>
+                    <div class="form-row">
+                        <select name="start_season" id="modal-start-season-select"></select>
+                        <select name="start_episode" id="modal-start-episode-select"></select>
+                    </div>
+                </div>
+    
+                <div class="form-row">
+                    <div style="flex: 1;">
+                        <label for="modal-min-quality">Minimum Quality</label>
+                        <select name="min_quality" id="modal-min-quality" required>
+                            <option value="360p">360p</option>
+                            <option value="480p">480p</option>
+                            <option value="720p" selected>720p</option>
+                            <option value="1080p">1080p</option>
+                        </select>
+                    </div>
+                    <div style="flex: 1;">
+                        <label for="modal-max-quality">Maximum Quality</label>
+                        <select name="max_quality" id="modal-max-quality" required>
+                            <option value="360p">360p</option>
+                            <option value="480p">480p</option>
+                            <option value="720p">720p</option>
+                            <option value="1080p" selected>1080p</option>
+                        </select>
+                    </div>
+                </div>
+    
+                <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1rem;">
+                    <button type="button" class="secondary" id="modal-add-cancel-btn">Cancel</button>
+                    <button type="submit">Add to Library</button>
+                </div>
+            </form>
         </div>
     </div>
 
@@ -411,6 +508,41 @@
             const loadingOverlay = document.getElementById('loading-overlay');
 
             // --- New UI Functions ---
+            function updateTVShowOptionsVisibility(typeSelector, optionsContainer) {
+                const selectedType = typeSelector.value;
+                optionsContainer.style.display = (selectedType === 'tvshow' || selectedType === 'anime') ? 'block' : 'none';
+            }
+
+            function setupAddMediaModal() {
+                const modal = document.getElementById('add-media-modal');
+                const openBtn = document.getElementById('add-media-btn');
+                const cancelBtn = document.getElementById('modal-add-cancel-btn');
+                const closeBtn = modal.querySelector('.modal-close');
+                const form = document.getElementById('modal-add-media-form');
+
+                const closeModal = () => {
+                    modal.style.display = 'none';
+                    form.reset();
+                    document.getElementById('modal-metadata-results').innerHTML = '';
+                    document.getElementById('modal-tv-show-options').style.display = 'none';
+                };
+                
+                const modalMediaTypeSelect = document.getElementById('modal-media-type');
+                const modalTvShowOptions = document.getElementById('modal-tv-show-options');
+
+                openBtn.addEventListener('click', () => {
+                    modal.style.display = 'flex';
+                    updateTVShowOptionsVisibility(modalMediaTypeSelect, modalTvShowOptions);
+                });
+                cancelBtn.addEventListener('click', closeModal);
+                closeBtn.addEventListener('click', closeModal);
+                window.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+                modalMediaTypeSelect.addEventListener('change', () => updateTVShowOptionsVisibility(modalMediaTypeSelect, modalTvShowOptions));
+                
+                document.getElementById('modal-search-metadata-btn').addEventListener('click', searchMetadataInModal);
+                form.addEventListener('submit', addMediaFromModal);
+            }
+
             function syncQualitySelectors(minSelector, maxSelector) {
                 minSelector.addEventListener('change', () => {
                     if (RESOLUTION_RANK[minSelector.value] > RESOLUTION_RANK[maxSelector.value]) {
@@ -428,14 +560,6 @@
             function showLoading(show) {
                 loadingOverlay.style.display = show ? 'flex' : 'none';
             }
-
-            // Sync quality selectors
-            const minQualityAdd = document.getElementById('min-quality');
-            const maxQualityAdd = document.getElementById('max-quality');
-            syncQualitySelectors(minQualityAdd, maxQualityAdd);
-            const minQualitySettings = document.getElementById('settings-min-quality');
-            const maxQualitySettings = document.getElementById('settings-max-quality');
-            syncQualitySelectors(minQualitySettings, maxQualitySettings);
 
             function showToast(message, type = 'success', duration = 5000) {
                 const container = document.getElementById('toast-container');
@@ -482,8 +606,9 @@
             // App Initialization
             function initializeApp() {
                 setupNavigation();
+                setupAddMediaModal(); // Setup the new modal
                 setupFilters();
-                setupAddMediaForm();
+                setupAddMediaForm(); // Keep old tab for now
                 setupModal('media-modal');
                 setupModal('manual-search-modal');
                 setupModal('settings-modal', 'settings-cancel-btn');
@@ -494,6 +619,31 @@
                 setInterval(refreshData, 2000);
                 document.getElementById('refresh-status-btn').addEventListener('click', checkSystemStatus);
                 document.getElementById('save-config-btn').addEventListener('click', saveConfig);
+                
+                document.getElementById('test-torrent-btn').addEventListener('click', async () => { /* Implement test logic */ });
+                document.getElementById('test-indexer-btn').addEventListener('click', async () => { /* Implement test logic */ });
+                document.getElementById('clear-failed-btn').addEventListener('click', async () => {
+                    showToast('Clear all failed media? Click to confirm.', 'warning', 5000)
+                    document.getElementById('toast-container').lastChild.onclick = async () => {
+                        try {
+                            const response = await fetchWithAuth('/api/v1/media/clear-failed', { method: 'POST' });
+                            if (response.ok) { showToast('Failed items cleared.'); loadMedia(); }
+                        } catch (error) { showToast('Failed to clear items.', 'error'); }
+                    };
+                });
+
+                // Sync quality selectors
+                const minQualityAdd = document.getElementById('min-quality');
+                const maxQualityAdd = document.getElementById('max-quality');
+                syncQualitySelectors(minQualityAdd, maxQualityAdd);
+                const minQualitySettings = document.getElementById('settings-min-quality');
+                const maxQualitySettings = document.getElementById('settings-max-quality');
+                syncQualitySelectors(minQualitySettings, maxQualitySettings);
+                
+                // Sync quality selectors for the new modal
+                const minQualityModal = document.getElementById('modal-min-quality');
+                const maxQualityModal = document.getElementById('modal-max-quality');
+                syncQualitySelectors(minQualityModal, maxQualityModal);
             }
 
             function setupNavigation() {
@@ -533,10 +683,9 @@
             function setupAddMediaForm() {
                 const searchBtn = document.getElementById('search-metadata-btn');
                 searchBtn.addEventListener('click', searchMetadata);
-                addMediaForm.addEventListener('submit', addMedia);
-                mediaTypeSelect.addEventListener('change', () => {
-                    tvShowOptions.style.display = (mediaTypeSelect.value === 'tvshow' || mediaTypeSelect.value === 'anime') ? 'flex' : 'none';
-                });
+                addMediaForm.addEventListener('submit', addMedia); 
+                mediaTypeSelect.addEventListener('change', () => updateTVShowOptionsVisibility(mediaTypeSelect, tvShowOptions));
+                updateTVShowOptionsVisibility(mediaTypeSelect, tvShowOptions); // Check on initial load
             }
 
             function setupModal(modalId, cancelBtnId = null) {
@@ -734,6 +883,49 @@
                 }
             }
 
+            async function addMediaFromModal(e) {
+                e.preventDefault();
+                const form = e.target;
+                const minQuality = form.querySelector('#modal-min-quality').value;
+                const maxQuality = form.querySelector('#modal-max-quality').value;
+
+                if (RESOLUTION_RANK[minQuality] > RESOLUTION_RANK[maxQuality]) {
+                    showToast('Minimum quality cannot be higher than maximum quality.', 'error');
+                    return;
+                }
+                
+                try {
+                    const body = {
+                        type: form.querySelector('#modal-media-type').value,
+                        title: form.querySelector('#modal-title-input').value,
+                        year: parseInt(form.querySelector('#modal-year-input').value),
+                        id: form.querySelector('#modal-id-input').value,
+                        min_quality: minQuality,
+                        max_quality: maxQuality,
+                        auto_download: true, // Assuming default true for modal
+                    };
+                    if (body.type === 'tvshow' || body.type === 'anime') {
+                        body.start_season = parseInt(form.querySelector('#modal-start-season-select').value);
+                        body.start_episode = parseInt(form.querySelector('#modal-start-episode-select').value);
+                    }
+
+                    const response = await fetchWithAuth('/api/v1/media', { method: 'POST', body: body });
+                    
+                    if (response.ok) {
+                        showToast('Media added successfully!');
+                        document.getElementById('add-media-modal').style.display = 'none';
+                        form.reset();
+                        document.getElementById('modal-metadata-results').innerHTML = '';
+                        loadMedia(); // Refresh media grid
+                    } else {
+                        const error = await response.json();
+                        throw new Error(error.error || 'Failed to add media');
+                    }
+                } catch (error) {
+                    showToast(`Error: ${error.message}`, 'error');
+                }
+            }
+
             async function searchMetadata() {
                 const query = document.getElementById('search-query').value;
                 const type = document.getElementById('media-type').value;
@@ -744,7 +936,27 @@
                     const response = await fetchWithAuth(`/api/v1/search-metadata?q=${encodeURIComponent(query)}&type=${type}`);
                     if (response.ok) {
                         const results = await response.json();
-                        displayMetadataResults(results);
+                        displayMetadataResults(results, 'tab');
+                    } else {
+						const error = await response.json();
+                        resultsContainer.innerHTML = `<p style="color:var(--error-color)">Search failed: ${error.error}</p>`;
+                    }
+                } catch (error) {
+                    resultsContainer.innerHTML = '<p style="color:var(--error-color)">Search error</p>';
+                }
+            }
+            
+            async function searchMetadataInModal() {
+                const query = document.getElementById('modal-search-query').value;
+                const type = document.getElementById('modal-media-type').value;
+                const resultsContainer = document.getElementById('modal-metadata-results');
+                if (!query) return;
+                resultsContainer.innerHTML = '<p>Searching...</p>';
+                try {
+                    const response = await fetchWithAuth(`/api/v1/search-metadata?q=${encodeURIComponent(query)}&type=${type}`);
+                    if (response.ok) {
+                        const results = await response.json();
+                        displayMetadataResults(results, 'modal');
                     } else {
 						const error = await response.json();
                         resultsContainer.innerHTML = `<p style="color:var(--error-color)">Search failed: ${error.error}</p>`;
@@ -754,14 +966,14 @@
                 }
             }
 
-            function displayMetadataResults(results) {
-                const container = document.getElementById('metadata-results');
+            function displayMetadataResults(results, target = 'tab') {
+                const container = document.getElementById(target === 'modal' ? 'modal-metadata-results' : 'metadata-results');
                 if (!results || results.length === 0) {
                     container.innerHTML = '<p>No results found</p>';
                     return;
                 }
                 container.innerHTML = results.map(item => `
-                    <div class="search-result" onclick="selectMetadataItem(this, ${JSON.stringify(item).replace(/"/g, '&quot;')})">
+                    <div class="search-result" onclick="selectMetadataItem(this, ${JSON.stringify(item).replace(/"/g, '&quot;')}, '${target}')">
                         ${item.poster_url ? `<img src="${item.poster_url}" alt="${item.title}">` : '<div style="width:60px;height:90px;background:var(--border-color);border-radius:4px;"></div>'}
                         <div class="search-result-info">
                             <div class="search-result-title">${item.title}</div>
@@ -771,20 +983,23 @@
                 `).join('');
             }
 
-            window.selectMetadataItem = function(element, item) {
-                document.getElementById('title-input').value = item.title;
-                document.getElementById('year-input').value = item.year;
-                document.getElementById('id-input').value = item.id;
-                document.getElementById('metadata-results').innerHTML = '';
+            window.selectMetadataItem = function(element, item, target = 'tab') {
+                const prefix = target === 'modal' ? 'modal-' : '';
+                document.getElementById(`${prefix}title-input`).value = item.title;
+                document.getElementById(`${prefix}year-input`).value = item.year;
+                document.getElementById(`${prefix}id-input`).value = item.id;
+                document.getElementById(`${prefix}metadata-results`).innerHTML = '';
 
-                if (mediaTypeSelect.value === 'tvshow' || mediaTypeSelect.value === 'anime') {
-                    populateTVEpisodeSelectors(item.seasons);
+                const currentMediaType = document.getElementById(`${prefix}media-type`).value;
+                if (currentMediaType === 'tvshow' || currentMediaType === 'anime') {
+                    populateTVEpisodeSelectors(item.seasons, target);
                 }
             };
             
-            function populateTVEpisodeSelectors(seasons) {
-                const seasonSelect = document.getElementById('start-season-select');
-                const episodeSelect = document.getElementById('start-episode-select');
+            function populateTVEpisodeSelectors(seasons, target = 'tab') {
+                const prefix = target === 'modal' ? 'modal-' : '';
+                const seasonSelect = document.getElementById(`${prefix}start-season-select`);
+                const episodeSelect = document.getElementById(`${prefix}start-episode-select`);
                 seasonSelect.innerHTML = '';
                 episodeSelect.innerHTML = '';
                 const seasonNumbers = Object.keys(seasons).map(Number).sort((a,b) => a - b);
@@ -794,7 +1009,7 @@
                 function updateEpisodes() {
                     const selectedSeason = seasonSelect.value;
                     episodeSelect.innerHTML = '';
-                    if (seasons[selectedSeason]) {
+                    if (seasons && seasons[selectedSeason]) {
                         seasons[selectedSeason].forEach(ep => {
                             episodeSelect.innerHTML += `<option value="${ep.episode_number}">Episode ${ep.episode_number} - ${ep.title}</option>`;
                         });
