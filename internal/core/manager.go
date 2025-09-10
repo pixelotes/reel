@@ -287,6 +287,14 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		m.torrentClient = torrent.NewTransmissionClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password)
 	case "qbittorrent":
 		m.torrentClient = torrent.NewQBittorrentClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password)
+	case "aria2":
+		m.torrentClient = torrent.NewAria2Client(cfg.TorrentClient.Host, cfg.TorrentClient.Secret)
+	case "deluge:"
+		client, err := torrent.NewDelugeClient(cfg.TorrentClient.Host, cfg.TorrentClient.Password)
+		if err != nil {
+			m.logger.Fatal("Failed to create Deluge client:", err)
+		}
+		m.torrentClient = client
 	default:
 		logger.Fatal("Unsupported torrent client type:", cfg.TorrentClient.Type)
 	}
