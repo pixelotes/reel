@@ -101,29 +101,60 @@ func (a *Aria2Client) AddTorrentFile(fileContent []byte, downloadPath string) (s
 }
 
 func (a *Aria2Client) GetTorrentStatus(hash string) (TorrentStatus, error) {
-	fields := []string{"gid", "infoHash", "status", "totalLength", "completedLength", "downloadSpeed", "uploadSpeed", "connections", "numSeeders", "bittorrent"}
-	result, err := a.sendRequest("aria2.tellStatus", hash, fields)
+	// Fields to request from the tellStatus method
+	statusFields := []string{
+		"gid", "infoHash", "status", "totalLength", "completedLength", "uploadLength",
+		"downloadSpeed", "uploadSpeed", "dir", "bittorrent",
+	}
+	statusResult, err := a.sendRequest("aria2.tellStatus", hash, statusFields)
 	if err != nil {
 		return TorrentStatus{}, err
 	}
 
-	data := result.(map[string]interface{})
+	// --- New call to get the list of files ---
+	filesResult, err := a.sendRequest("aria2.getFiles", hash)
+	if err != nil {
+		return TorrentStatus{}, fmt.Errorf("could not get files for torrent: %w", err)
+	}
+
+	data := statusResult.(map[string]interface{})
+	filesData := filesResult.([]interface{})
+
+	// Parse numeric values from strings
 	totalLength, _ := strconv.ParseFloat(data["totalLength"].(string), 64)
 	completedLength, _ := strconv.ParseFloat(data["completedLength"].(string), 64)
+	uploadLength, _ := strconv.ParseFloat(data["uploadLength"].(string), 64)
 	downloadSpeed, _ := strconv.ParseFloat(data["downloadSpeed"].(string), 64)
 	uploadSpeed, _ := strconv.ParseFloat(data["uploadSpeed"].(string), 64)
-	//numSeeders, _ := strconv.ParseFloat(data["numSeeders"].(string), 64)
 
+	// --- Correctly extract the torrent name from the bittorrent struct ---
 	var name string
 	if bittorrent, ok := data["bittorrent"].(map[string]interface{}); ok {
 		if info, ok := bittorrent["info"].(map[string]interface{}); ok {
-			name = info["name"].(string)
+			if nameVal, ok := info["name"].(string); ok {
+				name = nameVal
+			}
 		}
 	}
 
+	// --- Calculate Progress and Upload Ratio ---
 	progress := 0.0
 	if totalLength > 0 {
 		progress = completedLength / totalLength
+	}
+
+	uploadRatio := 0.0
+	if totalLength > 0 {
+		uploadRatio = uploadLength / totalLength
+	}
+
+	// --- Process the file list from the getFiles call ---
+	var fileList []string
+	for _, fileEntry := range filesData {
+		fileMap := fileEntry.(map[string]interface{})
+		if path, ok := fileMap["path"].(string); ok {
+			fileList = append(fileList, path)
+		}
 	}
 
 	return TorrentStatus{
@@ -133,8 +164,10 @@ func (a *Aria2Client) GetTorrentStatus(hash string) (TorrentStatus, error) {
 		IsCompleted:  data["status"].(string) == "complete",
 		DownloadRate: int64(downloadSpeed),
 		UploadRate:   int64(uploadSpeed),
-		ETA:          0, // aria2 does not provide ETA directly
-		UploadRatio:  0, // aria2 does not provide upload ratio directly
+		DownloadDir:  data["dir"].(string), // Correctly parse download directory
+		Files:        fileList,             // Populate the file list
+		UploadRatio:  uploadRatio,          // Populate the upload ratio
+		ETA:          0,                    // ETA is still not provided directly by Aria2
 	}, nil
 }
 
