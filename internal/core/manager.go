@@ -1979,6 +1979,12 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 		m.torrentClient = torrent.NewQBittorrentClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password)
 	case "aria2":
 		m.torrentClient = torrent.NewAria2Client(cfg.TorrentClient.Host, cfg.TorrentClient.Secret)
+	case "deluge": // Add this case
+		client, err := torrent.NewDelugeClient(cfg.TorrentClient.Host, cfg.TorrentClient.Password)
+		if err != nil {
+			m.logger.Fatal("Failed to create Deluge client:", err)
+		}
+		m.torrentClient = client
 	default:
 		m.logger.Fatal("Unsupported torrent client type:", cfg.TorrentClient.Type)
 	}
