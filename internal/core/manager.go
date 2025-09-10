@@ -509,7 +509,8 @@ func (m *Manager) searchAndDownloadNextEpisode(media *models.Media) {
 			if downloadsStarted >= m.config.Automation.MaxConcurrentDownloads {
 				return
 			}
-			if episode.Status == models.StatusPending {
+			// Check for both "pending" and "failed" episodes to retry.
+			if episode.Status == models.StatusPending || episode.Status == models.StatusFailed {
 				m.logger.Info("Searching for episode:", media.Title, fmt.Sprintf("S%02dE%02d", season.SeasonNumber, episode.EpisodeNumber))
 				results, err := m.performSearch(media, season.SeasonNumber, episode.EpisodeNumber)
 				if err != nil {
