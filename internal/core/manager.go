@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"github.com/shirou/gopsutil/disk"
 	"golang.org/x/net/html/charset"
 	"gopkg.in/yaml.v3"
 
@@ -1220,6 +1221,25 @@ func (m *Manager) StartDownload(id int, torrent indexers.IndexerResult) error {
 		downloadPath = m.config.TorrentClient.DownloadPath // Fallback
 	}
 
+	// --- New Disk Space Check ---
+	const securityBuffer int64 = 500 * 1024 * 1024 // 500MB
+	requiredSpace := uint64(torrent.Size + securityBuffer)
+
+	usage, err := disk.Usage(downloadPath)
+	if err != nil {
+		m.logger.Error("Failed to check disk space for path", downloadPath, ":", err)
+		return fmt.Errorf("could not verify disk space: %w", err)
+	}
+
+	if usage.Free < requiredSpace {
+		m.logger.Warn(fmt.Sprintf("Not enough disk space in %s. Required: %d bytes, Available: %d bytes", downloadPath, requiredSpace, usage.Free))
+		// You would need to add a new notification method like NotifyNotEnoughSpace to your notifiers
+		m.notifyNotEnoughSpace(media, torrent.Title)
+		m.mediaRepo.UpdateStatus(id, models.StatusFailed)
+		return fmt.Errorf("not enough disk space to download '%s'", torrent.Title)
+	}
+	// --- End of Check ---
+
 	m.logger.Info("Sending to download client:", m.config.TorrentClient.Type)
 
 	var hash string
@@ -1254,8 +1274,6 @@ func (m *Manager) StartDownload(id int, torrent indexers.IndexerResult) error {
 	m.notifyDownloadStarted(media, torrent.Title)
 	m.logger.Info("Torrent successfully sent to download client! Hash:", hash)
 
-	m.logger.Info("Torrent successfully sent to download client! Hash:", hash)
-
 	if err := m.mediaRepo.UpdateDownloadInfo(id, models.StatusDownloading, &hash, &torrent.Title); err != nil {
 		m.logger.Error("Failed to update media status after adding torrent:", err)
 		return err
@@ -1285,6 +1303,25 @@ func (m *Manager) StartEpisodeDownload(mediaID int, seasonNumber int, episodeNum
 	default:
 		downloadPath = m.config.TorrentClient.DownloadPath // Fallback
 	}
+
+	// --- New Disk Space Check ---
+	const securityBuffer int64 = 500 * 1024 * 1024 // 500MB
+	requiredSpace := uint64(torrent.Size + securityBuffer)
+
+	usage, err := disk.Usage(downloadPath)
+	if err != nil {
+		m.logger.Error("Failed to check disk space for path", downloadPath, ":", err)
+		return fmt.Errorf("could not verify disk space: %w", err)
+	}
+
+	if usage.Free < requiredSpace {
+		m.logger.Warn(fmt.Sprintf("Not enough disk space in %s. Required: %d bytes, Available: %d bytes", downloadPath, requiredSpace, usage.Free))
+		// You would need to add a new notification method like NotifyNotEnoughSpace to your notifiers
+		m.notifyNotEnoughSpace(media, torrent.Title)
+		m.mediaRepo.UpdateEpisodeDownloadInfo(mediaID, seasonNumber, episodeNumber, models.StatusFailed, nil, nil)
+		return fmt.Errorf("not enough disk space to download '%s'", torrent.Title)
+	}
+	// --- End of Check ---
 
 	m.logger.Info(fmt.Sprintf("Starting manual download for %s S%02dE%02d: %s",
 		media.Title, seasonNumber, episodeNumber, torrent.Title))
@@ -1408,6 +1445,13 @@ func (m *Manager) notifyDownloadStarted(media *models.Media, torrentName string)
 	for _, n := range m.notifiers {
 		// Run in a goroutine to avoid blocking the main application flow.
 		go n.NotifyDownloadStart(media, torrentName)
+	}
+}
+
+func (m *Manager) notifyNotEnoughSpace(media *models.Media, torrentName string) {
+	for _, n := range m.notifiers {
+		// Run in a goroutine to avoid blocking the main application flow.
+		go n.NotifyNotEnoughSpace(media, torrentName)
 	}
 }
 
