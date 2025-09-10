@@ -185,7 +185,7 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 				m.notifiers = append(m.notifiers, client)
 				logger.Info("Pushbullet notifier enabled.")
 			}
-			// Add other notifiers here in the future
+			// Other notifiers will go here in the future
 		}
 	}
 
@@ -1750,7 +1750,7 @@ func (m *Manager) UpdateMediaSettings(id int, minQuality, maxQuality string, aut
 	return m.mediaRepo.UpdateSettings(id, minQuality, maxQuality, autoDownload)
 }
 
-// Add this function to read the config file content
+// This function reads the config file content
 func (m *Manager) GetConfig() (string, error) {
 	// Assumes the config path is stored in the config object,
 	// but the Load function doesn't store it. We'll need to know the path.
@@ -1979,7 +1979,7 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 		m.torrentClient = torrent.NewQBittorrentClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password)
 	case "aria2":
 		m.torrentClient = torrent.NewAria2Client(cfg.TorrentClient.Host, cfg.TorrentClient.Secret)
-	case "deluge": // Add this case
+	case "deluge":
 		client, err := torrent.NewDelugeClient(cfg.TorrentClient.Host, cfg.TorrentClient.Password)
 		if err != nil {
 			m.logger.Fatal("Failed to create Deluge client:", err)

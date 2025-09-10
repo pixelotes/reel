@@ -14,7 +14,7 @@ func ConvertMagnetToTorrent(magnetURI string, timeout time.Duration, dataPath st
 	cfg := torrent.NewDefaultClientConfig()
 	cfg.NoUpload = true // We are only interested in metadata
 	cfg.DisablePEX = true
-	cfg.DataDir = dataPath // Added line
+	cfg.DataDir = dataPath
 
 	client, err := torrent.NewClient(cfg)
 	if err != nil {

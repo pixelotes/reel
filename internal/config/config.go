@@ -144,5 +144,5 @@ func (c *Config) Save(path string) error {
 }
 
 func loadFromEnv(cfg *Config) {
-	// Add environment variable overrides here if needed
+	// Environment variable overrides will go here if needed
 }

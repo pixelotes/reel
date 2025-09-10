@@ -69,7 +69,7 @@ func (s *Server) Start() error {
 	protected.HandleFunc("/stream/subtitles/{id:[0-9]+}", s.apiHandler.GetSubtitles).Methods("GET")
 	protected.HandleFunc("/subtitles/{id:[0-9]+}/available", s.apiHandler.GetAvailableSubtitles).Methods("GET")
 
-	// Add this line for the config endpoint
+	// Config endpoint
 	protected.HandleFunc("/config", s.apiHandler.GetConfig).Methods("GET")
 	protected.HandleFunc("/config", s.apiHandler.SaveConfig).Methods("POST")
 

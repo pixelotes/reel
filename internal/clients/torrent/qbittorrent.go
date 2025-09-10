@@ -45,7 +45,7 @@ func NewQBittorrentClient(host, username, password string) *qBittorrentClient {
 	}
 }
 
-func (q *qBittorrentClient) AddTrackers(hash string, trackers []string) error { // Added function
+func (q *qBittorrentClient) AddTrackers(hash string, trackers []string) error {
 	cookie, err := q.login()
 	if err != nil {
 		return err
@@ -173,7 +173,7 @@ func (q *qBittorrentClient) AddTorrentFile(fileContent []byte, downloadPath stri
 	}
 	part.Write(fileContent)
 	writer.WriteField("savepath", downloadPath)
-	writer.WriteField("tags", tempTag) // Add the unique tag
+	writer.WriteField("tags", tempTag)
 	writer.Close()
 
 	req, err := http.NewRequest("POST", addURL, body)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 type Aria2Client struct {
@@ -111,7 +112,7 @@ func (a *Aria2Client) GetTorrentStatus(hash string) (TorrentStatus, error) {
 		return TorrentStatus{}, err
 	}
 
-	// --- New call to get the list of files ---
+	// New call to get the list of files
 	filesResult, err := a.sendRequest("aria2.getFiles", hash)
 	if err != nil {
 		return TorrentStatus{}, fmt.Errorf("could not get files for torrent: %w", err)
@@ -120,6 +121,9 @@ func (a *Aria2Client) GetTorrentStatus(hash string) (TorrentStatus, error) {
 	data := statusResult.(map[string]interface{})
 	filesData := filesResult.([]interface{})
 
+	// The base download directory for the torrent
+	downloadDir := data["dir"].(string)
+
 	// Parse numeric values from strings
 	totalLength, _ := strconv.ParseFloat(data["totalLength"].(string), 64)
 	completedLength, _ := strconv.ParseFloat(data["completedLength"].(string), 64)
@@ -127,7 +131,7 @@ func (a *Aria2Client) GetTorrentStatus(hash string) (TorrentStatus, error) {
 	downloadSpeed, _ := strconv.ParseFloat(data["downloadSpeed"].(string), 64)
 	uploadSpeed, _ := strconv.ParseFloat(data["uploadSpeed"].(string), 64)
 
-	// --- Correctly extract the torrent name from the bittorrent struct ---
+	// Correctly extract the torrent name from the bittorrent struct
 	var name string
 	if bittorrent, ok := data["bittorrent"].(map[string]interface{}); ok {
 		if info, ok := bittorrent["info"].(map[string]interface{}); ok {
@@ -137,7 +141,7 @@ func (a *Aria2Client) GetTorrentStatus(hash string) (TorrentStatus, error) {
 		}
 	}
 
-	// --- Calculate Progress and Upload Ratio ---
+	// Calculate Progress and Upload Ratio
 	progress := 0.0
 	if totalLength > 0 {
 		progress = completedLength / totalLength
@@ -148,14 +152,19 @@ func (a *Aria2Client) GetTorrentStatus(hash string) (TorrentStatus, error) {
 		uploadRatio = uploadLength / totalLength
 	}
 
-	// --- Process the file list from the getFiles call ---
+	// --- MODIFIED SECTION ---
+	// Process the file list, converting absolute paths to relative paths
 	var fileList []string
 	for _, fileEntry := range filesData {
 		fileMap := fileEntry.(map[string]interface{})
-		if path, ok := fileMap["path"].(string); ok {
-			fileList = append(fileList, path)
+		if absolutePath, ok := fileMap["path"].(string); ok {
+			// Make the path relative to the download directory
+			relativePath := strings.TrimPrefix(absolutePath, downloadDir)
+			relativePath = strings.TrimPrefix(relativePath, "/") // Remove leading slash
+			fileList = append(fileList, relativePath)
 		}
 	}
+	// --- END OF MODIFIED SECTION ---
 
 	return TorrentStatus{
 		Hash:         data["infoHash"].(string),
@@ -164,10 +173,10 @@ func (a *Aria2Client) GetTorrentStatus(hash string) (TorrentStatus, error) {
 		IsCompleted:  data["status"].(string) == "complete",
 		DownloadRate: int64(downloadSpeed),
 		UploadRate:   int64(uploadSpeed),
-		DownloadDir:  data["dir"].(string), // Correctly parse download directory
-		Files:        fileList,             // Populate the file list
-		UploadRatio:  uploadRatio,          // Populate the upload ratio
-		ETA:          0,                    // ETA is still not provided directly by Aria2
+		DownloadDir:  downloadDir,
+		Files:        fileList, // Now contains relative paths
+		UploadRatio:  uploadRatio,
+		ETA:          0,
 	}, nil
 }
 
@@ -177,25 +186,40 @@ func (a *Aria2Client) RemoveTorrent(hash string) error {
 }
 
 func (a *Aria2Client) AddTrackers(hash string, trackers []string) error {
-	// The official way to add trackers in aria2 is to provide them when adding the torrent.
-	// This is a workaround to add them after the fact.
-	uri, err := a.sendRequest("aria2.getUris", hash)
+	// The correct way to add trackers is to use the changeOption RPC call
+	// with the bt-tracker option. This directly modifies the active torrent.
+
+	// First, get the current list of trackers
+	result, err := a.sendRequest("aria2.getOption", hash, []string{"bt-tracker"})
 	if err != nil {
-		return err
-	}
-	uriList := uri.([]interface{})
-	if len(uriList) == 0 {
-		return fmt.Errorf("could not get URI for torrent %s", hash)
+		return fmt.Errorf("could not get current trackers for torrent %s: %w", hash, err)
 	}
 
-	uriMap := uriList[0].(map[string]interface{})
-	magnetURI := uriMap["uri"].(string)
+	options := result.(map[string]interface{})
+	existingTrackersStr := options["bt-tracker"].(string)
 
-	for _, tracker := range trackers {
-		magnetURI += "&tr=" + tracker
+	// Combine existing trackers with new ones, avoiding duplicates
+	trackerSet := make(map[string]bool)
+	for _, t := range strings.Split(existingTrackersStr, ",") {
+		if t != "" {
+			trackerSet[t] = true
+		}
+	}
+	for _, t := range trackers {
+		if t != "" {
+			trackerSet[t] = true
+		}
 	}
 
-	_, err = a.sendRequest("aria2.changeUri", hash, 1, []string{magnetURI}, []string{}, 0)
+	var allTrackers []string
+	for t := range trackerSet {
+		allTrackers = append(allTrackers, t)
+	}
+
+	newTrackersStr := strings.Join(allTrackers, ",")
+
+	// Send the updated tracker list back to Aria2
+	_, err = a.sendRequest("aria2.changeOption", hash, map[string]string{"bt-tracker": newTrackersStr})
 	return err
 }
 

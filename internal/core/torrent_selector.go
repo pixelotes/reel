@@ -271,7 +271,7 @@ func (ts *TorrentSelector) filterByMinSeeders(results []indexers.IndexerResult, 
 	return filtered
 }
 
-// Add this new function to split camelCase words
+// This function splits camelCase words
 func (ts *TorrentSelector) splitCamelCase(word string) []string {
 	// Regular expression to find camelCase boundaries
 	camelCaseRegex := regexp.MustCompile(`([a-z])([A-Z])`)

@@ -167,6 +167,5 @@ func (t *TMDBClient) GetTVShowDetailsByID(tmdbID int) (*TVShowResult, error) {
 	}, nil
 }
 
-func (t *TMDBClient) SearchTVShow(title string) ([]*TVShowResult, error) { // Add this empty function
-	return nil, fmt.Errorf("TMDB TV show search not implemented")
+func (t *TMDBClient) SearchTVShow(title string) ([]*TVShowResult, error) {
 }
