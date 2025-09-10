@@ -753,7 +753,7 @@ func (m *Manager) updateShowProgress(mediaID int) {
 		return // Not a show, nothing to do
 	}
 
-	var downloadableEpisodes, downloadedEpisodes, pendingEpisodes, tbaEpisodes int
+	var downloadableEpisodes, downloadedEpisodes, pendingEpisodes, downloadingEpisodes, tbaEpisodes int
 
 	for _, season := range show.Seasons {
 		for _, episode := range season.Episodes {
@@ -765,10 +765,12 @@ func (m *Manager) updateShowProgress(mediaID int) {
 				}
 			}
 			// Count episodes for status determination
-			if episode.Status == models.StatusPending || episode.Status == models.StatusDownloading {
+			switch episode.Status {
+			case models.StatusPending:
 				pendingEpisodes++
-			}
-			if episode.Status == models.StatusTBA {
+			case models.StatusDownloading:
+				downloadingEpisodes++
+			case models.StatusTBA:
 				tbaEpisodes++
 			}
 		}
@@ -780,8 +782,12 @@ func (m *Manager) updateShowProgress(mediaID int) {
 	}
 
 	// Determine the new overall status for the media item
-	newStatus := models.StatusDownloading
-	if pendingEpisodes == 0 {
+	var newStatus models.MediaStatus
+	if downloadingEpisodes > 0 {
+		newStatus = models.StatusDownloading
+	} else if pendingEpisodes > 0 {
+		newStatus = models.StatusPending
+	} else {
 		if tbaEpisodes > 0 || strings.ToLower(show.Status) == "running" {
 			newStatus = models.StatusMonitoring
 		} else {
