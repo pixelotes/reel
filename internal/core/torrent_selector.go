@@ -212,7 +212,9 @@ func (ts *TorrentSelector) filterByRejectPatterns(results []indexers.IndexerResu
 // filterByEpisodeNumber filters torrents to only include those with the correct episode number
 func (ts *TorrentSelector) filterByEpisodeNumber(results []indexers.IndexerResult, season, episode int, stats *FilterStats) []indexers.IndexerResult {
 	var filtered []indexers.IndexerResult
-	patterns := []*regexp.Regexp{
+
+	// --- Standard SxxExx patterns ---
+	standardPatterns := []*regexp.Regexp{
 		regexp.MustCompile(fmt.Sprintf(`(?i)s0*%de0*%d(?:\D|$)`, season, episode)),
 		regexp.MustCompile(fmt.Sprintf(`(?i)(?:\D|^)%dx0*%d(?:\D|$)`, season, episode)),
 		regexp.MustCompile(fmt.Sprintf(`(?i)s%02de%02d`, season, episode)),
@@ -221,14 +223,40 @@ func (ts *TorrentSelector) filterByEpisodeNumber(results []indexers.IndexerResul
 		regexp.MustCompile(fmt.Sprintf(`(?i)%dx%d`, season, episode)),
 	}
 
+	// --- Lenient, absolute number patterns (for single-season shows) ---
+	absolutePatterns := []*regexp.Regexp{
+		// Matches " 01 ", " - 01.", "[01]", etc. It looks for the number surrounded by non-alphanumeric characters.
+		regexp.MustCompile(fmt.Sprintf(`(?i)[^a-z0-9]%02d[^a-z0-9]`, episode)),
+		regexp.MustCompile(fmt.Sprintf(`(?i)[^a-z0-9]%d[^a-z0-9]`, episode)),
+		// Matches at the very end of the string, e.g., "Series Name 01"
+		regexp.MustCompile(fmt.Sprintf(`(?i)\s%02d$`, episode)),
+		regexp.MustCompile(fmt.Sprintf(`(?i)\s%d$`, episode)),
+	}
+
 	for _, r := range results {
 		matched := false
-		for _, pattern := range patterns {
+
+		// 1. Try standard patterns first
+		for _, pattern := range standardPatterns {
 			if pattern.MatchString(r.Title) {
 				matched = true
 				break
 			}
 		}
+
+		// 2. If no standard match, and it's season 1, try absolute number patterns
+		if !matched && season == 1 {
+			for _, pattern := range absolutePatterns {
+				if pattern.MatchString(r.Title) {
+					// Extra check to avoid matching resolutions like 1080p
+					if !regexp.MustCompile(fmt.Sprintf(`(?i)%dp`, episode)).MatchString(r.Title) {
+						matched = true
+						break
+					}
+				}
+			}
+		}
+
 		if matched {
 			filtered = append(filtered, r)
 		} else {

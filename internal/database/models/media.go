@@ -74,6 +74,10 @@ type Episode struct {
 	Title         string      `json:"title"`
 	AirDate       string      `json:"air_date"`
 	Status        MediaStatus `json:"status"`
+	TorrentHash   *string     `json:"torrent_hash,omitempty" db:"torrent_hash"`
+	TorrentName   *string     `json:"torrent_name,omitempty" db:"torrent_name"`
+	Progress      float64     `json:"progress,omitempty" db:"progress"`
+	CompletedAt   *time.Time  `json:"completed_at,omitempty" db:"completed_at"`
 }
 
 type AnimeSearchTerm struct {
@@ -393,7 +397,7 @@ func (r *MediaRepository) GetTVShowByMediaID(mediaID int) (*TVShow, error) {
 	return &show, nil
 }
 
-// UpdateEpisodeDownloadInfo updates a specific episode's download information
+// UpdateEpisodeDownloadInfo updates a specific episode's download information.
 func (r *MediaRepository) UpdateEpisodeDownloadInfo(mediaID int, seasonNumber int, episodeNumber int, status MediaStatus, hash, torrentName *string) error {
 	// First get the TV show ID from media
 	var tvShowID sql.NullInt64
@@ -414,26 +418,28 @@ func (r *MediaRepository) UpdateEpisodeDownloadInfo(mediaID int, seasonNumber in
 		return fmt.Errorf("season not found: %w", err)
 	}
 
-	// Update the specific episode
+	// --- MODIFIED SECTION ---
+	// Update the specific episode with its own status, hash, and name.
 	_, err = r.db.Exec(`
 		UPDATE episodes 
-		SET status = ? 
+		SET status = ?, torrent_hash = ?, torrent_name = ?
 		WHERE season_id = ? AND episode_number = ?`,
-		status, seasonID, episodeNumber)
+		status, hash, torrentName, seasonID, episodeNumber)
 
 	if err != nil {
-		return fmt.Errorf("failed to update episode status: %w", err)
+		return fmt.Errorf("failed to update episode download info: %w", err)
 	}
 
-	// Also update the main media record with the download info (for tracking purposes)
-	if hash != nil && torrentName != nil {
+	// Also update the parent media's overall status to 'downloading' to reflect activity,
+	// but DO NOT store the hash there anymore.
+	if status == StatusDownloading {
 		_, err = r.db.Exec(`
 			UPDATE media 
-			SET torrent_hash = ?, torrent_name = ?, status = ?
+			SET status = ?
 			WHERE id = ?`,
-			*hash, *torrentName, StatusDownloading, mediaID)
+			StatusDownloading, mediaID)
 		if err != nil {
-			return fmt.Errorf("failed to update media download info: %w", err)
+			return fmt.Errorf("failed to update parent media status: %w", err)
 		}
 	}
 
@@ -515,4 +521,63 @@ func (r *MediaRepository) DeleteAnimeSearchTerm(id int) error {
 	query := `DELETE FROM anime_search_terms WHERE id = ?`
 	_, err := r.db.Exec(query, id)
 	return err
+}
+
+// GetDownloadingEpisodesForShow retrieves all episodes for a given show that are currently downloading.
+func (r *MediaRepository) GetDownloadingEpisodesForShow(tvShowID int) ([]Episode, error) {
+	query := `
+		SELECT e.id, e.season_id, e.episode_number, e.title, e.air_date, e.status, e.torrent_hash
+		FROM episodes e
+		JOIN seasons s ON e.season_id = s.id
+		WHERE s.show_id = ? AND e.status = ? AND e.torrent_hash IS NOT NULL
+	`
+	rows, err := r.db.Query(query, tvShowID, StatusDownloading)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var episodes []Episode
+	for rows.Next() {
+		var ep Episode
+		var torrentHash sql.NullString
+		// Note: We are not scanning torrent_name, progress, or completed_at here as they aren't needed for this specific function's purpose.
+		if err := rows.Scan(&ep.ID, &ep.SeasonID, &ep.EpisodeNumber, &ep.Title, &ep.AirDate, &ep.Status, &torrentHash); err != nil {
+			return nil, err
+		}
+		if torrentHash.Valid {
+			ep.TorrentHash = &torrentHash.String
+		}
+		episodes = append(episodes, ep)
+	}
+	return episodes, nil
+}
+
+// GetSeriesWithFailedEpisodes finds all series that contain at least one failed episode.
+func (r *MediaRepository) GetSeriesWithFailedEpisodes() ([]Media, error) {
+	query := `
+		SELECT DISTINCT m.id, m.type, m.imdb_id, m.tmdb_id, m.title, m.year, m.language, m.min_quality, m.max_quality,
+			   m.status, m.torrent_hash, m.torrent_name, m.download_path, m.progress, m.added_at, m.completed_at,
+			   m.overview, m.poster_url, m.rating, m.auto_download, m.tv_show_id
+		FROM media m
+		JOIN tv_shows ts ON m.tv_show_id = ts.id
+		JOIN seasons s ON ts.id = s.show_id
+		JOIN episodes e ON s.id = e.season_id
+		WHERE e.status = ?
+	`
+	rows, err := r.db.Query(query, StatusFailed)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var mediaList []Media
+	for rows.Next() {
+		media, err := scanMedia(rows)
+		if err != nil {
+			return nil, err
+		}
+		mediaList = append(mediaList, *media)
+	}
+	return mediaList, nil
 }

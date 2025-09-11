@@ -632,16 +632,33 @@ func (m *Manager) processPendingMedia() {
 	failedMedia, err := m.mediaRepo.GetByStatus(models.StatusFailed)
 	if err != nil {
 		m.logger.Error("Failed to get failed media:", err)
-		return
 	}
 
-	mediaToProcess := append(pendingMedia, failedMedia...)
+	// New: Get all series that have at least one failed episode.
+	seriesWithFailedEpisodes, err := m.mediaRepo.GetSeriesWithFailedEpisodes()
+	if err != nil {
+		m.logger.Error("Failed to get series with failed episodes:", err)
+	}
 
-	if len(mediaToProcess) > 0 {
-		m.logger.Info(fmt.Sprintf("Processing %d pending and failed media items.", len(mediaToProcess)))
-		for i := range mediaToProcess {
-			if mediaToProcess[i].AutoDownload {
-				mediaCopy := mediaToProcess[i]
+	// Use a map to collect and de-duplicate all media items that need processing.
+	mediaMap := make(map[int]models.Media)
+	for _, item := range pendingMedia {
+		mediaMap[item.ID] = item
+	}
+	for _, item := range failedMedia {
+		mediaMap[item.ID] = item
+	}
+	for _, item := range seriesWithFailedEpisodes {
+		mediaMap[item.ID] = item
+	}
+
+	if len(mediaMap) > 0 {
+		m.logger.Info(fmt.Sprintf("Processing %d media items (pending, failed series, and series with failed episodes).", len(mediaMap)))
+		for _, media := range mediaMap {
+			if media.AutoDownload {
+				// We must create a copy of the media object to avoid a race condition
+				// when it is processed in the search queue worker goroutine.
+				mediaCopy := media
 				m.searchQueue <- mediaCopy
 			}
 		}
@@ -811,6 +828,7 @@ func (m *Manager) updateShowProgress(mediaID int) {
 }
 
 func (m *Manager) updateDownloadStatus() {
+	// Get all media items (movies or series) that have at least one active download.
 	downloadingMedia, err := m.mediaRepo.GetByStatus(models.StatusDownloading)
 	if err != nil {
 		m.logger.Error("Failed to get downloading media:", err)
@@ -818,7 +836,11 @@ func (m *Manager) updateDownloadStatus() {
 	}
 
 	for _, media := range downloadingMedia {
-		if media.TorrentHash != nil {
+		// --- Logic for Movies (remains the same) ---
+		if media.Type == models.MediaTypeMovie {
+			if media.TorrentHash == nil {
+				continue
+			}
 			status, err := m.torrentClient.GetTorrentStatus(*media.TorrentHash)
 			if err != nil {
 				m.logger.Error("Failed to get torrent status for", media.Title, ":", err)
@@ -826,48 +848,70 @@ func (m *Manager) updateDownloadStatus() {
 				continue
 			}
 
-			// Only process completion once - check current status is still downloading
 			if status.IsCompleted {
 				var completedAt *time.Time
 				now := time.Now()
 				completedAt = &now
-
-				if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
-					show, err := m.mediaRepo.GetTVShowByMediaID(media.ID)
-					if err == nil {
-						// Find the downloading episode and mark it as downloaded
-						for _, season := range show.Seasons {
-							for _, episode := range season.Episodes {
-								// Only process if episode is still downloading
-								if episode.Status == models.StatusDownloading {
-									// Start post-processing in a new goroutine to avoid blocking
-									go m.postProcessor.ProcessDownload(media, status, season.SeasonNumber, episode.EpisodeNumber, status.DownloadDir)
-									m.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, season.SeasonNumber, episode.EpisodeNumber, models.StatusDownloaded, nil, nil)
-									goto ShowStatusUpdate
-								}
-							}
-						}
-					}
-				} else {
-					// For movies - only process if still downloading
-					if media.Status == models.StatusDownloading {
-						// Start post-processing in a new goroutine to avoid blocking
-						go m.postProcessor.ProcessDownload(media, status, 0, 0, status.DownloadDir)
-						// For movies, just update the main media item
-						m.mediaRepo.UpdateProgress(media.ID, models.StatusDownloaded, 1.0, completedAt)
-					}
-				}
-
-			ShowStatusUpdate:
-				// After any episode completes, always recalculate the show's overall status
-				if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
-					m.updateShowProgress(media.ID)
-				}
-
+				go m.postProcessor.ProcessDownload(media, status, 0, 0, status.DownloadDir)
+				m.mediaRepo.UpdateProgress(media.ID, models.StatusDownloaded, 1.0, completedAt)
 			} else {
-				// If not completed, just update the progress percentage
 				m.mediaRepo.UpdateProgress(media.ID, models.StatusDownloading, status.Progress, nil)
 			}
+			continue // Move to the next media item
+		}
+
+		// --- New Per-Episode Logic for TV Shows & Anime ---
+		if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+			if media.TVShowID == nil {
+				continue
+			}
+
+			// Get full show details once to map season IDs to season numbers
+			show, err := m.mediaRepo.GetTVShowByMediaID(media.ID)
+			if err != nil {
+				m.logger.Error("Could not get show details for status update:", err)
+				continue
+			}
+			seasonMap := make(map[int]int)
+			for _, s := range show.Seasons {
+				seasonMap[s.ID] = s.SeasonNumber
+			}
+
+			// Get all individual episodes for this series that are in a 'downloading' state.
+			downloadingEpisodes, err := m.mediaRepo.GetDownloadingEpisodesForShow(*media.TVShowID)
+			if err != nil {
+				m.logger.Error("Could not get downloading episodes for show:", media.Title, err)
+				continue
+			}
+
+			// Loop through each downloading episode and check its unique hash.
+			for _, episode := range downloadingEpisodes {
+				if episode.TorrentHash == nil {
+					continue
+				}
+
+				status, err := m.torrentClient.GetTorrentStatus(*episode.TorrentHash)
+				if err != nil {
+					m.logger.Error("Failed to get torrent status for episode:", media.Title, episode.Title, err)
+					// Mark this specific episode as failed
+					seasonNum := seasonMap[episode.SeasonID]
+					m.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, seasonNum, episode.EpisodeNumber, models.StatusFailed, nil, nil)
+					continue
+				}
+
+				if status.IsCompleted {
+					m.logger.Info("Episode download completed:", media.Title, fmt.Sprintf("S%02dE%02d", seasonMap[episode.SeasonID], episode.EpisodeNumber))
+					// Post-process this specific, completed episode
+					go m.postProcessor.ProcessDownload(media, status, seasonMap[episode.SeasonID], episode.EpisodeNumber, status.DownloadDir)
+					// Update this specific episode's status to downloaded
+					m.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, seasonMap[episode.SeasonID], episode.EpisodeNumber, models.StatusDownloaded, nil, nil)
+				}
+				// If not complete, we don't need to do anything here.
+				// The overall show progress will be updated below.
+			}
+
+			// After checking all episodes for this show, update its overall progress and status.
+			m.updateShowProgress(media.ID)
 		}
 	}
 }
