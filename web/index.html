@@ -564,6 +564,24 @@
                 }, duration);
             }
 
+            // Episode tree state
+            function saveSeasonState() {
+                const openSeasons = new Set();
+                document.querySelectorAll('#media-modal .season-details[open]').forEach(details => {
+                    openSeasons.add(details.dataset.seasonNumber);
+                });
+                return openSeasons;
+            }
+
+            function restoreSeasonState(openSeasons) {
+                if (!openSeasons || openSeasons.size === 0) return;
+                document.querySelectorAll('#media-modal .season-details').forEach(details => {
+                    if (openSeasons.has(details.dataset.seasonNumber)) {
+                        details.open = true;
+                    }
+                });
+            }
+
             // Authentication
             loginForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
@@ -751,7 +769,7 @@
                 });
             }
             
-            async function refreshData() {
+async function refreshData() {
                 const oldMediaData = JSON.stringify(state.allMedia);
                 await loadMedia();
                 const newMediaData = JSON.stringify(state.allMedia);
@@ -761,8 +779,14 @@
                     if (oldMediaData !== newMediaData) {
                         const media = state.allMedia.find(m => m.id === state.currentMediaId);
                         if(media) {
-                           updateMediaDetails(media);
-                           updateEpisodeStatuses(state.currentMediaId);
+                            // Save the state before re-rendering
+                            const openSeasons = saveSeasonState();
+                           // Re-render the modal content
+                           await showMediaDetails(state.currentMediaId, true); // Pass a flag to prevent re-opening
+                           // Restore the state after re-rendering
+                            restoreSeasonState(openSeasons);
+                           // Update statuses on the new content
+                            updateEpisodeStatuses(state.currentMediaId);
                         }
                     }
                 }
@@ -801,6 +825,13 @@
                                     if (statusEl.textContent.toLowerCase() !== ep.status.toLowerCase()) {
                                         statusEl.className = `media-status status-${ep.status}`;
                                         statusEl.textContent = ep.status;
+                                    }
+
+                                    const playBtn = episodeEl.querySelector('button[onclick^="playVideo"]');
+                                    if (playBtn) {
+                                        const isDownloaded = ep.status === 'downloaded';
+                                        playBtn.disabled = !isDownloaded;
+                                        playBtn.style.opacity = isDownloaded ? '1' : '0.4';
                                     }
                                 }
                             });
@@ -1052,14 +1083,17 @@
                 });
             }
 
-            async function showMediaDetails(mediaId) {
+            async function showMediaDetails(mediaId, isRefresh = false) {
                 state.currentMediaId = mediaId;
                 const media = state.allMedia.find(m => m.id === mediaId);
                 if (!media) return;
                 const modal = document.getElementById('media-modal');
                 const content = document.getElementById('media-detail-content');
                 content.innerHTML = '<h2>Loading...</h2>';
-                modal.style.display = 'flex';
+                
+                if (!isRefresh) {
+                    modal.style.display = 'flex';
+                }
 
                 let tvShowDetailsHtml = '';
                 if (media.type === 'tvshow' || media.type === 'anime') {
