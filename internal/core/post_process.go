@@ -57,7 +57,7 @@ func (pp *PostProcessor) ProcessDownload(media models.Media, torrentStatus torre
 		return err
 	}
 
-	pp.renameFiles(&media, destinationPath, seasonNumber, episodeNumber, torrentStatus.Name)
+	pp.renameFiles(&media, destinationPath, seasonNumber, episodeNumber, torrentStatus.Name, mediaFiles)
 
 	pp.notifyPostProcessCompleted(&media, torrentStatus.Name)
 
@@ -252,18 +252,13 @@ func (pp *PostProcessor) parseQualityFromTorrentName(torrentName string) string 
 }
 
 // renameFiles renames the moved/linked files to a clean, standardized format.
-func (pp *PostProcessor) renameFiles(media *models.Media, destination string, season, episode int, torrentName string) {
-	files, err := os.ReadDir(destination)
-	if err != nil {
-		pp.logger.Error("Failed to read destination directory:", err)
-		return
-	}
-
+func (pp *PostProcessor) renameFiles(media *models.Media, destination string, season, episode int, torrentName string, filesToRename []string) {
 	quality := pp.parseQualityFromTorrentName(torrentName)
 
-	for _, file := range files {
-		oldPath := filepath.Join(destination, file.Name())
-		ext := filepath.Ext(file.Name())
+	for _, oldPath := range filesToRename {
+		// We need to construct the path of the file *after* it has been moved/symlinked
+		movedPath := filepath.Join(destination, filepath.Base(oldPath))
+		ext := filepath.Ext(movedPath)
 
 		var newName string
 		var template string
@@ -296,9 +291,14 @@ func (pp *PostProcessor) renameFiles(media *models.Media, destination string, se
 
 		newPath := filepath.Join(destination, newName)
 
-		err := os.Rename(oldPath, newPath)
-		if err != nil {
-			pp.logger.Error("Failed to rename file:", err)
+		// Check if the moved file actually exists before trying to rename it
+		if _, err := os.Stat(movedPath); err == nil {
+			err := os.Rename(movedPath, newPath)
+			if err != nil {
+				pp.logger.Error("Failed to rename file:", err)
+			}
+		} else {
+			pp.logger.Error("Could not find file to rename at path:", movedPath)
 		}
 	}
 }
