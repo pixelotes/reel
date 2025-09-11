@@ -1,4 +1,3 @@
-// pixelotes/reel/reel-912718c2894dddc773eede72733de790bc7912b3/internal/clients/torrent/qbittorrent.go
 package torrent
 
 import (
@@ -9,7 +8,10 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"reel/internal/utils"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // qBittorrentClient implements the TorrentClient interface.
@@ -18,6 +20,7 @@ type qBittorrentClient struct {
 	username   string
 	password   string
 	httpClient *http.Client
+	logger     *utils.Logger
 }
 
 type qbTorrentProperties struct {
@@ -30,16 +33,21 @@ type qbTorrentProperties struct {
 	ContentPath string  `json:"content_path"`
 }
 
-func NewQBittorrentClient(host, username, password string) *qBittorrentClient {
+type qbTorrentFile struct {
+	Name string `json:"name"`
+}
+
+func NewQBittorrentClient(host, username, password string, logger *utils.Logger) *qBittorrentClient {
 	return &qBittorrentClient{
 		host:       host,
 		username:   username,
 		password:   password,
 		httpClient: &http.Client{},
+		logger:     logger,
 	}
 }
 
-func (q *qBittorrentClient) AddTrackers(hash string, trackers []string) error { // Added function
+func (q *qBittorrentClient) AddTrackers(hash string, trackers []string) error {
 	cookie, err := q.login()
 	if err != nil {
 		return err
@@ -130,19 +138,34 @@ func (q *qBittorrentClient) AddTorrent(magnetLink string, downloadPath string) (
 		return "", fmt.Errorf("failed to add torrent with status: %s", resp.Status)
 	}
 
-	// qBittorrent does not immediately return the hash in a simple way.
-	// We are returning the magnet link as a placeholder for the hash.
-	// A more robust implementation would parse the magnet link to get the hash.
-	return strings.Split(strings.Split(magnetLink, "btih:")[1], "&")[0], nil
+	// For magnet links, parsing the info hash (btih) from the link itself is the most reliable method.
+	// Example: magnet:?xt=urn:btih:HASH&dn=...
+	lowerLink := strings.ToLower(magnetLink)
+	btihIndex := strings.Index(lowerLink, "btih:")
+	if btihIndex == -1 {
+		return "", fmt.Errorf("info hash (btih) not found in magnet link")
+	}
+
+	hashStart := btihIndex + 5
+	hashEnd := strings.Index(lowerLink[hashStart:], "&")
+	if hashEnd == -1 {
+		// If no '&', the hash is the rest of the string
+		return lowerLink[hashStart:], nil
+	}
+
+	return lowerLink[hashStart : hashStart+hashEnd], nil
 }
 
-func (q *qBittorrentClient) AddTorrentFile(fileContent []byte, downloadPath string) (string, error) { // Added function
+func (q *qBittorrentClient) AddTorrentFile(fileContent []byte, downloadPath string) (string, error) {
 	cookie, err := q.login()
 	if err != nil {
 		return "", err
 	}
 
 	addURL := fmt.Sprintf("%s/api/v2/torrents/add", q.host)
+
+	// Generate a unique tag to identify the torrent after adding it.
+	tempTag := "reel-temp-" + uuid.New().String()
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -152,6 +175,7 @@ func (q *qBittorrentClient) AddTorrentFile(fileContent []byte, downloadPath stri
 	}
 	part.Write(fileContent)
 	writer.WriteField("savepath", downloadPath)
+	writer.WriteField("tags", tempTag)
 	writer.Close()
 
 	req, err := http.NewRequest("POST", addURL, body)
@@ -160,7 +184,7 @@ func (q *qBittorrentClient) AddTorrentFile(fileContent []byte, downloadPath stri
 	}
 
 	req.AddCookie(cookie)
-	req.Header.Add("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	resp, err := q.httpClient.Do(req)
 	if err != nil {
@@ -169,21 +193,68 @@ func (q *qBittorrentClient) AddTorrentFile(fileContent []byte, downloadPath stri
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to add torrent file with status: %s", resp.Status)
+		bodyBytes, _ := ioutil.ReadAll(resp.Body)
+		return "", fmt.Errorf("failed to add torrent file with status: %s, body: %s", resp.Status, string(bodyBytes))
 	}
 
-	// This is a simplification; a more robust method would be needed to get the hash
-	// after adding a file, as qBittorrent doesn't return it directly.
-	return "hash-from-file-not-retrieved", nil
+	// Now, find the torrent by the unique tag to get its hash
+	infoURL := fmt.Sprintf("%s/api/v2/torrents/info?filter=all&tags=%s", q.host, tempTag)
+	req, err = http.NewRequest("GET", infoURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.AddCookie(cookie)
+
+	resp, err = q.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	var torrents []struct {
+		Hash string `json:"hash"`
+	}
+	if err := json.Unmarshal(bodyBytes, &torrents); err != nil {
+		return "", fmt.Errorf("failed to find torrent by tag: %w", err)
+	}
+
+	if len(torrents) == 0 {
+		return "", fmt.Errorf("could not find added torrent by temporary tag")
+	}
+	hash := torrents[0].Hash
+
+	// Clean up by removing the temporary tag
+	removeTagsURL := fmt.Sprintf("%s/api/v2/torrents/removeTags", q.host)
+	data := url.Values{}
+	data.Set("hashes", hash)
+	data.Set("tags", tempTag)
+
+	req, err = http.NewRequest("POST", removeTagsURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		// Non-critical error, just log it
+		q.logger.Warn("Failed to remove temporary tag:", err)
+	} else {
+		req.AddCookie(cookie)
+		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+		q.httpClient.Do(req) // Fire and forget
+	}
+
+	return hash, nil
 }
 
-// GetTorrentStatus is a mock implementation. A full implementation would parse the torrent list from the API.
+// GetTorrentStatus retrieves the status of a torrent.
 func (q *qBittorrentClient) GetTorrentStatus(hash string) (TorrentStatus, error) {
 	cookie, err := q.login()
 	if err != nil {
 		return TorrentStatus{}, err
 	}
 
+	// First, get the main torrent properties
 	propertiesURL := fmt.Sprintf("%s/api/v2/torrents/properties?hash=%s", q.host, hash)
 	req, err := http.NewRequest("GET", propertiesURL, nil)
 	if err != nil {
@@ -198,6 +269,10 @@ func (q *qBittorrentClient) GetTorrentStatus(hash string) (TorrentStatus, error)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		// If torrent not found, qBittorrent returns 404
+		if resp.StatusCode == http.StatusNotFound {
+			return TorrentStatus{}, fmt.Errorf("torrent with hash %s not found", hash)
+		}
 		return TorrentStatus{}, fmt.Errorf("failed to get torrent properties with status: %s", resp.Status)
 	}
 
@@ -211,13 +286,48 @@ func (q *qBittorrentClient) GetTorrentStatus(hash string) (TorrentStatus, error)
 		return TorrentStatus{}, fmt.Errorf("failed to decode torrent properties: %w", err)
 	}
 
-	return TorrentStatus{ // Modified line
+	// --- New: Get the file list ---
+	filesURL := fmt.Sprintf("%s/api/v2/torrents/files?hash=%s", q.host, hash)
+	req, err = http.NewRequest("GET", filesURL, nil)
+	if err != nil {
+		return TorrentStatus{}, err
+	}
+	req.AddCookie(cookie)
+
+	resp, err = q.httpClient.Do(req)
+	if err != nil {
+		return TorrentStatus{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return TorrentStatus{}, fmt.Errorf("failed to get torrent files with status: %s", resp.Status)
+	}
+
+	body, err = ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return TorrentStatus{}, err
+	}
+
+	var files []qbTorrentFile
+	if err := json.Unmarshal(body, &files); err != nil {
+		return TorrentStatus{}, fmt.Errorf("failed to decode torrent files: %w", err)
+	}
+
+	var fileList []string
+	for _, f := range files {
+		fileList = append(fileList, f.Name)
+	}
+	// --- End of new section ---
+
+	return TorrentStatus{
 		Hash:        hash,
 		Name:        props.Name,
 		Progress:    props.Progress,
 		IsCompleted: props.Progress >= 1.0,
 		DownloadDir: props.SavePath,
 		UploadRatio: props.Ratio,
+		Files:       fileList, // Populate the files list
 	}, nil
 }
 

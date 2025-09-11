@@ -28,11 +28,11 @@ type prowlarrSearchResult struct {
 }
 
 // NewProwlarrClient creates a new client for interacting with the Prowlarr API.
-func NewProwlarrClient(baseURL, apiKey string) *ProwlarrClient {
+func NewProwlarrClient(baseURL, apiKey string, timeout time.Duration) *ProwlarrClient {
 	return &ProwlarrClient{
 		baseURL:    baseURL,
 		apiKey:     apiKey,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: &http.Client{Timeout: timeout},
 	}
 }
 

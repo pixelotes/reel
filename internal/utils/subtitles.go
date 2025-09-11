@@ -80,7 +80,7 @@ func convertSRTLinesToVTT(lines []string) string {
 				result.WriteString(textLine + "\n")
 				i++
 			}
-			result.WriteString("\n") // Add blank line between cues
+			result.WriteString("\n") // Adds blank line between cues
 		} else {
 			i++
 		}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"reel/internal/utils"
 	"strconv"
 	"time"
 )
@@ -12,7 +13,8 @@ import (
 type TraktClient struct {
 	httpClient *http.Client
 	clientID   string
-	tmdbClient *TMDBClient // Add this
+	tmdbClient *TMDBClient
+	logger     *utils.Logger
 }
 
 // Trakt search result structs
@@ -35,13 +37,14 @@ type traktEpisode struct {
 	FirstAired string `json:"first_aired"`
 }
 
-func NewTraktClient(clientID string, tmdbClient *TMDBClient) *TraktClient {
+func NewTraktClient(clientID string, tmdbClient *TMDBClient, timeout time.Duration, logger *utils.Logger) *TraktClient {
 	return &TraktClient{
 		clientID:   clientID,
 		tmdbClient: tmdbClient,
 		httpClient: &http.Client{
-			Timeout: 15 * time.Second,
+			Timeout: timeout,
 		},
+		logger: logger,
 	}
 }
 
@@ -92,7 +95,7 @@ func (t *TraktClient) SearchTVShow(title string) ([]*TVShowResult, error) {
 			Episodes []traktEpisode `json:"episodes"`
 		}
 		if err := t.sendRequest(episodesURL, &seasonsData); err != nil {
-			fmt.Printf("Could not get episode data for %s: %v\n", res.Show.Title, err)
+			t.logger.Error("Could not get episode data for", res.Show.Title, ":", err)
 		}
 
 		result := &TVShowResult{

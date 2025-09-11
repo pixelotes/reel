@@ -15,6 +15,12 @@ type SourceConfig struct {
 	SearchMode string `yaml:"search_mode,omitempty"`
 }
 
+type FileRenamingConfig struct {
+	MovieTemplate  string `yaml:"movie_template"`
+	SeriesTemplate string `yaml:"series_template"`
+	AnimeTemplate  string `yaml:"anime_template"`
+}
+
 type Config struct {
 	App struct {
 		Port                   int    `yaml:"port"`
@@ -26,6 +32,7 @@ type Config struct {
 		FilterLogLevel         string `yaml:"filter_log_level"` // "none" or "detail"
 		MagnetToTorrentEnabled bool   `yaml:"magnet_to_torrent_enabled"`
 		MagnetToTorrentTimeout int    `yaml:"magnet_to_torrent_timeout"`
+		SearchTimeout          int    `yaml:"search_timeout"`
 	} `yaml:"app"`
 
 	TorrentClient struct {
@@ -33,11 +40,13 @@ type Config struct {
 		Host         string `yaml:"host"`
 		Username     string `yaml:"username"`
 		Password     string `yaml:"password"`
+		Secret       string `yaml:"secret"`
 		DownloadPath string `yaml:"download_path"`
 	} `yaml:"torrent_client"`
 
 	Metadata struct {
 		Language string `yaml:"language"`
+		Timeout  int    `yaml:"timeout"`
 		TMDB     struct {
 			APIKey string `yaml:"api_key"`
 		} `yaml:"tmdb"`
@@ -50,7 +59,7 @@ type Config struct {
 		AniList struct {
 			// AniList doesn't require an API key for public queries
 		} `yaml:"anilist"`
-		Trakt struct { // Add this section
+		Trakt struct {
 			ClientID string `yaml:"client_id"`
 		} `yaml:"trakt"`
 	} `yaml:"metadata"`
@@ -103,6 +112,8 @@ type Config struct {
 
 	RejectCommon      []string `yaml:"reject-common"`
 	ExtraTrackersList []string `yaml:"extra_trackers_list"`
+
+	FileRenaming FileRenamingConfig `yaml:"file_renaming"`
 }
 
 func Load(path string) (*Config, error) {
@@ -124,6 +135,14 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
+func (c *Config) Save(path string) error {
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
 func loadFromEnv(cfg *Config) {
-	// Add environment variable overrides here if needed
+	// Environment variable overrides will go here if needed
 }

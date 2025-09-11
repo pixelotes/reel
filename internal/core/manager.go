@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"github.com/shirou/gopsutil/disk"
 	"golang.org/x/net/html/charset"
+	"gopkg.in/yaml.v3"
 
 	"reel/internal/clients/indexers"
 	"reel/internal/clients/metadata"
@@ -107,6 +109,7 @@ type IndexerClientWithMode struct {
 
 type Manager struct {
 	config          *config.Config
+	db              *sql.DB
 	mediaRepo       *models.MediaRepository
 	indexerClients  map[models.MediaType][]IndexerClientWithMode
 	metadataClients map[models.MediaType][]metadata.Client
@@ -138,10 +141,17 @@ type ClientStatus struct {
 	Status bool   `json:"status"`
 }
 
+type CalendarEvent struct {
+	Title  string `json:"title"`
+	Start  string `json:"start"`
+	AllDay bool   `json:"allDay"`
+}
+
 func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 	m := &Manager{
 		config:          cfg,
-		mediaRepo:       models.NewMediaRepository(db),
+		db:              db,
+		mediaRepo:       models.NewMediaRepository(db, logger),
 		torrentSelector: NewTorrentSelector(cfg, logger), // Assuming this exists
 		notifiers:       make([]notifications.Notifier, 0),
 		logger:          logger,
@@ -149,9 +159,24 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		searchQueue:     make(chan models.Media, 100),
 		indexerClients:  make(map[models.MediaType][]IndexerClientWithMode),
 		metadataClients: make(map[models.MediaType][]metadata.Client),
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		httpClient:      &http.Client{},
+	}
+
+	// Show log info
+	logger.Info("Reloading the config...")
+
+	// --- Initialize Indexer Search Timeout ---
+	searchTimeout := time.Duration(cfg.App.SearchTimeout) * time.Second
+	if cfg.App.SearchTimeout <= 0 {
+		searchTimeout = 30 * time.Second // Default if not set or invalid
+	}
+	// The manager's generic http client can use the indexer timeout
+	m.httpClient.Timeout = searchTimeout
+
+	// --- Initialize Metadata Client Timeout ---
+	metadataTimeout := time.Duration(cfg.Metadata.Timeout) * time.Second
+	if cfg.Metadata.Timeout <= 0 {
+		metadataTimeout = 15 * time.Second // Default if not set or invalid
 	}
 
 	// --- Initialize Notifiers ---
@@ -163,16 +188,16 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 				m.notifiers = append(m.notifiers, client)
 				logger.Info("Pushbullet notifier enabled.")
 			}
-			// Add other notifiers here in the future
+			// Other notifiers will go here in the future
 		}
 	}
 
-	m.postProcessor = NewPostProcessor(cfg, logger, models.NewMediaRepository(db), m.notifiers)
+	m.postProcessor = NewPostProcessor(cfg, logger, models.NewMediaRepository(db, logger), m.notifiers)
 
 	// --- Initialize Clients based on new Config Structure ---
 
 	// Create a TMDB client instance to be shared
-	tmdbClient := metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language)
+	tmdbClient := metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language, metadataTimeout)
 
 	// Helper function to initialize metadata providers
 	initMetadataProvider := func(provider string) metadata.Client {
@@ -180,27 +205,30 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		case "tmdb":
 			return tmdbClient // Return the shared instance
 		case "imdb":
-			return metadata.NewIMDBClient(cfg.Metadata.IMDB.APIKey)
+			return metadata.NewIMDBClient(cfg.Metadata.IMDB.APIKey, metadataTimeout, m.logger)
 		case "tvmaze":
-			return metadata.NewTVmazeClient()
+			return metadata.NewTVmazeClient(metadataTimeout)
 		case "anilist":
-			return metadata.NewAniListClient()
+			return metadata.NewAniListClient(metadataTimeout)
 		case "trakt":
-			return metadata.NewTraktClient(cfg.Metadata.Trakt.ClientID, tmdbClient) // Pass TMDB client
+			return metadata.NewTraktClient(cfg.Metadata.Trakt.ClientID, tmdbClient, metadataTimeout, m.logger) // Pass TMDB client
 		}
 		return nil
 	}
 
 	// Helper function to initialize indexer sources
 	initIndexerClient := func(source config.SourceConfig) indexers.Client {
+		timeout := time.Duration(m.config.App.SearchTimeout) * time.Second
+		if m.config.App.SearchTimeout == 0 {
+			timeout = 30 * time.Second
+		}
 		switch source.Type {
 		case "scarf":
-			timeout, _ := time.ParseDuration("30s")
 			return indexers.NewScarfClient(source.URL, source.APIKey, timeout)
 		case "jackett":
-			return indexers.NewJackettClient(source.URL, source.APIKey)
+			return indexers.NewJackettClient(source.URL, source.APIKey, timeout)
 		case "prowlarr":
-			return indexers.NewProwlarrClient(source.URL, source.APIKey)
+			return indexers.NewProwlarrClient(source.URL, source.APIKey, timeout)
 		}
 		return nil
 	}
@@ -261,10 +289,20 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 	case "transmission":
 		m.torrentClient = torrent.NewTransmissionClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password)
 	case "qbittorrent":
-		m.torrentClient = torrent.NewQBittorrentClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password)
+		m.torrentClient = torrent.NewQBittorrentClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password, m.logger)
+	case "aria2":
+		m.torrentClient = torrent.NewAria2Client(cfg.TorrentClient.Host, cfg.TorrentClient.Secret)
+	case "deluge":
+		client, err := torrent.NewDelugeClient(cfg.TorrentClient.Host, cfg.TorrentClient.Password)
+		if err != nil {
+			m.logger.Fatal("Failed to create Deluge client:", err)
+		}
+		m.torrentClient = client
 	default:
-		logger.Fatal("Unsupported torrent client type:", cfg.TorrentClient.Type)
+		m.logger.Fatal("Unsupported torrent client type:", cfg.TorrentClient.Type)
 	}
+
+	m.reloadConfig(cfg)
 
 	go m.startSearchQueueWorker()
 
@@ -482,7 +520,8 @@ func (m *Manager) searchAndDownloadNextEpisode(media *models.Media) {
 			if downloadsStarted >= m.config.Automation.MaxConcurrentDownloads {
 				return
 			}
-			if episode.Status == models.StatusPending {
+			// Check for both "pending" and "failed" episodes to retry.
+			if episode.Status == models.StatusPending || episode.Status == models.StatusFailed {
 				m.logger.Info("Searching for episode:", media.Title, fmt.Sprintf("S%02dE%02d", season.SeasonNumber, episode.EpisodeNumber))
 				results, err := m.performSearch(media, season.SeasonNumber, episode.EpisodeNumber)
 				if err != nil {
@@ -596,16 +635,33 @@ func (m *Manager) processPendingMedia() {
 	failedMedia, err := m.mediaRepo.GetByStatus(models.StatusFailed)
 	if err != nil {
 		m.logger.Error("Failed to get failed media:", err)
-		return
 	}
 
-	mediaToProcess := append(pendingMedia, failedMedia...)
+	// New: Get all series that have at least one failed episode.
+	seriesWithFailedEpisodes, err := m.mediaRepo.GetSeriesWithFailedEpisodes()
+	if err != nil {
+		m.logger.Error("Failed to get series with failed episodes:", err)
+	}
 
-	if len(mediaToProcess) > 0 {
-		m.logger.Info(fmt.Sprintf("Processing %d pending and failed media items.", len(mediaToProcess)))
-		for i := range mediaToProcess {
-			if mediaToProcess[i].AutoDownload {
-				mediaCopy := mediaToProcess[i]
+	// Use a map to collect and de-duplicate all media items that need processing.
+	mediaMap := make(map[int]models.Media)
+	for _, item := range pendingMedia {
+		mediaMap[item.ID] = item
+	}
+	for _, item := range failedMedia {
+		mediaMap[item.ID] = item
+	}
+	for _, item := range seriesWithFailedEpisodes {
+		mediaMap[item.ID] = item
+	}
+
+	if len(mediaMap) > 0 {
+		m.logger.Info(fmt.Sprintf("Processing %d media items (pending, failed series, and series with failed episodes).", len(mediaMap)))
+		for _, media := range mediaMap {
+			if media.AutoDownload {
+				// We must create a copy of the media object to avoid a race condition
+				// when it is processed in the search queue worker goroutine.
+				mediaCopy := media
 				m.searchQueue <- mediaCopy
 			}
 		}
@@ -727,7 +783,7 @@ func (m *Manager) updateShowProgress(mediaID int) {
 		return // Not a show, nothing to do
 	}
 
-	var downloadableEpisodes, downloadedEpisodes, pendingEpisodes, tbaEpisodes int
+	var downloadableEpisodes, downloadedEpisodes, pendingEpisodes, downloadingEpisodes, tbaEpisodes int
 
 	for _, season := range show.Seasons {
 		for _, episode := range season.Episodes {
@@ -739,10 +795,12 @@ func (m *Manager) updateShowProgress(mediaID int) {
 				}
 			}
 			// Count episodes for status determination
-			if episode.Status == models.StatusPending || episode.Status == models.StatusDownloading {
+			switch episode.Status {
+			case models.StatusPending:
 				pendingEpisodes++
-			}
-			if episode.Status == models.StatusTBA {
+			case models.StatusDownloading:
+				downloadingEpisodes++
+			case models.StatusTBA:
 				tbaEpisodes++
 			}
 		}
@@ -754,8 +812,12 @@ func (m *Manager) updateShowProgress(mediaID int) {
 	}
 
 	// Determine the new overall status for the media item
-	newStatus := models.StatusDownloading
-	if pendingEpisodes == 0 {
+	var newStatus models.MediaStatus
+	if downloadingEpisodes > 0 {
+		newStatus = models.StatusDownloading
+	} else if pendingEpisodes > 0 {
+		newStatus = models.StatusPending
+	} else {
 		if tbaEpisodes > 0 || strings.ToLower(show.Status) == "running" {
 			newStatus = models.StatusMonitoring
 		} else {
@@ -769,6 +831,7 @@ func (m *Manager) updateShowProgress(mediaID int) {
 }
 
 func (m *Manager) updateDownloadStatus() {
+	// Get all media items (movies or series) that have at least one active download.
 	downloadingMedia, err := m.mediaRepo.GetByStatus(models.StatusDownloading)
 	if err != nil {
 		m.logger.Error("Failed to get downloading media:", err)
@@ -776,7 +839,11 @@ func (m *Manager) updateDownloadStatus() {
 	}
 
 	for _, media := range downloadingMedia {
-		if media.TorrentHash != nil {
+		// --- Logic for Movies (remains the same) ---
+		if media.Type == models.MediaTypeMovie {
+			if media.TorrentHash == nil {
+				continue
+			}
 			status, err := m.torrentClient.GetTorrentStatus(*media.TorrentHash)
 			if err != nil {
 				m.logger.Error("Failed to get torrent status for", media.Title, ":", err)
@@ -784,48 +851,70 @@ func (m *Manager) updateDownloadStatus() {
 				continue
 			}
 
-			// Only process completion once - check current status is still downloading
 			if status.IsCompleted {
 				var completedAt *time.Time
 				now := time.Now()
 				completedAt = &now
-
-				if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
-					show, err := m.mediaRepo.GetTVShowByMediaID(media.ID)
-					if err == nil {
-						// Find the downloading episode and mark it as downloaded
-						for _, season := range show.Seasons {
-							for _, episode := range season.Episodes {
-								// Only process if episode is still downloading
-								if episode.Status == models.StatusDownloading {
-									// Start post-processing in a new goroutine to avoid blocking
-									go m.postProcessor.ProcessDownload(media, status, season.SeasonNumber, episode.EpisodeNumber, status.DownloadDir)
-									m.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, season.SeasonNumber, episode.EpisodeNumber, models.StatusDownloaded, nil, nil)
-									goto ShowStatusUpdate
-								}
-							}
-						}
-					}
-				} else {
-					// For movies - only process if still downloading
-					if media.Status == models.StatusDownloading {
-						// Start post-processing in a new goroutine to avoid blocking
-						go m.postProcessor.ProcessDownload(media, status, 0, 0, status.DownloadDir)
-						// For movies, just update the main media item
-						m.mediaRepo.UpdateProgress(media.ID, models.StatusDownloaded, 1.0, completedAt)
-					}
-				}
-
-			ShowStatusUpdate:
-				// After any episode completes, always recalculate the show's overall status
-				if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
-					m.updateShowProgress(media.ID)
-				}
-
+				go m.postProcessor.ProcessDownload(media, status, 0, 0, status.DownloadDir)
+				m.mediaRepo.UpdateProgress(media.ID, models.StatusDownloaded, 1.0, completedAt)
 			} else {
-				// If not completed, just update the progress percentage
 				m.mediaRepo.UpdateProgress(media.ID, models.StatusDownloading, status.Progress, nil)
 			}
+			continue // Move to the next media item
+		}
+
+		// --- New Per-Episode Logic for TV Shows & Anime ---
+		if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+			if media.TVShowID == nil {
+				continue
+			}
+
+			// Get full show details once to map season IDs to season numbers
+			show, err := m.mediaRepo.GetTVShowByMediaID(media.ID)
+			if err != nil {
+				m.logger.Error("Could not get show details for status update:", err)
+				continue
+			}
+			seasonMap := make(map[int]int)
+			for _, s := range show.Seasons {
+				seasonMap[s.ID] = s.SeasonNumber
+			}
+
+			// Get all individual episodes for this series that are in a 'downloading' state.
+			downloadingEpisodes, err := m.mediaRepo.GetDownloadingEpisodesForShow(*media.TVShowID)
+			if err != nil {
+				m.logger.Error("Could not get downloading episodes for show:", media.Title, err)
+				continue
+			}
+
+			// Loop through each downloading episode and check its unique hash.
+			for _, episode := range downloadingEpisodes {
+				if episode.TorrentHash == nil {
+					continue
+				}
+
+				status, err := m.torrentClient.GetTorrentStatus(*episode.TorrentHash)
+				if err != nil {
+					m.logger.Error("Failed to get torrent status for episode:", media.Title, episode.Title, err)
+					// Mark this specific episode as failed
+					seasonNum := seasonMap[episode.SeasonID]
+					m.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, seasonNum, episode.EpisodeNumber, models.StatusFailed, nil, nil)
+					continue
+				}
+
+				if status.IsCompleted {
+					m.logger.Info("Episode download completed:", media.Title, fmt.Sprintf("S%02dE%02d", seasonMap[episode.SeasonID], episode.EpisodeNumber))
+					// Post-process this specific, completed episode
+					go m.postProcessor.ProcessDownload(media, status, seasonMap[episode.SeasonID], episode.EpisodeNumber, status.DownloadDir)
+					// Update this specific episode's status to downloaded
+					m.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, seasonMap[episode.SeasonID], episode.EpisodeNumber, models.StatusDownloaded, nil, nil)
+				}
+				// If not complete, we don't need to do anything here.
+				// The overall show progress will be updated below.
+			}
+
+			// After checking all episodes for this show, update its overall progress and status.
+			m.updateShowProgress(media.ID)
 		}
 	}
 }
@@ -843,11 +932,10 @@ func (m *Manager) RetryMedia(id int) error {
 		return fmt.Errorf("media with id %d not found", id)
 	}
 
-	if media.Status == models.StatusFailed || media.Status == models.StatusPending {
+	if media.Status == models.StatusFailed {
 		if err := m.mediaRepo.UpdateStatus(media.ID, models.StatusPending); err != nil {
 			return err
 		}
-		m.searchQueue <- *media
 	}
 	return nil
 }
@@ -924,9 +1012,9 @@ func (m *Manager) GetSystemStatus() (*SystemStatus, error) {
 		case "scarf":
 			client = indexers.NewScarfClient(source.URL, source.APIKey, 30*time.Second)
 		case "jackett":
-			client = indexers.NewJackettClient(source.URL, source.APIKey)
+			client = indexers.NewJackettClient(source.URL, source.APIKey, m.httpClient.Timeout)
 		case "prowlarr":
-			client = indexers.NewProwlarrClient(source.URL, source.APIKey)
+			client = indexers.NewProwlarrClient(source.URL, source.APIKey, m.httpClient.Timeout)
 		}
 		if client != nil {
 			ok, _ := client.HealthCheck()
@@ -1189,6 +1277,25 @@ func (m *Manager) StartDownload(id int, torrent indexers.IndexerResult) error {
 		downloadPath = m.config.TorrentClient.DownloadPath // Fallback
 	}
 
+	// --- New Disk Space Check ---
+	const securityBuffer int64 = 500 * 1024 * 1024 // 500MB
+	requiredSpace := uint64(torrent.Size + securityBuffer)
+
+	usage, err := disk.Usage(downloadPath)
+	if err != nil {
+		m.logger.Error("Failed to check disk space for path", downloadPath, ":", err)
+		return fmt.Errorf("could not verify disk space: %w", err)
+	}
+
+	if usage.Free < requiredSpace {
+		m.logger.Warn(fmt.Sprintf("Not enough disk space in %s. Required: %d bytes, Available: %d bytes", downloadPath, requiredSpace, usage.Free))
+		// You would need to add a new notification method like NotifyNotEnoughSpace to your notifiers
+		m.notifyNotEnoughSpace(media, torrent.Title)
+		m.mediaRepo.UpdateStatus(id, models.StatusFailed)
+		return fmt.Errorf("not enough disk space to download '%s'", torrent.Title)
+	}
+	// --- End of Check ---
+
 	m.logger.Info("Sending to download client:", m.config.TorrentClient.Type)
 
 	var hash string
@@ -1199,7 +1306,7 @@ func (m *Manager) StartDownload(id int, torrent indexers.IndexerResult) error {
 			timeout = 60 * time.Second // Default to 60 seconds
 		}
 		m.logger.Info("Attempting to convert magnet to .torrent with timeout:", timeout)
-		torrentFileBytes, convErr := utils.ConvertMagnetToTorrent(torrent.DownloadURL, timeout, m.config.App.DataPath)
+		torrentFileBytes, convErr := utils.ConvertMagnetToTorrent(torrent.DownloadURL, timeout, m.config.App.DataPath, m.logger)
 		if convErr == nil {
 			m.logger.Info("Magnet conversion successful, adding as .torrent file.")
 			hash, err = m.torrentClient.AddTorrentFile(torrentFileBytes, downloadPath)
@@ -1221,8 +1328,6 @@ func (m *Manager) StartDownload(id int, torrent indexers.IndexerResult) error {
 
 	// Notidication
 	m.notifyDownloadStarted(media, torrent.Title)
-	m.logger.Info("Torrent successfully sent to download client! Hash:", hash)
-
 	m.logger.Info("Torrent successfully sent to download client! Hash:", hash)
 
 	if err := m.mediaRepo.UpdateDownloadInfo(id, models.StatusDownloading, &hash, &torrent.Title); err != nil {
@@ -1255,6 +1360,25 @@ func (m *Manager) StartEpisodeDownload(mediaID int, seasonNumber int, episodeNum
 		downloadPath = m.config.TorrentClient.DownloadPath // Fallback
 	}
 
+	// --- New Disk Space Check ---
+	const securityBuffer int64 = 500 * 1024 * 1024 // 500MB
+	requiredSpace := uint64(torrent.Size + securityBuffer)
+
+	usage, err := disk.Usage(downloadPath)
+	if err != nil {
+		m.logger.Error("Failed to check disk space for path", downloadPath, ":", err)
+		return fmt.Errorf("could not verify disk space: %w", err)
+	}
+
+	if usage.Free < requiredSpace {
+		m.logger.Warn(fmt.Sprintf("Not enough disk space in %s. Required: %d bytes, Available: %d bytes", downloadPath, requiredSpace, usage.Free))
+		// You would need to add a new notification method like NotifyNotEnoughSpace to your notifiers
+		m.notifyNotEnoughSpace(media, torrent.Title)
+		m.mediaRepo.UpdateEpisodeDownloadInfo(mediaID, seasonNumber, episodeNumber, models.StatusFailed, nil, nil)
+		return fmt.Errorf("not enough disk space to download '%s'", torrent.Title)
+	}
+	// --- End of Check ---
+
 	m.logger.Info(fmt.Sprintf("Starting manual download for %s S%02dE%02d: %s",
 		media.Title, seasonNumber, episodeNumber, torrent.Title))
 
@@ -1267,7 +1391,7 @@ func (m *Manager) StartEpisodeDownload(mediaID int, seasonNumber int, episodeNum
 			timeout = 60 * time.Second // Default to 60 seconds
 		}
 		m.logger.Info("Attempting to convert magnet to .torrent with timeout:", timeout)
-		torrentFileBytes, convErr := utils.ConvertMagnetToTorrent(torrent.DownloadURL, timeout, m.config.App.DataPath)
+		torrentFileBytes, convErr := utils.ConvertMagnetToTorrent(torrent.DownloadURL, timeout, m.config.App.DataPath, m.logger)
 		if convErr == nil {
 			m.logger.Info("Magnet conversion successful, adding as .torrent file.")
 			hash, err = m.torrentClient.AddTorrentFile(torrentFileBytes, downloadPath)
@@ -1377,6 +1501,13 @@ func (m *Manager) notifyDownloadStarted(media *models.Media, torrentName string)
 	for _, n := range m.notifiers {
 		// Run in a goroutine to avoid blocking the main application flow.
 		go n.NotifyDownloadStart(media, torrentName)
+	}
+}
+
+func (m *Manager) notifyNotEnoughSpace(media *models.Media, torrentName string) {
+	for _, n := range m.notifiers {
+		// Run in a goroutine to avoid blocking the main application flow.
+		go n.NotifyNotEnoughSpace(media, torrentName)
 	}
 }
 
@@ -1674,7 +1805,7 @@ func (m *Manager) UpdateMediaSettings(id int, minQuality, maxQuality string, aut
 	return m.mediaRepo.UpdateSettings(id, minQuality, maxQuality, autoDownload)
 }
 
-// Add this function to read the config file content
+// This function reads the config file content
 func (m *Manager) GetConfig() (string, error) {
 	// Assumes the config path is stored in the config object,
 	// but the Load function doesn't store it. We'll need to know the path.
@@ -1746,4 +1877,195 @@ func (m *Manager) AddAnimeSearchTerm(mediaID int, term string) (*models.AnimeSea
 
 func (m *Manager) DeleteAnimeSearchTerm(id int) error {
 	return m.mediaRepo.DeleteAnimeSearchTerm(id)
+}
+
+func (m *Manager) GetCalendarEvents() ([]CalendarEvent, error) {
+	var events []CalendarEvent
+	allMedia, err := m.mediaRepo.GetAll()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, media := range allMedia {
+		if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+			show, err := m.mediaRepo.GetTVShowByMediaID(media.ID)
+			if err != nil || show == nil {
+				continue
+			}
+
+			for _, season := range show.Seasons {
+				for _, episode := range season.Episodes {
+					if episode.AirDate != "" {
+						events = append(events, CalendarEvent{
+							Title:  fmt.Sprintf("%s - S%02dE%02d", media.Title, season.SeasonNumber, episode.EpisodeNumber),
+							Start:  episode.AirDate,
+							AllDay: true,
+						})
+					}
+				}
+			}
+		}
+	}
+
+	return events, nil
+}
+
+func (m *Manager) reloadConfig(cfg *config.Config) {
+	m.config = cfg
+	m.notifiers = make([]notifications.Notifier, 0)
+	m.indexerClients = make(map[models.MediaType][]IndexerClientWithMode)
+	m.metadataClients = make(map[models.MediaType][]metadata.Client)
+
+	// --- Initialize Timeouts ---
+	searchTimeout := time.Duration(cfg.App.SearchTimeout) * time.Second
+	if cfg.App.SearchTimeout <= 0 {
+		searchTimeout = 30 * time.Second
+	}
+	m.httpClient.Timeout = searchTimeout
+
+	metadataTimeout := time.Duration(cfg.Metadata.Timeout) * time.Second
+	if cfg.Metadata.Timeout <= 0 {
+		metadataTimeout = 15 * time.Second
+	}
+
+	// --- Initialize Notifiers ---
+	for _, notifierName := range cfg.Automation.Notifications {
+		switch notifierName {
+		case "pushbullet":
+			if cfg.Notifications.Pushbullet.APIKey != "" {
+				client := notifications.NewPushbulletClient(cfg.Notifications.Pushbullet.APIKey, m.logger)
+				m.notifiers = append(m.notifiers, client)
+				m.logger.Info("Pushbullet notifier enabled.")
+			}
+		}
+	}
+
+	m.postProcessor = NewPostProcessor(cfg, m.logger, models.NewMediaRepository(m.db, m.logger), m.notifiers)
+
+	// Create a TMDB client instance to be shared
+	tmdbClient := metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language, metadataTimeout)
+
+	// Helper function to initialize metadata providers
+	initMetadataProvider := func(provider string) metadata.Client {
+		switch provider {
+		case "tmdb":
+			return tmdbClient
+		case "imdb":
+			return metadata.NewIMDBClient(cfg.Metadata.IMDB.APIKey, metadataTimeout, m.logger)
+		case "tvmaze":
+			return metadata.NewTVmazeClient(metadataTimeout)
+		case "anilist":
+			return metadata.NewAniListClient(metadataTimeout)
+		case "trakt":
+			return metadata.NewTraktClient(cfg.Metadata.Trakt.ClientID, tmdbClient, metadataTimeout, m.logger)
+		}
+		return nil
+	}
+
+	// Helper function to initialize indexer sources
+	initIndexerClient := func(source config.SourceConfig) indexers.Client {
+		switch source.Type {
+		case "scarf":
+			return indexers.NewScarfClient(source.URL, source.APIKey, searchTimeout)
+		case "jackett":
+			return indexers.NewJackettClient(source.URL, source.APIKey, searchTimeout)
+		case "prowlarr":
+			return indexers.NewProwlarrClient(source.URL, source.APIKey, searchTimeout)
+		}
+		return nil
+	}
+
+	// Initialize Movie Clients
+	for _, providerName := range cfg.Movies.Providers {
+		if client := initMetadataProvider(providerName); client != nil {
+			m.metadataClients[models.MediaTypeMovie] = append(m.metadataClients[models.MediaTypeMovie], client)
+		}
+	}
+	for _, source := range cfg.Movies.Sources {
+		if source.Type != "rss" {
+			if client := initIndexerClient(source); client != nil {
+				m.indexerClients[models.MediaTypeMovie] = append(m.indexerClients[models.MediaTypeMovie], IndexerClientWithMode{
+					Client: client,
+					Source: source,
+				})
+			}
+		}
+	}
+
+	// Initialize TV Show Clients
+	for _, providerName := range cfg.TVShows.Providers {
+		if client := initMetadataProvider(providerName); client != nil {
+			m.metadataClients[models.MediaTypeTVShow] = append(m.metadataClients[models.MediaTypeTVShow], client)
+		}
+	}
+	for _, source := range cfg.TVShows.Sources {
+		if source.Type != "rss" {
+			if client := initIndexerClient(source); client != nil {
+				m.indexerClients[models.MediaTypeTVShow] = append(m.indexerClients[models.MediaTypeTVShow], IndexerClientWithMode{
+					Client: client,
+					Source: source,
+				})
+			}
+		}
+	}
+
+	// Initialize Anime Clients
+	for _, providerName := range cfg.Anime.Providers {
+		if client := initMetadataProvider(providerName); client != nil {
+			m.metadataClients[models.MediaTypeAnime] = append(m.metadataClients[models.MediaTypeAnime], client)
+		}
+	}
+	for _, source := range cfg.Anime.Sources {
+		if source.Type != "rss" {
+			if client := initIndexerClient(source); client != nil {
+				m.indexerClients[models.MediaTypeAnime] = append(m.indexerClients[models.MediaTypeAnime], IndexerClientWithMode{
+					Client: client,
+					Source: source,
+				})
+			}
+		}
+	}
+
+	// Setup Torrent Client
+	switch cfg.TorrentClient.Type {
+	case "transmission":
+		m.torrentClient = torrent.NewTransmissionClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password)
+	case "qbittorrent":
+		m.torrentClient = torrent.NewQBittorrentClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password, m.logger)
+	case "aria2":
+		m.torrentClient = torrent.NewAria2Client(cfg.TorrentClient.Host, cfg.TorrentClient.Secret)
+	case "deluge":
+		client, err := torrent.NewDelugeClient(cfg.TorrentClient.Host, cfg.TorrentClient.Password)
+		if err != nil {
+			m.logger.Fatal("Failed to create Deluge client:", err)
+		}
+		m.torrentClient = client
+	default:
+		m.logger.Fatal("Unsupported torrent client type:", cfg.TorrentClient.Type)
+	}
+
+	m.logger.Info("Configuration reloaded successfully.")
+}
+
+func (m *Manager) SaveAndReloadConfig(configContent string) error {
+	configPath := "config/config.yml"
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		configPath = "config.yml"
+	}
+
+	// First, validate the new config content
+	var newCfg config.Config
+	if err := yaml.Unmarshal([]byte(configContent), &newCfg); err != nil {
+		return fmt.Errorf("new configuration is invalid: %w", err)
+	}
+
+	// If valid, write the new config to the file
+	if err := ioutil.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	// Now, reload the config in the manager
+	m.reloadConfig(&newCfg)
+
+	return nil
 }

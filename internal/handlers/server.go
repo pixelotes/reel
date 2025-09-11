@@ -9,7 +9,6 @@ import (
 	"reel/internal/config"
 	"reel/internal/core"
 	"reel/internal/utils"
-	"reel/web"
 
 	"github.com/gorilla/mux"
 )
@@ -70,18 +69,25 @@ func (s *Server) Start() error {
 	protected.HandleFunc("/stream/subtitles/{id:[0-9]+}", s.apiHandler.GetSubtitles).Methods("GET")
 	protected.HandleFunc("/subtitles/{id:[0-9]+}/available", s.apiHandler.GetAvailableSubtitles).Methods("GET")
 
-	// Add this line for the config endpoint
+	// Config endpoint
 	protected.HandleFunc("/config", s.apiHandler.GetConfig).Methods("GET")
+	protected.HandleFunc("/config", s.apiHandler.SaveConfig).Methods("POST")
 
 	// Anime search term routes
 	protected.HandleFunc("/media/{id}/anime-search-terms", s.apiHandler.GetAnimeSearchTerms).Methods("GET")
 	protected.HandleFunc("/media/{id}/anime-search-terms", s.apiHandler.AddAnimeSearchTerm).Methods("POST")
 	protected.HandleFunc("/media/anime-search-terms/{term_id}", s.apiHandler.DeleteAnimeSearchTerm).Methods("DELETE")
 
+	// Calendar route
+	protected.HandleFunc("/calendar", s.apiHandler.GetCalendar).Methods("GET")
+
 	// Web UI (if enabled)
 	if s.config.App.UIEnabled {
-		router.PathPrefix("/").Handler(http.FileServer(http.FS(web.Files)))
+		router.PathPrefix("/").Handler(http.FileServer(http.Dir("./web")))
 	}
+
+	// Add the WebSocket route for logs
+	api.HandleFunc("/logs/ws", s.handleLogsWebsocket)
 
 	s.httpServer = &http.Server{
 		Addr:         fmt.Sprintf(":%d", s.config.App.Port),

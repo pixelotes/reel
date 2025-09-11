@@ -76,7 +76,7 @@ func (t *TransmissionClient) AddTorrent(magnetLink string, downloadPath string) 
 	return "", fmt.Errorf("could not extract torrent hash from response")
 }
 
-func (t *TransmissionClient) AddTorrentFile(fileContent []byte, downloadPath string) (string, error) { // Added function
+func (t *TransmissionClient) AddTorrentFile(fileContent []byte, downloadPath string) (string, error) {
 	method := "torrent-add"
 	encodedMetainfo := base64.StdEncoding.EncodeToString(fileContent)
 
@@ -105,7 +105,7 @@ func (t *TransmissionClient) AddTorrentFile(fileContent []byte, downloadPath str
 func (t *TransmissionClient) GetTorrentStatus(hash string) (TorrentStatus, error) {
 	method := "torrent-get"
 	args := map[string]interface{}{
-		"fields": []string{"hashString", "name", "percentDone", "status", "rateDownload", "rateUpload", "eta", "downloadDir", "files", "uploadRatio"}, // Added "uploadRatio"
+		"fields": []string{"hashString", "name", "percentDone", "status", "rateDownload", "rateUpload", "eta", "downloadDir", "files", "uploadRatio"},
 		"ids":    []string{hash},
 	}
 
@@ -123,7 +123,7 @@ func (t *TransmissionClient) GetTorrentStatus(hash string) (TorrentStatus, error
 					Progress:    getFloat(torrent, "percentDone"),
 					DownloadDir: torrent["downloadDir"].(string),
 					Files:       []string{},
-					UploadRatio: getFloat(torrent, "uploadRatio"), // Added line
+					UploadRatio: getFloat(torrent, "uploadRatio"),
 				}
 
 				if files, ok := torrent["files"].([]interface{}); ok {
@@ -146,7 +146,7 @@ func (t *TransmissionClient) GetTorrentStatus(hash string) (TorrentStatus, error
 	// If we get here, it means the torrent was not found by its hash.
 	// Let's try getting all torrents and finding it.
 	args = map[string]interface{}{
-		"fields": []string{"hashString", "name", "percentDone", "status", "rateDownload", "rateUpload", "eta", "downloadDir", "files", "uploadRatio"}, // Added "uploadRatio"
+		"fields": []string{"hashString", "name", "percentDone", "status", "rateDownload", "rateUpload", "eta", "downloadDir", "files", "uploadRatio"},
 	}
 
 	response, err = t.sendRequest(method, args)

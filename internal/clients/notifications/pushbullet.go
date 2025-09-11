@@ -59,6 +59,22 @@ func (c *PushbulletClient) NotifyPostProcessComplete(media *models.Media, torren
 	}
 }
 
+func (c *PushbulletClient) NotifyNotEnoughSpace(media *models.Media, torrentName string) {
+	title := fmt.Sprintf("Error downloading %s", media.Title)
+	body := fmt.Sprintf("Not enough space on disk")
+	if err := c.sendPush(title, body); err != nil {
+		c.logger.Error("Error sending Pushbullet post-process notification:", err)
+	}
+}
+
+func (c *PushbulletClient) NotifyDownloadError(media *models.Media, torrentName string) {
+	title := fmt.Sprintf("Error downloading %s", media.Title)
+	body := fmt.Sprintf("Download process failed for %s", torrentName)
+	if err := c.sendPush(title, body); err != nil {
+		c.logger.Error("Error sending Pushbullet post-process notification:", err)
+	}
+}
+
 // Test verifies the API key is valid by fetching user info.
 func (c *PushbulletClient) Test() error {
 	_, err := c.pb.Me()

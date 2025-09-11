@@ -42,10 +42,10 @@ type tvmazeEpisode struct {
 	Airdate string `json:"airdate"`
 }
 
-func NewTVmazeClient() *TVmazeClient {
+func NewTVmazeClient(timeout time.Duration) *TVmazeClient {
 	return &TVmazeClient{
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: timeout,
 		},
 	}
 }

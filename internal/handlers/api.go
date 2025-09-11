@@ -1,9 +1,13 @@
 package handlers
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -14,7 +18,9 @@ import (
 	"reel/internal/database/models"
 	"reel/internal/utils"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/gorilla/mux"
+	"github.com/gorilla/websocket"
 )
 
 type APIHandler struct {
@@ -82,7 +88,7 @@ func (h *APIHandler) GetMedia(w http.ResponseWriter, r *http.Request) {
 	//}
 
 	respondJSON(w, http.StatusOK, media)
-	//h.logger.Info("GetMedia: Response sent successfully")
+	h.logger.Debug("GetMedia: Response sent successfully")
 }
 
 // Add new media
@@ -644,4 +650,125 @@ func (h *APIHandler) DeleteAnimeSearchTerm(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *APIHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
+	events, err := h.manager.GetCalendarEvents()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get calendar events")
+		return
+	}
+	respondJSON(w, http.StatusOK, events)
+}
+
+func (h *APIHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Could not read request body")
+		return
+	}
+
+	if err := h.manager.SaveAndReloadConfig(string(body)); err != nil {
+		respondError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save and reload config: %v", err))
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"status": "Configuration saved and reloaded successfully"})
+}
+
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin: func(r *http.Request) bool {
+		// Allow all connections by default. For production, you might want to restrict this.
+		return true
+	},
+}
+
+// internal/handlers/api.go
+
+func (s *Server) handleLogsWebsocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		s.logger.Error("Failed to upgrade websocket:", "error", err)
+		return
+	}
+	defer conn.Close()
+
+	logFilePath := filepath.Join(s.config.App.DataPath, "app.log")
+
+	// Send existing log content first (last 300 lines)
+	file, err := os.Open(logFilePath)
+	if err == nil {
+		lines := []string{}
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			lines = append(lines, scanner.Text())
+		}
+		file.Close()
+
+		start := 0
+		if len(lines) > 300 {
+			start = len(lines) - 300
+		}
+		for _, line := range lines[start:] {
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(line)); err != nil {
+				s.logger.Error("Error sending initial log lines:", "error", err)
+				return
+			}
+		}
+	}
+
+	// Watch for new content
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		s.logger.Error("Failed to create file watcher:", "error", err)
+		return
+	}
+	defer watcher.Close()
+
+	err = watcher.Add(filepath.Dir(logFilePath))
+	if err != nil {
+		s.logger.Error("Failed to watch log directory:", "error", err)
+		return
+	}
+
+	file, err = os.Open(logFilePath)
+	if err != nil {
+		s.logger.Error("Failed to open log file for tailing:", "error", err)
+		return
+	}
+	defer file.Close()
+	file.Seek(0, os.SEEK_END) // Start at the end of the file
+
+	reader := bufio.NewReader(file)
+
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			if event.Op&fsnotify.Write == fsnotify.Write && event.Name == logFilePath {
+				for {
+					line, err := reader.ReadBytes('\n')
+					if err != nil {
+						break // No more lines
+					}
+					if err := conn.WriteMessage(websocket.TextMessage, line); err != nil {
+						return // Client closed
+					}
+				}
+			}
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			s.logger.Error("File watcher error:", "error", err)
+		case <-time.After(1 * time.Second): // Periodically check for client close
+			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return // Client closed connection
+			}
+		}
+	}
 }

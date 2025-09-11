@@ -40,12 +40,12 @@ type tmdbSearchResponse struct {
 	TotalResults int `json:"total_results"`
 }
 
-func NewTMDBClient(apiKey, language string) *TMDBClient {
+func NewTMDBClient(apiKey, language string, timeout time.Duration) *TMDBClient {
 	return &TMDBClient{
 		apiKey:   apiKey,
 		language: language,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: timeout,
 		},
 	}
 }
@@ -167,6 +167,6 @@ func (t *TMDBClient) GetTVShowDetailsByID(tmdbID int) (*TVShowResult, error) {
 	}, nil
 }
 
-func (t *TMDBClient) SearchTVShow(title string) ([]*TVShowResult, error) { // Add this empty function
+func (t *TMDBClient) SearchTVShow(title string) ([]*TVShowResult, error) {
 	return nil, fmt.Errorf("TMDB TV show search not implemented")
 }

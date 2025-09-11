@@ -7,13 +7,15 @@ app:
   jwt_secret: "your-very-secure-jwt-secret-key-here"
   magnet_to_torrent_enabled: true
   magnet_to_torrent_timeout: 60
+  search_timeout: 120
   filter_log_level: "detail"
 
 torrent_client:
-  type: "transmission" # or "qbittorrent"
-  host: "localhost:9091" # e.g., localhost:8080 for qbittorrent
+  type: "transmission" # or "qbittorrent", "aria2"
+  host: "localhost:9091" # e.g., localhost:8080 for qbittorrent, http://localhost:6800/jsonrpc for aria2
   username: ""
   password: ""
+  secret: "" # for aria2
   download_path: "/downloads/media"
 
 notifications:
@@ -26,6 +28,7 @@ extra_trackers_list:
 
 metadata:
   language: "en"
+  timeout: 10
   tmdb:
     api_key: "your_tmdb_api_key_here"
   imdb:
@@ -71,6 +74,12 @@ anime:
     - type: "scarf"
       url: "http://localhost:8080/torznab/anime"
       api_key: "your_scarf_api_key_here"
+
+# Available placeholders: {title}, {year}, {season}, {episode}, {quality}
+file_renaming:
+  movie_template: "{title} ({year}) [{quality}]"
+  series_template: "{title} - S{season}E{episode} [{quality}]"
+  anime_template: "{title} - {season}x{episode} [{quality}]"
 
 database:
   path: "./data/reel.db"
