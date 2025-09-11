@@ -19,3 +19,9 @@ go run faketorznab.go -search "My Favorite Show"
 ```
 
 The server will now be running and ready to accept requests from your Reel application at `http://localhost:8080/torznab/`.
+
+You can send a query with a curl command similar to this one:
+
+```bash
+curl http://localhost:8080/torznab/any_indexer_name?t=search?q=Series+Name+S01E05
+```
