@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"flag"
+	"io"
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"reel/internal/config"
@@ -22,12 +24,18 @@ func main() {
 	// Load configuration
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		// *** This line will now catch the error and terminate the app ***
 		log.Fatal("Failed to load config:", err)
 	}
 
-	// Initialize logger
-	logger := utils.NewLogger(cfg.App.Debug)
+	// Initialize logger to write to both file and console
+	logFile, err := os.OpenFile(filepath.Join(cfg.App.DataPath, "app.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatalf("Failed to open log file: %v", err)
+	}
+	defer logFile.Close()
+
+	multiWriter := io.MultiWriter(os.Stdout, logFile)
+	logger := utils.NewLogger(cfg.App.Debug, multiWriter)
 
 	// Initialize database
 	db, err := database.NewSQLite(cfg.Database.Path)
@@ -37,7 +45,7 @@ func main() {
 	defer db.Close()
 
 	// Run migrations
-	if err := database.RunMigrations(db); err != nil {
+	if err := database.RunMigrations(db, logger); err != nil {
 		logger.Fatal("Failed to run migrations:", err)
 	}
 

@@ -199,6 +199,34 @@
             color: var(--text-color);
             line-height: 1.5;
         }
+
+        /* Log lines style */
+        #log-container {
+            background-color: var(--header-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 1rem;
+            height: 60vh;
+            overflow-y: scroll;
+            font-family: monospace;
+            font-size: 0.9rem;
+            white-space: pre-wrap;
+            color: var(--text-color);
+            line-height: 1.5;
+        }
+        .log-line {
+            display: flex;
+            gap: 1rem;
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+        .log-timestamp { color: #888; }
+        .log-level { font-weight: bold; min-width: 50px; text-transform: uppercase; }
+        .log-level-info { color: rgb(21, 101, 52) }
+        .log-level-warn { color: #c46226 }
+        .log-level-error { color: #ff0000 }
+        .log-level-debug { color: #4871c4; }
+        .log-level-fatal { background-color: var(--error-color); color: #fff; }
     </style>
 </head>
 <body>
@@ -279,6 +307,8 @@
             <h2>Application Logs</h2>
             <div class="filter-bar">
                 <input type="search" id="log-filter" placeholder="Filter logs..." style="flex: 1;">
+                <button id="pause-logs-btn">⏸️ Pause</button>
+                <button id="resume-logs-btn" style="display: none;">▶️ Resume</button>
                 <button id="clear-logs-btn" class="danger">Clear Logs</button>
             </div>
             <div id="log-container"></div>
@@ -444,7 +474,8 @@
                 filteredMedia: [],
                 currentMediaId: null,
                 calendar: null,
-                editor: null, // To hold the CodeMirror instance
+                editor: null,
+                isLogPaused: false, // Add this line
             };
 
             const RESOLUTION_RANK = { "360p": 0, "480p": 1, "720p": 2, "1080p": 3, "1440p": 4, "2160p": 5 };
@@ -1391,10 +1422,13 @@
 
             // Logs Page Functionality
             let logWebSocket;
+
             function initializeLogViewer() {
                 const logContainer = document.getElementById('log-container');
                 const logFilter = document.getElementById('log-filter');
                 const clearLogsBtn = document.getElementById('clear-logs-btn');
+                const pauseBtn = document.getElementById('pause-logs-btn');
+                const resumeBtn = document.getElementById('resume-logs-btn');
                 
                 logContainer.innerHTML = ''; // Clear previous logs
 
@@ -1409,25 +1443,77 @@
                 logWebSocket = new WebSocket(wsUrl);
 
                 logWebSocket.onopen = () => {
-                    logContainer.innerHTML += '<div style="color: var(--success-color);">[WebSocket] Connection established. Waiting for logs...</div>';
+                    logContainer.innerHTML += '<div class="log-line" style="color: var(--success-color);">[WebSocket] Connection established. Waiting for logs...</div>';
                 };
 
                 logWebSocket.onmessage = (event) => {
-                    const logLine = document.createElement('div');
-                    logLine.className = 'log-line';
-                    logLine.textContent = event.data;
+                    if (state.isLogPaused) {
+                        return;
+                    }
+                    
+                    const logContainer = document.getElementById('log-container');
+                    let logLine;
+
+                    try {
+                        const logData = JSON.parse(event.data);
+                        const timestamp = new Date(logData.timestamp).toLocaleTimeString();
+
+                        logLine = document.createElement('div');
+                        logLine.className = 'log-line';
+
+                        const timestampEl = document.createElement('span');
+                        timestampEl.className = 'log-timestamp';
+                        timestampEl.textContent = `[${timestamp}]`;
+
+                        const levelEl = document.createElement('span');
+                        levelEl.className = `log-level log-level-${logData.level}`;
+                        levelEl.textContent = logData.level;
+
+                        const messageEl = document.createElement('span');
+                        messageEl.className = 'log-message';
+                        messageEl.textContent = logData.message;
+
+                        logLine.appendChild(timestampEl);
+                        logLine.appendChild(levelEl);
+                        logLine.appendChild(messageEl);
+
+                    } catch (e) {
+                        // Fallback for any non-JSON messages
+                        logLine = document.createElement('div');
+                        logLine.className = 'log-line';
+                        logLine.textContent = event.data;
+                    }
+
                     logContainer.appendChild(logLine);
+
+                    // Auto-scroll to the bottom
                     logContainer.scrollTop = logContainer.scrollHeight;
+                    
+                    // Re-apply the filter to the new line
                     applyLogFilter();
                 };
 
                 logWebSocket.onclose = () => {
-                    logContainer.innerHTML += '<div style="color: var(--error-color);">[WebSocket] Connection closed.</div>';
+                    logContainer.innerHTML += '<div class="log-line" style="color: var(--error-color);">[WebSocket] Connection closed.</div>';
                 };
 
                 logFilter.addEventListener('input', applyLogFilter);
                 clearLogsBtn.addEventListener('click', () => logContainer.innerHTML = '');
+
+                pauseBtn.addEventListener('click', () => {
+                    state.isLogPaused = true;
+                    pauseBtn.style.display = 'none';
+                    resumeBtn.style.display = 'inline-block';
+                });
+
+                resumeBtn.addEventListener('click', () => {
+                    state.isLogPaused = false;
+                    resumeBtn.style.display = 'none';
+                    pauseBtn.style.display = 'inline-block';
+                    logContainer.scrollTop = logContainer.scrollHeight; // Scroll to bottom on resume
+                });
             }
+
             function applyLogFilter() {
                 const filterText = document.getElementById('log-filter').value.toLowerCase();
                 document.querySelectorAll('#log-container .log-line').forEach(line => {

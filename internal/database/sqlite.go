@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reel/internal/utils"
 	"sort"
 	"strings"
 
@@ -22,7 +23,6 @@ func NewSQLite(dbPath string) (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
-	//db, err := sql.Open("sqlite3", dbPath+"?_journal=WAL&_timeout=5000&_fk=1")
 	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
@@ -35,7 +35,7 @@ func NewSQLite(dbPath string) (*sql.DB, error) {
 	return db, nil
 }
 
-func RunMigrations(db *sql.DB) error {
+func RunMigrations(db *sql.DB, logger *utils.Logger) error {
 	// Create migrations table
 	_, err := db.Exec(`
         CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -108,7 +108,7 @@ func RunMigrations(db *sql.DB) error {
 			return fmt.Errorf("failed to commit migration %s: %w", version, err)
 		}
 
-		fmt.Printf("Applied migration: %s\n", version)
+		logger.Info("Applied migration:", version)
 	}
 
 	return nil

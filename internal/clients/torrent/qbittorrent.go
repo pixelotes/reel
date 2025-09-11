@@ -1,4 +1,3 @@
-// pixelotes/reel/reel-912718c2894dddc773eede72733de790bc7912b3/internal/clients/torrent/qbittorrent.go
 package torrent
 
 import (
@@ -9,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"reel/internal/utils"
 	"strings"
 
 	"github.com/google/uuid"
@@ -20,6 +20,7 @@ type qBittorrentClient struct {
 	username   string
 	password   string
 	httpClient *http.Client
+	logger     *utils.Logger
 }
 
 type qbTorrentProperties struct {
@@ -36,12 +37,13 @@ type qbTorrentFile struct {
 	Name string `json:"name"`
 }
 
-func NewQBittorrentClient(host, username, password string) *qBittorrentClient {
+func NewQBittorrentClient(host, username, password string, logger *utils.Logger) *qBittorrentClient {
 	return &qBittorrentClient{
 		host:       host,
 		username:   username,
 		password:   password,
 		httpClient: &http.Client{},
+		logger:     logger,
 	}
 }
 
@@ -235,7 +237,7 @@ func (q *qBittorrentClient) AddTorrentFile(fileContent []byte, downloadPath stri
 	req, err = http.NewRequest("POST", removeTagsURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		// Non-critical error, just log it
-		fmt.Printf("Warning: failed to remove temporary tag: %v\n", err)
+		q.logger.Warn("Failed to remove temporary tag:", err)
 	} else {
 		req.AddCookie(cookie)
 		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
@@ -245,7 +247,7 @@ func (q *qBittorrentClient) AddTorrentFile(fileContent []byte, downloadPath stri
 	return hash, nil
 }
 
-// GetTorrentStatus is a mock implementation. A full implementation would parse the torrent list from the API.
+// GetTorrentStatus retrieves the status of a torrent.
 func (q *qBittorrentClient) GetTorrentStatus(hash string) (TorrentStatus, error) {
 	cookie, err := q.login()
 	if err != nil {

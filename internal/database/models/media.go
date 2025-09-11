@@ -3,6 +3,7 @@ package models
 import (
 	"database/sql"
 	"fmt"
+	"reel/internal/utils"
 	"time"
 )
 
@@ -87,34 +88,34 @@ type AnimeSearchTerm struct {
 }
 
 type MediaRepository struct {
-	db *sql.DB
+	db     *sql.DB
+	Logger *utils.Logger
 }
 
-func NewMediaRepository(db *sql.DB) *MediaRepository {
-	return &MediaRepository{db: db}
+func NewMediaRepository(db *sql.DB, logger *utils.Logger) *MediaRepository {
+	return &MediaRepository{db: db, Logger: logger}
 }
 
 func (r *MediaRepository) Create(media *Media) error {
 	query := `
         INSERT INTO media (type, imdb_id, tmdb_id, title, year, language, min_quality, max_quality, 
-                          status, overview, poster_url, rating, auto_download, tv_show_id)
+                        status, overview, poster_url, rating, auto_download, tv_show_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
-
-	fmt.Printf("DEBUG: Creating media - Title: %s, Type: %s, TMDB ID: %v, TV Show ID: %v\n",
-		media.Title, media.Type, media.TMDBId, media.TVShowID)
+	r.Logger.Debug(fmt.Sprintf("Creating media - Title: %s, Type: %s, TMDB ID: %v, TV Show ID: %v",
+		media.Title, media.Type, media.TMDBId, media.TVShowID))
 
 	result, err := r.db.Exec(query, media.Type, media.IMDBId, media.TMDBId, media.Title,
 		media.Year, media.Language, media.MinQuality, media.MaxQuality, media.Status,
 		media.Overview, media.PosterURL, media.Rating, media.AutoDownload, media.TVShowID)
 
 	if err != nil {
-		fmt.Printf("ERROR: Insert failed: %v\n", err)
-		fmt.Printf("ERROR: Query was: %s\n", query)
-		fmt.Printf("ERROR: Values were: %v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v\n",
+		r.Logger.Error(fmt.Sprintf("Insert failed: %v\n", err))
+		r.Logger.Error(fmt.Sprintf("Query was: %s\n", query))
+		r.Logger.Error(fmt.Sprintf("Values were: %v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v\n",
 			media.Type, media.IMDBId, media.TMDBId, media.Title, media.Year, media.Language,
 			media.MinQuality, media.MaxQuality, media.Status, media.Overview, media.PosterURL,
-			media.Rating, media.AutoDownload, media.TVShowID)
+			media.Rating, media.AutoDownload, media.TVShowID))
 		return err
 	}
 
@@ -122,7 +123,7 @@ func (r *MediaRepository) Create(media *Media) error {
 	media.ID = int(id)
 	media.AddedAt = time.Now()
 
-	fmt.Printf("DEBUG: Media created successfully with ID: %d\n", media.ID)
+	r.Logger.Debug(fmt.Sprintf("Media created successfully with ID: %d\n", media.ID))
 	return nil
 }
 
@@ -182,8 +183,8 @@ func scanMedia(row interface {
 func (r *MediaRepository) GetByID(id int) (*Media, error) {
 	query := `
         SELECT id, type, imdb_id, tmdb_id, title, year, language, min_quality, max_quality,
-               status, torrent_hash, torrent_name, download_path, progress, added_at, completed_at,
-               overview, poster_url, rating, auto_download, tv_show_id
+			status, torrent_hash, torrent_name, download_path, progress, added_at, completed_at,
+			overview, poster_url, rating, auto_download, tv_show_id
         FROM media WHERE id = ?
     `
 	row := r.db.QueryRow(query, id)
@@ -200,16 +201,16 @@ func (r *MediaRepository) GetByID(id int) (*Media, error) {
 func (r *MediaRepository) GetAll() ([]Media, error) {
 	query := `
         SELECT id, type, imdb_id, tmdb_id, title, year, language, min_quality, max_quality,
-               status, torrent_hash, torrent_name, download_path, progress, added_at, completed_at,
-               overview, poster_url, rating, auto_download, tv_show_id
+			status, torrent_hash, torrent_name, download_path, progress, added_at, completed_at,
+			overview, poster_url, rating, auto_download, tv_show_id
         FROM media ORDER BY added_at DESC
     `
 
-	//fmt.Printf("DEBUG: Executing GetAll query: %s\n", query)
+	r.Logger.Debug(fmt.Sprintf("Executing GetAll query: %s\n", query))
 
 	rows, err := r.db.Query(query)
 	if err != nil {
-		fmt.Printf("ERROR: Query failed: %v\n", err)
+		r.Logger.Error(fmt.Sprintf("Query failed: %v\n", err))
 		return nil, err
 	}
 	defer rows.Close()
@@ -219,34 +220,34 @@ func (r *MediaRepository) GetAll() ([]Media, error) {
 
 	for rows.Next() {
 		rowCount++
-		//fmt.Printf("DEBUG: Processing row %d\n", rowCount)
+		r.Logger.Debug(fmt.Sprintf("Processing row %d\n", rowCount))
 
 		media, err := scanMedia(rows)
 		if err != nil {
-			fmt.Printf("ERROR: Failed to scan row %d: %v\n", rowCount, err)
+			r.Logger.Error(fmt.Sprintf("Failed to scan row %d: %v\n", rowCount, err))
 			return nil, err
 		}
 
-		//fmt.Printf("DEBUG: Scanned media - ID: %d, Title: %s, Type: %s, TV Show ID: %v\n",
-		//	media.ID, media.Title, media.Type, media.TVShowID)
+		r.Logger.Debug(fmt.Sprintf("Scanned media - ID: %d, Title: %s, Type: %s, TV Show ID: %v\n",
+			media.ID, media.Title, media.Type, media.TVShowID))
 
 		mediaList = append(mediaList, *media)
 	}
 
 	if err = rows.Err(); err != nil {
-		fmt.Printf("ERROR: Rows iteration error: %v\n", err)
+		r.Logger.Error(fmt.Sprintf("Rows iteration error: %v\n", err))
 		return nil, err
 	}
 
-	//fmt.Printf("DEBUG: GetAll returning %d media items\n", len(mediaList))
+	r.Logger.Debug(fmt.Sprintf("GetAll returning %d media items\n", len(mediaList)))
 	return mediaList, nil
 }
 
 func (r *MediaRepository) GetByStatus(status MediaStatus) ([]Media, error) {
 	query := `
         SELECT id, type, imdb_id, tmdb_id, title, year, language, min_quality, max_quality,
-               status, torrent_hash, torrent_name, download_path, progress, added_at, completed_at,
-               overview, poster_url, rating, auto_download, tv_show_id
+			status, torrent_hash, torrent_name, download_path, progress, added_at, completed_at,
+			overview, poster_url, rating, auto_download, tv_show_id
         FROM media WHERE status = ? ORDER BY added_at DESC
     `
 	rows, err := r.db.Query(query, status)
@@ -557,8 +558,8 @@ func (r *MediaRepository) GetDownloadingEpisodesForShow(tvShowID int) ([]Episode
 func (r *MediaRepository) GetSeriesWithFailedEpisodes() ([]Media, error) {
 	query := `
 		SELECT DISTINCT m.id, m.type, m.imdb_id, m.tmdb_id, m.title, m.year, m.language, m.min_quality, m.max_quality,
-			   m.status, m.torrent_hash, m.torrent_name, m.download_path, m.progress, m.added_at, m.completed_at,
-			   m.overview, m.poster_url, m.rating, m.auto_download, m.tv_show_id
+			m.status, m.torrent_hash, m.torrent_name, m.download_path, m.progress, m.added_at, m.completed_at,
+			m.overview, m.poster_url, m.rating, m.auto_download, m.tv_show_id
 		FROM media m
 		JOIN tv_shows ts ON m.tv_show_id = ts.id
 		JOIN seasons s ON ts.id = s.show_id

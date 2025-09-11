@@ -151,7 +151,7 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 	m := &Manager{
 		config:          cfg,
 		db:              db,
-		mediaRepo:       models.NewMediaRepository(db),
+		mediaRepo:       models.NewMediaRepository(db, logger),
 		torrentSelector: NewTorrentSelector(cfg, logger), // Assuming this exists
 		notifiers:       make([]notifications.Notifier, 0),
 		logger:          logger,
@@ -161,6 +161,9 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		metadataClients: make(map[models.MediaType][]metadata.Client),
 		httpClient:      &http.Client{},
 	}
+
+	// Show log info
+	logger.Info("Reloading the config...")
 
 	// --- Initialize Indexer Search Timeout ---
 	searchTimeout := time.Duration(cfg.App.SearchTimeout) * time.Second
@@ -189,7 +192,7 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		}
 	}
 
-	m.postProcessor = NewPostProcessor(cfg, logger, models.NewMediaRepository(db), m.notifiers)
+	m.postProcessor = NewPostProcessor(cfg, logger, models.NewMediaRepository(db, logger), m.notifiers)
 
 	// --- Initialize Clients based on new Config Structure ---
 
@@ -202,13 +205,13 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		case "tmdb":
 			return tmdbClient // Return the shared instance
 		case "imdb":
-			return metadata.NewIMDBClient(cfg.Metadata.IMDB.APIKey, metadataTimeout)
+			return metadata.NewIMDBClient(cfg.Metadata.IMDB.APIKey, metadataTimeout, m.logger)
 		case "tvmaze":
 			return metadata.NewTVmazeClient(metadataTimeout)
 		case "anilist":
 			return metadata.NewAniListClient(metadataTimeout)
 		case "trakt":
-			return metadata.NewTraktClient(cfg.Metadata.Trakt.ClientID, tmdbClient, metadataTimeout) // Pass TMDB client
+			return metadata.NewTraktClient(cfg.Metadata.Trakt.ClientID, tmdbClient, metadataTimeout, m.logger) // Pass TMDB client
 		}
 		return nil
 	}
@@ -286,7 +289,7 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 	case "transmission":
 		m.torrentClient = torrent.NewTransmissionClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password)
 	case "qbittorrent":
-		m.torrentClient = torrent.NewQBittorrentClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password)
+		m.torrentClient = torrent.NewQBittorrentClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password, m.logger)
 	case "aria2":
 		m.torrentClient = torrent.NewAria2Client(cfg.TorrentClient.Host, cfg.TorrentClient.Secret)
 	case "deluge":
@@ -1303,7 +1306,7 @@ func (m *Manager) StartDownload(id int, torrent indexers.IndexerResult) error {
 			timeout = 60 * time.Second // Default to 60 seconds
 		}
 		m.logger.Info("Attempting to convert magnet to .torrent with timeout:", timeout)
-		torrentFileBytes, convErr := utils.ConvertMagnetToTorrent(torrent.DownloadURL, timeout, m.config.App.DataPath)
+		torrentFileBytes, convErr := utils.ConvertMagnetToTorrent(torrent.DownloadURL, timeout, m.config.App.DataPath, m.logger)
 		if convErr == nil {
 			m.logger.Info("Magnet conversion successful, adding as .torrent file.")
 			hash, err = m.torrentClient.AddTorrentFile(torrentFileBytes, downloadPath)
@@ -1388,7 +1391,7 @@ func (m *Manager) StartEpisodeDownload(mediaID int, seasonNumber int, episodeNum
 			timeout = 60 * time.Second // Default to 60 seconds
 		}
 		m.logger.Info("Attempting to convert magnet to .torrent with timeout:", timeout)
-		torrentFileBytes, convErr := utils.ConvertMagnetToTorrent(torrent.DownloadURL, timeout, m.config.App.DataPath)
+		torrentFileBytes, convErr := utils.ConvertMagnetToTorrent(torrent.DownloadURL, timeout, m.config.App.DataPath, m.logger)
 		if convErr == nil {
 			m.logger.Info("Magnet conversion successful, adding as .torrent file.")
 			hash, err = m.torrentClient.AddTorrentFile(torrentFileBytes, downloadPath)
@@ -1937,7 +1940,7 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 		}
 	}
 
-	m.postProcessor = NewPostProcessor(cfg, m.logger, models.NewMediaRepository(m.db), m.notifiers)
+	m.postProcessor = NewPostProcessor(cfg, m.logger, models.NewMediaRepository(m.db, m.logger), m.notifiers)
 
 	// Create a TMDB client instance to be shared
 	tmdbClient := metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language, metadataTimeout)
@@ -1948,13 +1951,13 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 		case "tmdb":
 			return tmdbClient
 		case "imdb":
-			return metadata.NewIMDBClient(cfg.Metadata.IMDB.APIKey, metadataTimeout)
+			return metadata.NewIMDBClient(cfg.Metadata.IMDB.APIKey, metadataTimeout, m.logger)
 		case "tvmaze":
 			return metadata.NewTVmazeClient(metadataTimeout)
 		case "anilist":
 			return metadata.NewAniListClient(metadataTimeout)
 		case "trakt":
-			return metadata.NewTraktClient(cfg.Metadata.Trakt.ClientID, tmdbClient, metadataTimeout)
+			return metadata.NewTraktClient(cfg.Metadata.Trakt.ClientID, tmdbClient, metadataTimeout, m.logger)
 		}
 		return nil
 	}
@@ -2028,7 +2031,7 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 	case "transmission":
 		m.torrentClient = torrent.NewTransmissionClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password)
 	case "qbittorrent":
-		m.torrentClient = torrent.NewQBittorrentClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password)
+		m.torrentClient = torrent.NewQBittorrentClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password, m.logger)
 	case "aria2":
 		m.torrentClient = torrent.NewAria2Client(cfg.TorrentClient.Host, cfg.TorrentClient.Secret)
 	case "deluge":

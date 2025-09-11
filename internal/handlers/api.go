@@ -88,7 +88,7 @@ func (h *APIHandler) GetMedia(w http.ResponseWriter, r *http.Request) {
 	//}
 
 	respondJSON(w, http.StatusOK, media)
-	//h.logger.Info("GetMedia: Response sent successfully")
+	h.logger.Debug("GetMedia: Response sent successfully")
 }
 
 // Add new media
@@ -685,43 +685,57 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+// internal/handlers/api.go
+
 func (s *Server) handleLogsWebsocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		s.logger.Error("Failed to upgrade websocket", "error", err)
+		s.logger.Error("Failed to upgrade websocket:", "error", err)
 		return
 	}
 	defer conn.Close()
 
-	logFilePath := filepath.Join("data", "filter.log")
+	logFilePath := filepath.Join(s.config.App.DataPath, "app.log")
 
-	// Send existing log content first
+	// Send existing log content first (last 300 lines)
 	file, err := os.Open(logFilePath)
 	if err == nil {
+		lines := []string{}
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
-			conn.WriteMessage(websocket.TextMessage, scanner.Bytes())
+			lines = append(lines, scanner.Text())
 		}
 		file.Close()
+
+		start := 0
+		if len(lines) > 300 {
+			start = len(lines) - 300
+		}
+		for _, line := range lines[start:] {
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(line)); err != nil {
+				s.logger.Error("Error sending initial log lines:", "error", err)
+				return
+			}
+		}
 	}
 
 	// Watch for new content
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		s.logger.Error("Failed to create file watcher", "error", err)
+		s.logger.Error("Failed to create file watcher:", "error", err)
 		return
 	}
 	defer watcher.Close()
 
 	err = watcher.Add(filepath.Dir(logFilePath))
 	if err != nil {
-		s.logger.Error("Failed to watch log directory", "error", err)
+		s.logger.Error("Failed to watch log directory:", "error", err)
 		return
 	}
 
 	file, err = os.Open(logFilePath)
 	if err != nil {
-		s.logger.Error("Failed to open log file for tailing", "error", err)
+		s.logger.Error("Failed to open log file for tailing:", "error", err)
 		return
 	}
 	defer file.Close()
@@ -741,14 +755,16 @@ func (s *Server) handleLogsWebsocket(w http.ResponseWriter, r *http.Request) {
 					if err != nil {
 						break // No more lines
 					}
-					conn.WriteMessage(websocket.TextMessage, line)
+					if err := conn.WriteMessage(websocket.TextMessage, line); err != nil {
+						return // Client closed
+					}
 				}
 			}
 		case err, ok := <-watcher.Errors:
 			if !ok {
 				return
 			}
-			s.logger.Error("File watcher error", "error", err)
+			s.logger.Error("File watcher error:", "error", err)
 		case <-time.After(1 * time.Second): // Periodically check for client close
 			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return // Client closed connection
