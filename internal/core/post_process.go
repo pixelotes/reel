@@ -61,6 +61,7 @@ func (pp *PostProcessor) ProcessDownload(media models.Media, torrentStatus torre
 
 	newVideoFileName := pp.renameFiles(&media, destinationPath, seasonNumber, episodeNumber, torrentStatus.Name, mediaFiles)
 
+	// After renaming, if we have a video file, try to get subtitles for it.
 	if newVideoFileName != "" {
 		pp.downloadSubtitles(&media, destinationPath, newVideoFileName)
 	}
@@ -316,6 +317,18 @@ func (pp *PostProcessor) renameFiles(media *models.Media, destination string, se
 }
 
 func (pp *PostProcessor) downloadSubtitles(media *models.Media, destination, videoFileName string) {
+	// Check if subtitle files already exist
+	baseName := strings.TrimSuffix(filepath.Base(videoFileName), filepath.Ext(videoFileName))
+	files, err := os.ReadDir(destination)
+	if err == nil {
+		for _, file := range files {
+			if !file.IsDir() && strings.HasPrefix(file.Name(), baseName) && (strings.HasSuffix(file.Name(), ".srt") || strings.HasSuffix(file.Name(), ".sub") || strings.HasSuffix(file.Name(), ".ass")) {
+				pp.logger.Info("Subtitle file already exists, skipping download:", file.Name())
+				return
+			}
+		}
+	}
+
 	pp.logger.Info("Searching for subtitles for:", videoFileName)
 
 	f, err := os.Open(videoFileName)
@@ -333,6 +346,7 @@ func (pp *PostProcessor) downloadSubtitles(media *models.Media, destination, vid
 	finder := subtitles.NewSubFinder(f, videoFileName, lang)
 
 	// The library provides multiple sources, we can try them in order.
+	// For this example, we'll just use TheSubDb.
 	content, err := finder.TheSubDb()
 	if err != nil {
 		pp.logger.Error("Error searching for subtitles via TheSubDb:", err)
@@ -347,7 +361,6 @@ func (pp *PostProcessor) downloadSubtitles(media *models.Media, destination, vid
 	pp.logger.Info("Successfully downloaded subtitles for:", media.Title)
 
 	// Construct the new subtitle file name.
-	baseName := strings.TrimSuffix(filepath.Base(videoFileName), filepath.Ext(videoFileName))
 	subtitleName := fmt.Sprintf("%s.%s.srt", baseName, lang)
 	subtitlePath := filepath.Join(destination, subtitleName)
 
