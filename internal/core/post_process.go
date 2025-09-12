@@ -15,6 +15,8 @@ import (
 	"reel/internal/config"
 	"reel/internal/database/models"
 	"reel/internal/utils"
+
+	"github.com/martinlindhe/subtitles"
 )
 
 // PostProcessor handles the tasks after a download is complete.
@@ -57,7 +59,11 @@ func (pp *PostProcessor) ProcessDownload(media models.Media, torrentStatus torre
 		return err
 	}
 
-	pp.renameFiles(&media, destinationPath, seasonNumber, episodeNumber, torrentStatus.Name, mediaFiles)
+	newVideoFileName := pp.renameFiles(&media, destinationPath, seasonNumber, episodeNumber, torrentStatus.Name, mediaFiles)
+
+	if newVideoFileName != "" {
+		pp.downloadSubtitles(&media, destinationPath, newVideoFileName)
+	}
 
 	pp.notifyPostProcessCompleted(&media, torrentStatus.Name)
 
@@ -254,8 +260,9 @@ func (pp *PostProcessor) parseQualityFromTorrentName(torrentName string) string 
 }
 
 // renameFiles renames the moved/linked files to a clean, standardized format.
-func (pp *PostProcessor) renameFiles(media *models.Media, destination string, season, episode int, torrentName string, filesToRename []string) {
+func (pp *PostProcessor) renameFiles(media *models.Media, destination string, season, episode int, torrentName string, filesToRename []string) string {
 	quality := pp.parseQualityFromTorrentName(torrentName)
+	var videoFileName string
 
 	for _, oldPath := range filesToRename {
 		// We need to construct the path of the file *after* it has been moved/symlinked
@@ -298,10 +305,57 @@ func (pp *PostProcessor) renameFiles(media *models.Media, destination string, se
 			err := os.Rename(movedPath, newPath)
 			if err != nil {
 				pp.logger.Error("Failed to rename file:", err)
+			} else if videoFileName == "" && (strings.HasSuffix(newPath, ".mkv") || strings.HasSuffix(newPath, ".mp4") || strings.HasSuffix(newPath, ".avi")) {
+				videoFileName = newPath
 			}
 		} else {
 			pp.logger.Error("Could not find file to rename at path:", movedPath)
 		}
+	}
+	return videoFileName
+}
+
+func (pp *PostProcessor) downloadSubtitles(media *models.Media, destination, videoFileName string) {
+	pp.logger.Info("Searching for subtitles for:", videoFileName)
+
+	f, err := os.Open(videoFileName)
+	if err != nil {
+		pp.logger.Error("Could not open video file to find subtitles:", err)
+		return
+	}
+	defer f.Close()
+
+	lang := media.Language
+	if lang == "" {
+		lang = "en" // Default to English if no language is specified for the media
+	}
+
+	finder := subtitles.NewSubFinder(f, videoFileName, lang)
+
+	// The library provides multiple sources, we can try them in order.
+	content, err := finder.TheSubDb()
+	if err != nil {
+		pp.logger.Error("Error searching for subtitles via TheSubDb:", err)
+		return
+	}
+
+	if len(content) == 0 {
+		pp.logger.Info("No subtitles found for:", media.Title)
+		return
+	}
+
+	pp.logger.Info("Successfully downloaded subtitles for:", media.Title)
+
+	// Construct the new subtitle file name.
+	baseName := strings.TrimSuffix(filepath.Base(videoFileName), filepath.Ext(videoFileName))
+	subtitleName := fmt.Sprintf("%s.%s.srt", baseName, lang)
+	subtitlePath := filepath.Join(destination, subtitleName)
+
+	err = os.WriteFile(subtitlePath, content, 0644)
+	if err != nil {
+		pp.logger.Error("Error saving subtitle file:", err)
+	} else {
+		pp.logger.Info("Subtitle saved to:", subtitlePath)
 	}
 }
 
