@@ -67,7 +67,9 @@ Reel is configured using a config.yml file. Currently, it supports:
 ## ✨ Future Features
 Here’s a glimpse of what’s planned for the future:
 
-- Expanded Support: More download clients and Torznab servers.
+- (Done) Expanded support for torrent clients and Torznab servers.
+  - Torrent: Trasmission, Aria2, qBittorrent (needs testing), Deluge (needs testing)
+  - Indexers: Jackett, Scarf
 - (Done) Calendar view for episodes airing dates
 - Customization:
   - Configurable scoring for torrents.
