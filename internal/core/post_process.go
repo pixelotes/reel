@@ -145,6 +145,8 @@ func (pp *PostProcessor) processFilesWithFallback(media *models.Media, files []s
 
 			var err error
 			switch method {
+			case "hardlink":
+				err = os.Link(file, newPath)
 			case "symlink":
 				err = os.Symlink(file, newPath)
 			case "move":

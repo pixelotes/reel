@@ -58,7 +58,7 @@ A list of extra trackers to add to new torrents.
 | `providers`          | The order of preference for metadata providers.                          |
 | `download_folder`    | The path to download this type of media to.                              |
 | `destination_folder` | The path to move this type of media to after post-processing.            |
-| `move_method`        | The method to use for post-processing, can be "symlink", "move", or "copy". |
+| `move_method`        | The method to use for post-processing, can be "hardlink", "symlink", "move", or "copy". |
 | `sources`            | A list of indexer sources for this type of media.                        |
 
 ### `file_renaming`

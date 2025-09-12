@@ -44,7 +44,7 @@ movies:
   providers: ["tmdb", "imdb"] # Order of preference
   download_folder: "/downloads/movies"
   destination_folder: "/media/movies"
-  move_method:  ["symlink", "move", "copy"] # or ["move"], ["copy"] etc.
+  move_method: ["hardlink", "symlink", "move", "copy"] # In order of preference
   sources:
     - type: "scarf"
       url: "http://localhost:8080/torznab/movies"
@@ -59,7 +59,7 @@ tv-shows:
   providers: ["tvmaze"]
   download_folder: "/downloads/shows"
   destination_folder: "/media/shows"
-  move_method:  ["symlink", "move", "copy"] # or ["move"], ["copy"] etc.
+  move_method: ["hardlink", "symlink", "move", "copy"] # In order of preference
   sources:
     - type: "scarf"
       url: "http://localhost:8080/torznab/tv"
@@ -69,7 +69,7 @@ anime:
   providers: ["anidb"]
   download_folder: "/downloads/anime"
   destination_folder: "/media/anime"
-  move_method: ["symlink", "move", "copy"] # or ["move"], ["copy"] etc.
+  move_method: ["hardlink", "symlink", "move", "copy"] # In order of preference
   sources:
     - type: "scarf"
       url: "http://localhost:8080/torznab/anime"

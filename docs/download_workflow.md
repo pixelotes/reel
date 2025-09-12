@@ -26,7 +26,7 @@ This document outlines the complete lifecycle of a download in Reel, from adding
     * Once the download is complete, the **Update Download Status** task marks the media item as **`downloaded`**.
     * The post-processor is triggered, which performs the following actions:
         * Creates a destination folder for the media item.
-        * Moves, copies, or creates a symlink for the downloaded files to the destination folder.
+        * Moves, copies, or creates a hardlink or symlink for the downloaded files to the destination folder.
         * Renames the files according to your configured patterns.
     * Notifications are sent to inform you that the download is complete and ready to watch.
 
