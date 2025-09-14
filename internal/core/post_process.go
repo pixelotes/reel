@@ -316,7 +316,7 @@ func (pp *PostProcessor) renameFiles(media *models.Media, destination string, se
 	return videoFileName
 }
 
-func (pp *PostProcessor) downloadSubtitles(media *models.Media, destination, videoFileName string) {
+func (pp *PostProcessor) downloadSubtitlesOld(media *models.Media, destination, videoFileName string) {
 	// Check if subtitle files already exist
 	baseName := strings.TrimSuffix(filepath.Base(videoFileName), filepath.Ext(videoFileName))
 	files, err := os.ReadDir(destination)
@@ -370,6 +370,120 @@ func (pp *PostProcessor) downloadSubtitles(media *models.Media, destination, vid
 	} else {
 		pp.logger.Info("Subtitle saved to:", subtitlePath)
 	}
+}
+
+func (pp *PostProcessor) downloadSubtitles(media *models.Media, destination, videoFileName string) {
+	pp.logger.Info("=== Starting subtitle download debug ===")
+	pp.logger.Info("Media title:", media.Title)
+	pp.logger.Info("Video file:", videoFileName)
+	pp.logger.Info("Destination:", destination)
+	pp.logger.Info("Media language:", media.Language)
+
+	// Check if subtitle files already exist
+	baseName := strings.TrimSuffix(filepath.Base(videoFileName), filepath.Ext(videoFileName))
+	pp.logger.Info("Base name for subtitle:", baseName)
+
+	files, err := os.ReadDir(destination)
+	if err != nil {
+		pp.logger.Error("Error reading destination directory:", err)
+	} else {
+		pp.logger.Info("Found", len(files), "files in destination directory")
+		for _, file := range files {
+			pp.logger.Info("File in destination:", file.Name())
+			if !file.IsDir() && strings.HasPrefix(file.Name(), baseName) &&
+				(strings.HasSuffix(file.Name(), ".srt") ||
+					strings.HasSuffix(file.Name(), ".sub") ||
+					strings.HasSuffix(file.Name(), ".ass")) {
+				pp.logger.Info("Subtitle file already exists, skipping download:", file.Name())
+				return
+			}
+		}
+	}
+
+	pp.logger.Info("No existing subtitle found, proceeding with download")
+
+	// Check video file accessibility
+	videoStat, err := os.Stat(videoFileName)
+	if err != nil {
+		pp.logger.Error("Video file not accessible:", err)
+		return
+	}
+	pp.logger.Info("Video file size:", videoStat.Size(), "bytes")
+
+	f, err := os.Open(videoFileName)
+	if err != nil {
+		pp.logger.Error("Could not open video file:", err)
+		return
+	}
+	defer f.Close()
+
+	lang := media.Language
+	if lang == "" {
+		lang = "en"
+		pp.logger.Info("No language specified, defaulting to English")
+	} else {
+		pp.logger.Info("Using language:", lang)
+	}
+
+	pp.logger.Info("Creating SubFinder...")
+	finder := subtitles.NewSubFinder(f, videoFileName, lang)
+	if finder == nil {
+		pp.logger.Error("SubFinder creation returned nil")
+		return
+	}
+	pp.logger.Info("SubFinder created successfully")
+
+	// Try to get file hash for debugging
+	pp.logger.Info("Attempting to get SubDB hash...")
+	hash, err := subtitles.SubDbHashFromFile(f)
+	if err != nil {
+		pp.logger.Error("Could not compute SubDB hash:", err)
+	} else {
+		pp.logger.Info("SubDB hash:", hash)
+	}
+
+	pp.logger.Info("Attempting to search via TheSubDb...")
+	content, err := finder.TheSubDb()
+	if err != nil {
+		pp.logger.Error("TheSubDb search failed:", err)
+		pp.logger.Error("Error type:", fmt.Sprintf("%T", err))
+		return
+	}
+
+	pp.logger.Info("TheSubDb returned", len(content), "bytes")
+	if len(content) == 0 {
+		pp.logger.Info("No subtitles found via TheSubDb for:", media.Title)
+		return
+	}
+
+	// Log first few characters of content for debugging
+	preview := string(content)
+	if len(preview) > 200 {
+		preview = preview[:200] + "..."
+	}
+	pp.logger.Info("Subtitle content preview:", preview)
+
+	pp.logger.Info("Successfully downloaded subtitles for:", media.Title)
+
+	// Construct subtitle file name
+	subtitleName := fmt.Sprintf("%s.%s.srt", baseName, lang)
+	subtitlePath := filepath.Join(destination, subtitleName)
+	pp.logger.Info("Saving subtitle to:", subtitlePath)
+
+	err = os.WriteFile(subtitlePath, content, 0644)
+	if err != nil {
+		pp.logger.Error("Error saving subtitle file:", err)
+		return
+	}
+
+	// Verify file was written
+	if stat, err := os.Stat(subtitlePath); err != nil {
+		pp.logger.Error("Could not verify subtitle file was written:", err)
+	} else {
+		pp.logger.Info("Subtitle file written successfully, size:", stat.Size(), "bytes")
+	}
+
+	pp.logger.Info("=== Subtitle download debug completed ===")
 }
 
 func (pp *PostProcessor) notifyPostProcessCompleted(media *models.Media, torrentName string) {
