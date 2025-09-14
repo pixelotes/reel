@@ -37,6 +37,9 @@ func main() {
 	multiWriter := io.MultiWriter(os.Stdout, logFile)
 	logger := utils.NewLogger(cfg.App.Debug, multiWriter)
 
+	// Verify and create necessary folders
+	verifyAndCreateFolders(cfg, logger)
+
 	// Initialize database
 	db, err := database.NewSQLite(cfg.Database.Path)
 	if err != nil {
@@ -77,4 +80,28 @@ func main() {
 	logger.Info("Shutting down...")
 	manager.Stop()
 	server.Stop(ctx)
+}
+
+// verifyAndCreateFolders checks for the existence of download and destination folders
+// and creates them if they are missing.
+func verifyAndCreateFolders(cfg *config.Config, logger *utils.Logger) {
+	pathsToCheck := []string{
+		cfg.Movies.DownloadFolder,
+		cfg.Movies.DestinationFolder,
+		cfg.TVShows.DownloadFolder,
+		cfg.TVShows.DestinationFolder,
+		cfg.Anime.DownloadFolder,
+		cfg.Anime.DestinationFolder,
+	}
+
+	for _, path := range pathsToCheck {
+		if path != "" {
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				logger.Info("Creating missing directory:", path)
+				if err := os.MkdirAll(path, 0755); err != nil {
+					logger.Error("Failed to create directory:", path, "Error:", err)
+				}
+			}
+		}
+	}
 }
