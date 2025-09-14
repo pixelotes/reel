@@ -772,3 +772,63 @@ func (s *Server) handleLogsWebsocket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
+func (h *APIHandler) AddTorrentToMedia(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	mediaID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+
+	var req struct {
+		Link string `json:"link"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if err := h.manager.AddTorrentToMedia(mediaID, req.Link); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"status": "download started"})
+}
+
+func (h *APIHandler) AddTorrentToEpisode(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	mediaID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+	season, err := strconv.Atoi(vars["season"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid season number")
+		return
+	}
+	episode, err := strconv.Atoi(vars["episode"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid episode number")
+		return
+	}
+
+	var req struct {
+		Link string `json:"link"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if err := h.manager.AddTorrentToEpisode(mediaID, season, episode, req.Link); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"status": "download started"})
+}

@@ -328,6 +328,13 @@
             <div id="manual-search-content"></div>
         </div>
     </div>
+    
+    <div id="add-torrent-modal" class="modal-backdrop">
+        <div class="modal-content">
+            <span class="modal-close">&times;</span>
+            <div id="add-torrent-content"></div>
+        </div>
+    </div>
 
     <div id="video-player-modal" class="modal-backdrop">
         <div class="modal-content">
@@ -616,6 +623,7 @@
                 // setupAddMediaForm(); // Keep old tab for now
                 setupModal('media-modal');
                 setupModal('manual-search-modal');
+                setupModal('add-torrent-modal');
                 setupModal('settings-modal', 'settings-cancel-btn');
                 setupVideoPlayerModal();
                 setupSettingsForm();
@@ -1130,6 +1138,7 @@ async function refreshData() {
                     ${tvShowDetailsHtml}
                     ${animeSearchTermsHtml}
                     <div style="display: flex; gap: 1rem; margin-top: 2rem; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+                        <button onclick="openAddTorrentModal(${media.id})">🔗 Add Torrent</button>
                         ${media.type === 'movie' && media.status !== 'downloading' && media.status !== 'downloaded' ? `<button onclick="manualMovieSearch(${media.id})">🔍 Manual Search</button>` : ''}
                         ${media.status === 'failed' || media.status === 'pending' ? `<button onclick="retryMedia(${media.id})">🔄 Retry</button>` : ''}
                         <button onclick="showMediaSettingsModal(${media.id})">⚙️ Config</button>
@@ -1283,6 +1292,105 @@ async function refreshData() {
                     } catch (error) { showToast('Failed to delete media.', 'error'); }
                 };
             };
+            
+            window.openAddTorrentModal = async function(mediaId) {
+                const media = state.allMedia.find(m => m.id === mediaId);
+                if (!media) return;
+                const modal = document.getElementById('add-torrent-modal');
+                const content = document.getElementById('add-torrent-content');
+                if (media.type === 'movie') {
+                    content.innerHTML = `<h2>Add Torrent for ${media.title}</h2>
+                        <form id="add-torrent-form-movie">
+                            <input type="text" id="movie-torrent-link" placeholder="Magnet or .torrent link" required style="width: 100%;">
+                            <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1rem;">
+                                <button type="submit">Add</button>
+                            </div>
+                        </form>`;
+                    document.getElementById('add-torrent-form-movie').addEventListener('submit', e => {
+                        e.preventDefault();
+                        const link = document.getElementById('movie-torrent-link').value;
+                        addTorrentToMedia(mediaId, link);
+                    });
+                } else {
+                     try {
+                        const response = await fetchWithAuth(`/api/v1/media/${mediaId}/tv-details`);
+                        if (response.ok) {
+                            const show = await response.json();
+                            content.innerHTML = `<h2>Add Torrent for ${media.title}</h2>
+                                <div style="max-height: 400px; overflow-y: auto;">
+                                ${show.seasons.map(season => `
+                                    <details class="season-details">
+                                        <summary>Season ${season.season_number}</summary>
+                                        <div class="episode-list">
+                                            ${season.episodes.map(ep => `
+                                                <div class="episode-item">
+                                                    <span>${ep.episode_number}. ${ep.title}</span>
+                                                    <span class="media-status status-${ep.status}">${ep.status}</span>
+                                                    <button class="secondary" onclick="openEpisodeTorrentModal(${media.id}, ${season.season_number}, ${ep.episode_number})">🔗</button>
+                                                </div>
+                                            `).join('')}
+                                        </div>
+                                    </details>
+                                `).join('')}
+                                </div>`;
+                        }
+                    } catch (e) { content.innerHTML = '<p>Could not load seasons.</p>'; }
+                }
+                modal.style.display = 'flex';
+            }
+            
+            window.openEpisodeTorrentModal = function(mediaId, season, episode) {
+                const modal = document.getElementById('add-torrent-modal');
+                const content = document.getElementById('add-torrent-content');
+                content.innerHTML = `<h2>Add Torrent for S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}</h2>
+                    <form id="add-torrent-form-episode">
+                        <input type="text" id="episode-torrent-link" placeholder="Magnet or .torrent link" required style="width: 100%;">
+                        <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1rem;">
+                            <button type="submit">Add</button>
+                        </div>
+                    </form>`;
+                document.getElementById('add-torrent-form-episode').addEventListener('submit', e => {
+                    e.preventDefault();
+                    const link = document.getElementById('episode-torrent-link').value;
+                    addTorrentToEpisode(mediaId, season, episode, link);
+                });
+            }
+            
+            async function addTorrentToMedia(mediaId, link) {
+                showLoading(true, 'Adding torrent...');
+                try {
+                    const response = await fetchWithAuth(`/api/v1/media/${mediaId}/add-torrent`, {
+                        method: 'POST',
+                        body: { link }
+                    });
+                    if (!response.ok) throw new Error('Failed to add torrent');
+                    showToast('Torrent sent to download client!');
+                    document.getElementById('add-torrent-modal').style.display = 'none';
+                    loadMedia();
+                } catch (error) {
+                    showToast(error.message, 'error');
+                } finally {
+                    showLoading(false);
+                }
+            }
+
+            async function addTorrentToEpisode(mediaId, season, episode, link) {
+                showLoading(true, 'Adding torrent...');
+                try {
+                    const response = await fetchWithAuth(`/api/v1/media/${mediaId}/season/${season}/episode/${episode}/add-torrent`, {
+                        method: 'POST',
+                        body: { link }
+                    });
+                    if (!response.ok) throw new Error('Failed to add torrent');
+                    showToast('Torrent sent to download client!');
+                    document.getElementById('add-torrent-modal').style.display = 'none';
+                    loadMedia();
+                } catch (error) {
+                    showToast(error.message, 'error');
+                } finally {
+                    showLoading(false);
+                }
+            }
 
             async function checkSystemStatus() {
                 const statusList = document.getElementById('system-status-list');

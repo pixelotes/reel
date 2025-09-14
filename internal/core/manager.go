@@ -2069,3 +2069,21 @@ func (m *Manager) SaveAndReloadConfig(configContent string) error {
 
 	return nil
 }
+
+func (m *Manager) AddTorrentToMedia(mediaID int, link string) error {
+	result := indexers.IndexerResult{
+		Title:       "Manual Add",
+		DownloadURL: link,
+		Indexer:     "Manual",
+	}
+	return m.StartDownload(mediaID, result)
+}
+
+func (m *Manager) AddTorrentToEpisode(mediaID int, season int, episode int, link string) error {
+	result := indexers.IndexerResult{
+		Title:       "Manual Add",
+		DownloadURL: link,
+		Indexer:     "Manual",
+	}
+	return m.StartEpisodeDownload(mediaID, season, episode, result)
+}
