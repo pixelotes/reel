@@ -121,6 +121,7 @@ type Manager struct {
 	scheduler       *cron.Cron
 	searchQueue     chan models.Media
 	httpClient      *http.Client
+	metadataManager *MetadataManager
 }
 
 type SubtitleTrack struct {
@@ -192,12 +193,13 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 		}
 	}
 
-	m.postProcessor = NewPostProcessor(cfg, logger, models.NewMediaRepository(db, logger), m.notifiers)
-
-	// --- Initialize Clients based on new Config Structure ---
-
 	// Create a TMDB client instance to be shared
 	tmdbClient := metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language, metadataTimeout)
+	m.metadataManager = NewMetadataManager(logger, tmdbClient)
+
+	m.postProcessor = NewPostProcessor(cfg, logger, models.NewMediaRepository(db, logger), m.notifiers, m.metadataManager)
+
+	// --- Initialize Clients based on new Config Structure ---
 
 	// Helper function to initialize metadata providers
 	initMetadataProvider := func(provider string) metadata.Client {
@@ -827,7 +829,7 @@ func (m *Manager) updateShowProgress(mediaID int) {
 
 	// Use the generic UpdateProgress which now handles status correctly
 	m.mediaRepo.UpdateProgress(mediaID, newStatus, progress, nil)
-	m.logger.Info("Updated show progress for Media ID", mediaID, "New Status:", newStatus, "Progress:", progress)
+	m.logger.Debug("Updated show progress for Media ID", mediaID, "New Status:", newStatus, "Progress:", progress)
 }
 
 func (m *Manager) updateDownloadStatus() {
@@ -1940,10 +1942,11 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 		}
 	}
 
-	m.postProcessor = NewPostProcessor(cfg, m.logger, models.NewMediaRepository(m.db, m.logger), m.notifiers)
-
 	// Create a TMDB client instance to be shared
 	tmdbClient := metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language, metadataTimeout)
+	m.metadataManager = NewMetadataManager(m.logger, tmdbClient)
+
+	m.postProcessor = NewPostProcessor(cfg, m.logger, models.NewMediaRepository(m.db, m.logger), m.notifiers, m.metadataManager)
 
 	// Helper function to initialize metadata providers
 	initMetadataProvider := func(provider string) metadata.Client {

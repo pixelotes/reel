@@ -138,3 +138,7 @@ func (t *TraktClient) SearchMovie(title string, year int) ([]*MovieResult, error
 func (c *TraktClient) GetTVShowDetailsByID(tmdbID int) (*TVShowResult, error) {
 	return nil, fmt.Errorf("GetTVShowDetailsByID not implemented for this client")
 }
+
+func (c *TraktClient) GetMovieDetailsByID(tmdbID int) (*MovieResult, error) {
+	return nil, fmt.Errorf("GetMovieDetailsByID not implemented for this client")
+}

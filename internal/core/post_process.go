@@ -21,19 +21,21 @@ import (
 
 // PostProcessor handles the tasks after a download is complete.
 type PostProcessor struct {
-	config    *config.Config
-	logger    *utils.Logger
-	mediaRepo *models.MediaRepository
-	notifiers []notifications.Notifier
+	config          *config.Config
+	logger          *utils.Logger
+	mediaRepo       *models.MediaRepository
+	notifiers       []notifications.Notifier
+	metadataManager *MetadataManager
 }
 
 // NewPostProcessor creates a new instance of the PostProcessor.
-func NewPostProcessor(cfg *config.Config, logger *utils.Logger, mediaRepo *models.MediaRepository, notifiers []notifications.Notifier) *PostProcessor {
+func NewPostProcessor(cfg *config.Config, logger *utils.Logger, mediaRepo *models.MediaRepository, notifiers []notifications.Notifier, metadataManager *MetadataManager) *PostProcessor {
 	return &PostProcessor{
-		config:    cfg,
-		logger:    logger,
-		mediaRepo: mediaRepo,
-		notifiers: notifiers,
+		config:          cfg,
+		logger:          logger,
+		mediaRepo:       mediaRepo,
+		notifiers:       notifiers,
+		metadataManager: metadataManager,
 	}
 }
 
@@ -65,6 +67,9 @@ func (pp *PostProcessor) ProcessDownload(media models.Media, torrentStatus torre
 	if newVideoFileName != "" {
 		pp.downloadSubtitles(&media, destinationPath, newVideoFileName)
 	}
+
+	// New: Generate NFO files and download images
+	pp.metadataManager.GenerateAndDownloadMetadata(&media, destinationPath, seasonNumber, episodeNumber)
 
 	pp.notifyPostProcessCompleted(&media, torrentStatus.Name)
 

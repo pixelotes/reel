@@ -43,3 +43,7 @@ func (c *IMDBClient) SearchTVShow(title string) ([]*TVShowResult, error) {
 func (c *IMDBClient) GetTVShowDetailsByID(tmdbID int) (*TVShowResult, error) {
 	return nil, fmt.Errorf("GetTVShowDetailsByID not implemented for this client")
 }
+
+func (c *IMDBClient) GetMovieDetailsByID(tmdbID int) (*MovieResult, error) {
+	return nil, fmt.Errorf("GetMovieDetailsByID not implemented for this client")
+}

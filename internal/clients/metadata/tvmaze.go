@@ -150,3 +150,7 @@ func (t *TVmazeClient) SearchTVShow(title string) ([]*TVShowResult, error) {
 func (c *TVmazeClient) GetTVShowDetailsByID(tmdbID int) (*TVShowResult, error) {
 	return nil, fmt.Errorf("GetTVShowDetailsByID not implemented for this client")
 }
+
+func (c *TVmazeClient) GetMovieDetailsByID(tmdbID int) (*MovieResult, error) {
+	return nil, fmt.Errorf("GetMovieDetailsByID not implemented for this client")
+}

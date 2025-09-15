@@ -19,10 +19,48 @@ type TMDBClient struct {
 }
 
 type tmdbTVDetails struct {
-	ID         int    `json:"id"`
-	Name       string `json:"name"`
-	Overview   string `json:"overview"`
-	PosterPath string `json:"poster_path"`
+	ID           int    `json:"id"`
+	Name         string `json:"name"`
+	Overview     string `json:"overview"`
+	PosterPath   string `json:"poster_path"`
+	BackdropPath string `json:"backdrop_path"`
+	Images       struct {
+		Logos []struct {
+			FilePath string `json:"file_path"`
+		} `json:"logos"`
+	} `json:"images"`
+	ExternalIDs struct {
+		IMDBID string `json:"imdb_id"`
+	} `json:"external_ids"`
+	Seasons []struct {
+		SeasonNumber int `json:"season_number"`
+	} `json:"seasons"`
+}
+
+type tmdbMovieDetails struct {
+	ID            int    `json:"id"`
+	Title         string `json:"title"`
+	OriginalTitle string `json:"original_title"`
+	Overview      string `json:"overview"`
+	Tagline       string `json:"tagline"`
+	PosterPath    string `json:"poster_path"`
+	BackdropPath  string `json:"backdrop_path"`
+	IMDBID        string `json:"imdb_id"`
+	ReleaseDate   string `json:"release_date"`
+	Images        struct {
+		Logos []struct {
+			FilePath string `json:"file_path"`
+		} `json:"logos"`
+	} `json:"images"`
+}
+
+type tmdbSeasonDetails struct {
+	Episodes []struct {
+		EpisodeNumber int    `json:"episode_number"`
+		Name          string `json:"name"`
+		AirDate       string `json:"air_date"`
+		Overview      string `json:"overview"`
+	} `json:"episodes"`
 }
 
 // Define a struct that matches the TMDB API's JSON response
@@ -135,7 +173,7 @@ func (t *TMDBClient) SearchMovie(title string, year int) ([]*MovieResult, error)
 }
 
 func (t *TMDBClient) GetTVShowDetailsByID(tmdbID int) (*TVShowResult, error) {
-	detailsURL := fmt.Sprintf("https://api.themoviedb.org/3/tv/%d?api_key=%s&language=%s", tmdbID, t.apiKey, t.language)
+	detailsURL := fmt.Sprintf("https://api.themoviedb.org/3/tv/%d?api_key=%s&language=%s&append_to_response=images,external_ids", tmdbID, t.apiKey, t.language)
 
 	req, err := http.NewRequest("GET", detailsURL, nil)
 	if err != nil {
@@ -162,11 +200,97 @@ func (t *TMDBClient) GetTVShowDetailsByID(tmdbID int) (*TVShowResult, error) {
 		posterURL = "https://image.tmdb.org/t/p/w500" + details.PosterPath
 	}
 
-	return &TVShowResult{
-		PosterURL: posterURL,
+	backdropURL := ""
+	if details.BackdropPath != "" {
+		backdropURL = "https://image.tmdb.org/t/p/original" + details.BackdropPath
+	}
+
+	logoURL := ""
+	if len(details.Images.Logos) > 0 {
+		logoURL = "https://image.tmdb.org/t/p/original" + details.Images.Logos[0].FilePath
+	}
+
+	showResult := &TVShowResult{
+		ID:          strconv.Itoa(details.ID),
+		Title:       details.Name,
+		Overview:    details.Overview,
+		PosterURL:   posterURL,
+		BackdropURL: backdropURL,
+		LogoURL:     logoURL,
+		IMDBID:      details.ExternalIDs.IMDBID,
+		Seasons:     make(map[int][]Episode),
+	}
+
+	// Fetch episodes for each season
+	for _, season := range details.Seasons {
+		seasonDetailsURL := fmt.Sprintf("https://api.themoviedb.org/3/tv/%d/season/%d?api_key=%s&language=%s", tmdbID, season.SeasonNumber, t.apiKey, t.language)
+		var seasonDetails tmdbSeasonDetails
+		// You would typically create a helper for this repeated request logic
+		req, _ := http.NewRequest("GET", seasonDetailsURL, nil)
+		resp, _ := t.httpClient.Do(req)
+		json.NewDecoder(resp.Body).Decode(&seasonDetails)
+		resp.Body.Close()
+
+		for _, ep := range seasonDetails.Episodes {
+			showResult.Seasons[season.SeasonNumber] = append(showResult.Seasons[season.SeasonNumber], Episode{
+				EpisodeNumber: ep.EpisodeNumber,
+				Title:         ep.Name,
+				AirDate:       ep.AirDate,
+				Overview:      ep.Overview,
+			})
+		}
+	}
+
+	return showResult, nil
+}
+
+func (t *TMDBClient) GetMovieDetailsByID(tmdbID int) (*MovieResult, error) {
+	detailsURL := fmt.Sprintf("https://api.themoviedb.org/3/movie/%d?api_key=%s&language=%s&append_to_response=images", tmdbID, t.apiKey, t.language)
+
+	var details tmdbMovieDetails
+	err := t.sendRequest(detailsURL, &details)
+	if err != nil {
+		return nil, err
+	}
+
+	year := 0
+	if parsedTime, err := time.Parse("2006-01-02", details.ReleaseDate); err == nil {
+		year = parsedTime.Year()
+	}
+
+	return &MovieResult{
+		ID:            strconv.Itoa(details.ID),
+		Title:         details.Title,
+		OriginalTitle: details.OriginalTitle,
+		Year:          year,
+		Overview:      details.Overview,
+		Tagline:       details.Tagline,
+		PosterURL:     "https://image.tmdb.org/t/p/w500" + details.PosterPath,
+		BackdropURL:   "https://image.tmdb.org/t/p/original" + details.BackdropPath,
+		LogoURL:       "https://image.tmdb.org/t/p/original" + details.Images.Logos[0].FilePath,
+		IMDBID:        details.IMDBID,
 	}, nil
 }
 
 func (t *TMDBClient) SearchTVShow(title string) ([]*TVShowResult, error) {
 	return nil, fmt.Errorf("TMDB TV show search not implemented")
+}
+
+func (t *TMDBClient) sendRequest(url string, target interface{}) error {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := t.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("request failed with status: %d", resp.StatusCode)
+	}
+
+	return json.NewDecoder(resp.Body).Decode(target)
 }
