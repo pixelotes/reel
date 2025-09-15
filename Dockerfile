@@ -10,7 +10,7 @@ RUN apk add --update gcc git build-base
 COPY . .
 
 # Build a static binary
-RUN CGO_ENABLED=0 go build -ldflags="-w -s" -o reel .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-w -s" -o reel .
 
 
 # --- Final Stage ---
