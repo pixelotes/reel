@@ -7,6 +7,7 @@ app:
   jwt_secret: "your-very-secure-jwt-secret-key-here"
   magnet_to_torrent_enabled: true
   magnet_to_torrent_timeout: 60
+  disk_space_check: true
   search_timeout: 120
   filter_log_level: "detail"
 
