@@ -8,6 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/websocket v1.5.3
+	github.com/martinlindhe/subtitles v0.0.0-20250712112816-46df551d5ab5
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/shirou/gopsutil v3.21.11+incompatible
 	github.com/xconstruct/go-pushbullet v0.0.0-20171206132031-67759df45fbb
@@ -53,7 +54,6 @@ require (
 	github.com/huandu/xstrings v1.5.0 // indirect
 	github.com/kennygrant/sanitize v1.2.4 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
-	github.com/martinlindhe/subtitles v0.0.0-20250712112816-46df551d5ab5 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/minio/sha256-simd v1.0.1 // indirect

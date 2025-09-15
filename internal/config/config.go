@@ -32,6 +32,7 @@ type Config struct {
 		FilterLogLevel         string `yaml:"filter_log_level"` // "none" or "detail"
 		MagnetToTorrentEnabled bool   `yaml:"magnet_to_torrent_enabled"`
 		MagnetToTorrentTimeout int    `yaml:"magnet_to_torrent_timeout"`
+		DiskSpaceCheck         bool   `yaml:"disk_space_check"`
 		SearchTimeout          int    `yaml:"search_timeout"`
 	} `yaml:"app"`
 
