@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"reel/internal/utils"
 )
 
 type TransmissionClient struct {
@@ -15,14 +17,16 @@ type TransmissionClient struct {
 	password   string
 	sessionID  string
 	httpClient *http.Client
+	logger     *utils.Logger
 }
 
-func NewTransmissionClient(host, username, password string) *TransmissionClient {
+func NewTransmissionClient(host, username, password string, logger *utils.Logger) *TransmissionClient {
 	return &TransmissionClient{
 		host:       host,
 		username:   username,
 		password:   password,
 		httpClient: &http.Client{},
+		logger:     logger,
 	}
 }
 

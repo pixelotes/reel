@@ -289,11 +289,11 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 	// Setup Torrent Client (this remains global)
 	switch cfg.TorrentClient.Type {
 	case "transmission":
-		m.torrentClient = torrent.NewTransmissionClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password)
+		m.torrentClient = torrent.NewTransmissionClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password, m.logger)
 	case "qbittorrent":
 		m.torrentClient = torrent.NewQBittorrentClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password, m.logger)
 	case "aria2":
-		m.torrentClient = torrent.NewAria2Client(cfg.TorrentClient.Host, cfg.TorrentClient.Secret)
+		m.torrentClient = torrent.NewAria2Client(cfg.TorrentClient.Host, cfg.TorrentClient.Secret, m.logger)
 	case "deluge":
 		client, err := torrent.NewDelugeClient(cfg.TorrentClient.Host, cfg.TorrentClient.Password)
 		if err != nil {
@@ -2036,11 +2036,11 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 	// Setup Torrent Client
 	switch cfg.TorrentClient.Type {
 	case "transmission":
-		m.torrentClient = torrent.NewTransmissionClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password)
+		m.torrentClient = torrent.NewTransmissionClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password, m.logger)
 	case "qbittorrent":
 		m.torrentClient = torrent.NewQBittorrentClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password, m.logger)
 	case "aria2":
-		m.torrentClient = torrent.NewAria2Client(cfg.TorrentClient.Host, cfg.TorrentClient.Secret)
+		m.torrentClient = torrent.NewAria2Client(cfg.TorrentClient.Host, cfg.TorrentClient.Secret, m.logger)
 	case "deluge":
 		client, err := torrent.NewDelugeClient(cfg.TorrentClient.Host, cfg.TorrentClient.Password)
 		if err != nil {

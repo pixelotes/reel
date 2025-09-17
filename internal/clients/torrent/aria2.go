@@ -8,12 +8,15 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"reel/internal/utils"
 )
 
 type Aria2Client struct {
 	host       string
 	secret     string
 	httpClient *http.Client
+	logger     *utils.Logger
 }
 
 type aria2Request struct {
@@ -33,11 +36,12 @@ type aria2Response struct {
 	} `json:"error,omitempty"`
 }
 
-func NewAria2Client(host, secret string) *Aria2Client {
+func NewAria2Client(host, secret string, logger *utils.Logger) *Aria2Client {
 	return &Aria2Client{
 		host:       host,
 		secret:     secret,
 		httpClient: &http.Client{},
+		logger:     logger,
 	}
 }
 
@@ -122,7 +126,7 @@ func (a *Aria2Client) GetTorrentStatus(hash string) (TorrentStatus, error) {
 	filesData := filesResult.([]interface{})
 
 	// The base download directory for the torrent
-	downloadDir := data["dir"].(string)
+	downloadDir, _ := data["dir"].(string)
 
 	// Parse numeric values from strings
 	totalLength, _ := strconv.ParseFloat(data["totalLength"].(string), 64)
@@ -145,11 +149,13 @@ func (a *Aria2Client) GetTorrentStatus(hash string) (TorrentStatus, error) {
 	progress := 0.0
 	if totalLength > 0 {
 		progress = completedLength / totalLength
+		a.logger.Debug("Progress for task:", data["gid"].(string), ": ", progress)
 	}
 
 	uploadRatio := 0.0
 	if totalLength > 0 {
 		uploadRatio = uploadLength / totalLength
+		a.logger.Debug("Upload ratio for task:", data["gid"].(string), ": ", uploadRatio)
 	}
 
 	// --- MODIFIED SECTION ---
@@ -166,11 +172,15 @@ func (a *Aria2Client) GetTorrentStatus(hash string) (TorrentStatus, error) {
 	}
 	// --- END OF MODIFIED SECTION ---
 
+	// Safely get infoHash
+	//infoHash, _ := data["infoHash"].(string)
+	status, _ := data["status"].(string)
+
 	return TorrentStatus{
-		Hash:         data["infoHash"].(string),
+		Hash:         hash,
 		Name:         name,
 		Progress:     progress,
-		IsCompleted:  data["status"].(string) == "complete",
+		IsCompleted:  status == "complete",
 		DownloadRate: int64(downloadSpeed),
 		UploadRate:   int64(uploadSpeed),
 		DownloadDir:  downloadDir,
