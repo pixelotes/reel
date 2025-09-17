@@ -43,37 +43,54 @@ func NewPostProcessor(cfg *config.Config, logger *utils.Logger, mediaRepo *model
 func (pp *PostProcessor) ProcessDownload(media models.Media, torrentStatus torrent.TorrentStatus, seasonNumber int, episodeNumber int, downloadPath string) error {
 	pp.logger.Info("Starting post-processing for:", media.Title)
 
+	// Add a new status for post-processing to the media item
+	// This requires adding "post-processing" to the CHECK constraint in your database schema
+	pp.mediaRepo.UpdateStatus(media.ID, models.StatusPostProcessing)
+
 	destinationPath := pp.createDestinationFolder(&media, seasonNumber)
 	if destinationPath == "" {
 		err := fmt.Errorf("failed to create destination folder for: %s", media.Title)
 		pp.logger.Error(err.Error())
+		pp.mediaRepo.UpdateStatus(media.ID, models.StatusFailed) // Revert to failed on error
 		return err
 	}
 
+	pp.logger.Info("Identifying media files for:", media.Title)
 	mediaFiles := pp.identifyMediaFiles(downloadPath, torrentStatus.Files)
 	if len(mediaFiles) == 0 {
 		err := fmt.Errorf("no media files identified for: %s", media.Title)
 		pp.logger.Error(err.Error())
+		pp.mediaRepo.UpdateStatus(media.ID, models.StatusFailed) // Revert to failed on error
 		return err
 	}
+	pp.logger.Info("Identified", len(mediaFiles), "media files to process.")
 
 	if err := pp.processFilesWithFallback(&media, mediaFiles, destinationPath); err != nil {
+		pp.mediaRepo.UpdateStatus(media.ID, models.StatusFailed) // Revert to failed on error
 		return err
 	}
 
+	pp.logger.Info("Renaming files for:", media.Title)
 	newVideoFileName := pp.renameFiles(&media, destinationPath, seasonNumber, episodeNumber, torrentStatus.Name, mediaFiles)
+	pp.logger.Info("File renaming completed.")
 
 	// After renaming, if we have a video file, try to get subtitles for it.
 	if newVideoFileName != "" {
+		pp.logger.Info("Downloading subtitles for:", newVideoFileName)
 		pp.downloadSubtitles(&media, destinationPath, newVideoFileName)
+		pp.logger.Info("Subtitle download process completed.")
 	}
 
 	// New: Generate NFO files and download images
+	pp.logger.Info("Generating and downloading metadata for:", media.Title)
 	pp.metadataManager.GenerateAndDownloadMetadata(&media, destinationPath, seasonNumber, episodeNumber)
+	pp.logger.Info("Metadata generation and download completed.")
 
 	pp.notifyPostProcessCompleted(&media, torrentStatus.Name)
 
 	pp.logger.Info("Finished post-processing for:", media.Title)
+	// Set the final status to Downloaded only after all steps are successful
+	pp.mediaRepo.UpdateStatus(media.ID, models.StatusDownloaded)
 	return nil
 }
 

@@ -582,3 +582,12 @@ func (r *MediaRepository) GetSeriesWithFailedEpisodes() ([]Media, error) {
 	}
 	return mediaList, nil
 }
+
+// Update newly released episodes
+func (r *MediaRepository) UpdateEpisodeStatus(episodeID int, status MediaStatus) error {
+	_, err := r.db.Exec(`UPDATE episodes SET status = ? WHERE id = ?`, status, episodeID)
+	if err != nil {
+		return fmt.Errorf("failed to update episode status: %w", err)
+	}
+	return nil
+}

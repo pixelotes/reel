@@ -688,7 +688,7 @@ func (m *Manager) checkForNewEpisodes() {
 	}
 }
 
-// pixelotes/reel/reel-912718c2894dddc773eede72733de790bc7912b3/internal/core/manager.go
+// Updates the show metadata and episode release dates
 func (m *Manager) updateShowMetadata(media *models.Media, provider metadata.Client) {
 	m.logger.Info("Updating metadata for show:", media.Title)
 	remoteShowSlice, err := provider.SearchTVShow(media.Title)
@@ -763,7 +763,7 @@ func (m *Manager) updateShowMetadata(media *models.Media, provider metadata.Clie
 				airDate, _ := time.Parse("2006-01-02", remoteEpisode.AirDate)
 				downloadDelay := time.Duration(m.config.Automation.EpisodeDownloadDelayHours) * time.Hour
 				if airDate.Add(downloadDelay).Before(time.Now()) {
-					m.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, seasonNum, localEpisode.EpisodeNumber, models.StatusPending, nil, nil)
+					m.mediaRepo.UpdateEpisodeStatus(localEpisode.ID, models.StatusPending)
 					// If a TBA episode becomes available, set the media status to pending
 					if media.Status == models.StatusMonitoring {
 						m.mediaRepo.UpdateStatus(media.ID, models.StatusPending)
