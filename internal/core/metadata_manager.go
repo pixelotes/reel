@@ -1,3 +1,5 @@
+// internal/core/metadata_manager.go
+
 package core
 
 import (
@@ -42,29 +44,35 @@ type EpisodeNFO struct {
 }
 
 type MetadataManager struct {
-	logger     *utils.Logger
-	tmdbClient *metadata.TMDBClient
-	httpClient *http.Client
+	logger        *utils.Logger
+	tmdbClient    *metadata.TMDBClient
+	tvmazeClient  *metadata.TVmazeClient
+	anilistClient *metadata.AniListClient
+	httpClient    *http.Client
 }
 
-func NewMetadataManager(logger *utils.Logger, tmdbClient *metadata.TMDBClient) *MetadataManager {
+func NewMetadataManager(logger *utils.Logger, tmdbClient *metadata.TMDBClient, tvmazeClient *metadata.TVmazeClient, anilistClient *metadata.AniListClient) *MetadataManager {
 	return &MetadataManager{
-		logger:     logger,
-		tmdbClient: tmdbClient,
-		httpClient: &http.Client{},
+		logger:        logger,
+		tmdbClient:    tmdbClient,
+		tvmazeClient:  tvmazeClient,
+		anilistClient: anilistClient,
+		httpClient:    &http.Client{},
 	}
 }
 
 func (mm *MetadataManager) GenerateAndDownloadMetadata(media *models.Media, destinationPath string, seasonNumber, episodeNumber int) {
-	if media.TMDBId == nil {
-		mm.logger.Warn("Cannot fetch metadata without a TMDB ID for:", media.Title)
-		return
-	}
-
-	if media.Type == models.MediaTypeMovie {
+	switch media.Type {
+	case models.MediaTypeMovie:
+		if media.TMDBId == nil {
+			mm.logger.Warn("Cannot fetch metadata without a TMDB ID for movie:", media.Title)
+			return
+		}
 		mm.processMovieMetadata(media, destinationPath)
-	} else if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+	case models.MediaTypeTVShow:
 		mm.processTVShowMetadata(media, destinationPath, seasonNumber, episodeNumber)
+	case models.MediaTypeAnime:
+		mm.processTVShowMetadata(media, destinationPath, seasonNumber, episodeNumber) // Anime can be treated like a TV show for metadata
 	}
 }
 
@@ -99,19 +107,30 @@ func (mm *MetadataManager) processTVShowMetadata(media *models.Media, destinatio
 	showFolder := filepath.Dir(destinationPath)
 	showNFOPath := filepath.Join(showFolder, "tvshow.nfo")
 
-	if _, err := os.Stat(showNFOPath); os.IsNotExist(err) {
+	var details *metadata.TVShowResult
+	var err error
+
+	if _, statErr := os.Stat(showNFOPath); os.IsNotExist(statErr) {
 		mm.logger.Info("Show metadata not found, fetching for:", media.Title)
-		details, err := mm.tmdbClient.GetTVShowDetailsByID(*media.TMDBId)
-		if err != nil {
-			mm.logger.Error("Failed to get TV show details from TMDB:", err)
+
+		var detailsSlice []*metadata.TVShowResult
+		if media.Type == models.MediaTypeAnime {
+			detailsSlice, err = mm.anilistClient.SearchAnime(media.Title)
+		} else {
+			detailsSlice, err = mm.tvmazeClient.SearchTVShow(media.Title)
+		}
+
+		if err != nil || len(detailsSlice) == 0 {
+			mm.logger.Error("Failed to get show details from provider:", err)
 			return
 		}
+		details = detailsSlice[0]
 
 		nfo := TVShowNFO{
 			Title:  details.Title,
 			Plot:   details.Overview,
 			IMDBId: details.IMDBID,
-			TMDBId: strconv.Itoa(*media.TMDBId),
+			// Note: TVmaze/AniList do not provide TMDB ID directly in the current implementation.
 		}
 		mm.createNFOFile(showNFOPath, nfo)
 		mm.downloadImage(details.PosterURL, filepath.Join(showFolder, "poster.jpg"))
@@ -123,11 +142,18 @@ func (mm *MetadataManager) processTVShowMetadata(media *models.Media, destinatio
 
 	// Episode level NFO - This will always run to create NFO for the specific episode
 	if seasonNumber > 0 && episodeNumber > 0 {
-		// We still need the details for the episode NFO
-		details, err := mm.tmdbClient.GetTVShowDetailsByID(*media.TMDBId)
-		if err != nil {
-			mm.logger.Error("Failed to get TV show details for episode NFO:", err)
-			return
+		if details == nil { // If we skipped downloading show details, fetch them now for the episode
+			var detailsSlice []*metadata.TVShowResult
+			if media.Type == models.MediaTypeAnime {
+				detailsSlice, err = mm.anilistClient.SearchAnime(media.Title)
+			} else {
+				detailsSlice, err = mm.tvmazeClient.SearchTVShow(media.Title)
+			}
+			if err != nil || len(detailsSlice) == 0 {
+				mm.logger.Error("Failed to get show details for episode NFO:", err)
+				return
+			}
+			details = detailsSlice[0]
 		}
 
 		var episodeDetails *metadata.Episode

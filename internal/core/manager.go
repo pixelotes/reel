@@ -195,7 +195,9 @@ func NewManager(cfg *config.Config, db *sql.DB, logger *utils.Logger) *Manager {
 
 	// Create a TMDB client instance to be shared
 	tmdbClient := metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language, metadataTimeout)
-	m.metadataManager = NewMetadataManager(logger, tmdbClient)
+	tvmazeClient := metadata.NewTVmazeClient(metadataTimeout)
+	anilistClient := metadata.NewAniListClient(metadataTimeout)
+	m.metadataManager = NewMetadataManager(logger, tmdbClient, tvmazeClient, anilistClient)
 
 	m.postProcessor = NewPostProcessor(cfg, logger, models.NewMediaRepository(db, logger), m.notifiers, m.metadataManager)
 
@@ -1948,7 +1950,9 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 
 	// Create a TMDB client instance to be shared
 	tmdbClient := metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language, metadataTimeout)
-	m.metadataManager = NewMetadataManager(m.logger, tmdbClient)
+	tvmazeClient := metadata.NewTVmazeClient(metadataTimeout)
+	anilistClient := metadata.NewAniListClient(metadataTimeout)
+	m.metadataManager = NewMetadataManager(m.logger, tmdbClient, tvmazeClient, anilistClient)
 
 	m.postProcessor = NewPostProcessor(cfg, m.logger, models.NewMediaRepository(m.db, m.logger), m.notifiers, m.metadataManager)
 
