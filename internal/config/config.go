@@ -64,6 +64,13 @@ type Config struct {
 		} `yaml:"trakt"`
 	} `yaml:"metadata"`
 
+	Subtitles struct {
+		Enabled      bool     `yaml:"enabled"`
+		APIKey       string   `yaml:"api_key"`
+		Languages    []string `yaml:"languages"`
+		DownloadPath string   `yaml:"download_path"`
+	} `yaml:"subtitles"`
+
 	Movies struct {
 		Providers         []string       `yaml:"providers"`
 		Sources           []SourceConfig `yaml:"sources"`

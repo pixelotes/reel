@@ -65,6 +65,12 @@ tv-shows:
       url: "http://localhost:8080/torznab/tv"
       api_key: "your_scarf_api_key_here"
 
+subtitles:
+  enabled: true
+  api_key: "your_opensubtitles_api_key_here"
+  languages: ["en", "es"]
+  download_path: "" # Optional, defaults to same folder as media
+
 anime:
   providers: ["anidb"]
   download_folder: "/downloads/anime"

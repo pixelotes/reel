@@ -51,6 +51,15 @@ A list of extra trackers to add to new torrents.
 | `anilist`  | The configuration for AniList.                    |
 | `trakt`    | The configuration for Trakt.                      |
 
+### `subtitles`
+
+| Setting         | Description                                                          |
+| --------------- | -------------------------------------------------------------------- |
+| `enabled`       | Whether to enable subtitle downloading.                              |
+| `api_key`       | Your OpenSubtitles.com API Key.                                      |
+| `languages`     | A list of language codes to download (e.g., `["en", "es"]`).         |
+| `download_path` | Optional path to save subtitles. Defaults to video file directory.   |
+
 ### `movies`, `tv-shows`, `anime`
 
 | Setting              | Description                                                              |

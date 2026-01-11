@@ -21,6 +21,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	"gopkg.in/yaml.v3"
 )
 
 type APIHandler struct {
@@ -585,8 +586,15 @@ func (h *APIHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "Failed to read config file")
 		return
 	}
+
+	data, err := yaml.Marshal(configContent)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to marshal config")
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte(configContent))
+	w.Write(data)
 }
 
 func (h *APIHandler) GetAnimeSearchTerms(w http.ResponseWriter, r *http.Request) {
