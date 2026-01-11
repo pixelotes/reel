@@ -106,7 +106,12 @@ type Config struct {
 	} `yaml:"notifications"`
 
 	Automation struct {
-		SearchInterval            string   `yaml:"search_interval"`
+		SearchInterval            string   `yaml:"search_interval"` // Default: @every 30m
+		RSSProcessingInterval     string   `yaml:"rss_processing_interval"`
+		DownloadStatusInterval    string   `yaml:"download_status_interval"`
+		NewEpisodesCheckInterval  string   `yaml:"new_episodes_check_interval"`
+		CleanupInterval           string   `yaml:"cleanup_interval"`
+		RetryFailedInterval       string   `yaml:"retry_failed_interval"`
 		MaxConcurrentDownloads    int      `yaml:"max_concurrent_downloads"`
 		QualityPreferences        []string `yaml:"quality_preferences"`
 		MinSeeders                int      `yaml:"min_seeders"`

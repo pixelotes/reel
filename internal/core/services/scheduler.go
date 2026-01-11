@@ -1,6 +1,7 @@
 package services
 
 import (
+	"reel/internal/config"
 	"reel/internal/database/models"
 	"reel/internal/utils"
 
@@ -8,6 +9,7 @@ import (
 )
 
 type SchedulerService struct {
+	config            *config.Config
 	cron              *cron.Cron
 	searchQueue       chan<- models.Media
 	libraryService    *LibraryService
@@ -16,8 +18,9 @@ type SchedulerService struct {
 	logger            *utils.Logger
 }
 
-func NewSchedulerService(queue chan<- models.Media, lib *LibraryService, rss *RSSService, dl *DownloaderService, logger *utils.Logger) *SchedulerService {
+func NewSchedulerService(cfg *config.Config, queue chan<- models.Media, lib *LibraryService, rss *RSSService, dl *DownloaderService, logger *utils.Logger) *SchedulerService {
 	return &SchedulerService{
+		config:            cfg,
 		cron:              cron.New(),
 		searchQueue:       queue,
 		libraryService:    lib,
@@ -27,16 +30,23 @@ func NewSchedulerService(queue chan<- models.Media, lib *LibraryService, rss *RS
 	}
 }
 
+func (s *SchedulerService) getInterval(cfgValue, defaultValue string) string {
+	if cfgValue != "" {
+		return cfgValue
+	}
+	return defaultValue
+}
+
 func (s *SchedulerService) Start() {
-	s.cron.AddFunc("@every 30m", s.processPendingMedia)
-	s.cron.AddFunc("@every 6h", s.libraryService.CheckForNewEpisodes)
-	s.cron.AddFunc("@every 10s", s.downloaderService.UpdateDownloadStatus)
-	s.cron.AddFunc("@every 1h", s.rssService.ProcessRSSFeeds)
-	s.cron.AddFunc("@every 24h", s.downloaderService.CleanupCompletedTorrents)
-	// Retry logic is combined into processPendingMedia
+	s.cron.AddFunc(s.getInterval(s.config.Automation.SearchInterval, "@every 30m"), s.processPendingMedia)
+	s.cron.AddFunc(s.getInterval(s.config.Automation.NewEpisodesCheckInterval, "@every 6h"), s.libraryService.CheckForNewEpisodes)
+	s.cron.AddFunc(s.getInterval(s.config.Automation.DownloadStatusInterval, "@every 10s"), s.downloaderService.UpdateDownloadStatus)
+	s.cron.AddFunc(s.getInterval(s.config.Automation.RSSProcessingInterval, "@every 1h"), s.rssService.ProcessRSSFeeds)
+	s.cron.AddFunc(s.getInterval(s.config.Automation.CleanupInterval, "@every 24h"), s.downloaderService.CleanupCompletedTorrents)
+	s.cron.AddFunc(s.getInterval(s.config.Automation.RetryFailedInterval, "@every 1h"), s.processPendingMedia) // Retry logic reused
 
 	s.cron.Start()
-	s.logger.Info("Scheduler started.")
+	s.logger.Info("Scheduler started with dynamic intervals.")
 
 	// Run immediate tasks on startup
 	go s.processPendingMedia()

@@ -105,3 +105,11 @@ automation:
   - \bscreener\b
   - \bhdcam\b
   - \btelecine\b
+
+  # Scheduled Task Intervals (Optional - Defaults shown below)
+  # search_interval: "@every 30m"
+  # rss_processing_interval: "@every 1h"
+  # download_status_interval: "@every 10s"
+  # new_episodes_check_interval: "@every 6h"
+  # cleanup_interval: "@every 24h"
+  # retry_failed_interval: "@every 1h"
