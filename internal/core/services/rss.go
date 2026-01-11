@@ -4,7 +4,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"golang.org/x/net/html/charset"
@@ -33,16 +32,18 @@ type RSSService struct {
 	mediaRepo         *models.MediaRepository
 	downloaderService *DownloaderService
 	torrentSelector   *TorrentSelector
+	matcher           *MatcherService
 	logger            *utils.Logger
 	httpClient        *http.Client
 }
 
-func NewRSSService(cfg *config.Config, repo *models.MediaRepository, downloader *DownloaderService, ts *TorrentSelector, logger *utils.Logger, httpClient *http.Client) *RSSService {
+func NewRSSService(cfg *config.Config, repo *models.MediaRepository, downloader *DownloaderService, ts *TorrentSelector, matcher *MatcherService, logger *utils.Logger, httpClient *http.Client) *RSSService {
 	return &RSSService{
 		config:            cfg,
 		mediaRepo:         repo,
 		downloaderService: downloader,
 		torrentSelector:   ts,
+		matcher:           matcher,
 		logger:            logger,
 		httpClient:        httpClient,
 	}
@@ -121,7 +122,7 @@ func (s *RSSService) matchFeedItems(items []rssItem) {
 			}
 
 			for _, term := range searchTerms {
-				if !strings.Contains(strings.ToLower(item.Title), strings.ToLower(term)) {
+				if !s.matcher.Matches(term, item.Title) {
 					continue
 				}
 
