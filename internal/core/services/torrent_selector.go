@@ -117,8 +117,18 @@ func (ts *TorrentSelector) FilterAndScoreTorrents(media *models.Media, results [
 	results = ts.filterByMinSeeders(results, stats)
 
 	// Step 5: Calculate scores and sort the results
+	const QualityMultiplier = 1000
+	const SeederCap = 100
+
 	for i := range results {
-		results[i].Score = getQualityScore(results[i].Title) + results[i].Seeders
+		qualityScore := getQualityScore(results[i].Title)
+
+		normalizedSeeders := results[i].Seeders
+		if normalizedSeeders > SeederCap {
+			normalizedSeeders = SeederCap
+		}
+
+		results[i].Score = (qualityScore * QualityMultiplier) + normalizedSeeders
 	}
 
 	sort.Slice(results, func(i, j int) bool {

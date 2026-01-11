@@ -16,16 +16,16 @@ var QUALITY_SCORES = map[string]int{
 	"xvid": 1,
 	// Source quality
 	"remux":  10,
-	"bluray": 8, "blu-ray": 8, "bdrip": 8, "brrip": 6,
-	"webdl": 7, "web-dl": 7, "web": 6, "webrip": 5,
+	"bluray": 8, "bdrip": 8, "brrip": 6,
+	"webdl": 7, "webrip": 5, "web": 6, // consolidated keys
 	"hdtv": 4, "dvdrip": 3,
 	"cam": 1, "ts": 1,
 	// Codec
-	"av1": 5, "x265": 3, "h265": 3, "hevc": 3,
+	"av1": 6, "x265": 5, "h265": 5, "hevc": 5, // Boosted x265/AV1
 	"x264": 2, "h264": 2, "avc": 2,
 	// Audio
-	"atmos": 3, "truehd": 3, "dts-hd": 3, "dts-x": 3,
-	"dts": 2, "ac3": 1, "aac": 1,
+	"atmos": 3, "truehd": 3, "dtshd": 3, "dtsx": 3, // Normalized keys
+	"dts": 2, "eac3": 2, "ac3": 1, "aac": 1,
 	// Special
 	"repack": 1, "proper": 1, "extended": 1, "uncut": 1, "directors": 1,
 	"hdr": 2, "hdr10": 2, "dolbyvision": 3, "dv": 3, "imax": 2,
@@ -57,10 +57,30 @@ var SUPPORTED_RESOLUTIONS = []string{"2160p", "1440p", "1080p", "720p", "480p", 
 func getQualityScore(title string) int {
 	score := 0
 	lowerTitle := strings.ToLower(title)
-	for key, value := range QUALITY_SCORES {
-		if strings.Contains(lowerTitle, key) {
-			score += value
+
+	// Normalize common compound terms to single tokens to safely handle separators
+	lowerTitle = strings.ReplaceAll(lowerTitle, "web-dl", "webdl")
+	lowerTitle = strings.ReplaceAll(lowerTitle, "dts-hd", "dtshd")
+	lowerTitle = strings.ReplaceAll(lowerTitle, "dts-x", "dtsx")
+	lowerTitle = strings.ReplaceAll(lowerTitle, "true-hd", "truehd")
+	lowerTitle = strings.ReplaceAll(lowerTitle, "e-ac3", "eac3")
+
+	// Replace separators with spaces
+	lowerTitle = strings.ReplaceAll(lowerTitle, ".", " ")
+	lowerTitle = strings.ReplaceAll(lowerTitle, "-", " ")
+	lowerTitle = strings.ReplaceAll(lowerTitle, "_", " ")
+	lowerTitle = strings.ReplaceAll(lowerTitle, "[", " ")
+	lowerTitle = strings.ReplaceAll(lowerTitle, "]", " ")
+	lowerTitle = strings.ReplaceAll(lowerTitle, "(", " ")
+	lowerTitle = strings.ReplaceAll(lowerTitle, ")", " ")
+
+	tokens := strings.Fields(lowerTitle)
+
+	for _, token := range tokens {
+		if val, ok := QUALITY_SCORES[token]; ok {
+			score += val
 		}
 	}
+
 	return score
 }
