@@ -200,6 +200,8 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 			m.logger.Fatal("Failed to create Deluge client:", err)
 		}
 		torrentClient = client
+	case "mock":
+		torrentClient = torrent.NewMockClient(m.logger)
 	default:
 		m.logger.Fatal("Unsupported torrent client type:", cfg.TorrentClient.Type)
 	}
