@@ -219,7 +219,7 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 	if m.schedulerService != nil {
 		m.schedulerService.Stop()
 	}
-	m.schedulerService = services.NewSchedulerService(m.searchQueue, m.libraryService, m.rssService, m.downloaderService, m.logger)
+	m.schedulerService = services.NewSchedulerService(cfg, m.searchQueue, m.libraryService, m.rssService, m.downloaderService, m.logger)
 
 	m.logger.Info("Configuration reloaded successfully.")
 
