@@ -207,12 +207,13 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 	}
 
 	// --- Instantiate Services ---
-	torrentSelector := services.NewTorrentSelector(cfg, m.logger)
+	matcherService := services.NewMatcherService(cfg, m.logger)
+	torrentSelector := services.NewTorrentSelector(cfg, matcherService, m.logger)
 
 	m.libraryService = services.NewLibraryService(cfg, m.mediaRepo, metadataClients, m.logger)
 	m.downloaderService = services.NewDownloaderService(cfg, m.logger, torrentClient, m.mediaRepo, m.postProcessor, notifiers)
 	m.searcherService = services.NewSearcherService(indexerClients, torrentSelector, m.mediaRepo, m.logger)
-	m.rssService = services.NewRSSService(cfg, m.mediaRepo, m.downloaderService, torrentSelector, m.logger, m.httpClient)
+	m.rssService = services.NewRSSService(cfg, m.mediaRepo, m.downloaderService, torrentSelector, matcherService, m.logger, m.httpClient)
 
 	// Scheduler needs the queue channel
 	// Note: We need to stop previous scheduler if it exists

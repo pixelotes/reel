@@ -26,14 +26,16 @@ type FilterStats struct {
 
 type TorrentSelector struct {
 	config       *config.Config
+	matcher      *MatcherService
 	logger       *utils.Logger
 	filterLogger *log.Logger // New detailed logger
 }
 
-func NewTorrentSelector(cfg *config.Config, logger *utils.Logger) *TorrentSelector {
+func NewTorrentSelector(cfg *config.Config, matcher *MatcherService, logger *utils.Logger) *TorrentSelector {
 	ts := &TorrentSelector{
-		config: cfg,
-		logger: logger,
+		config:  cfg,
+		matcher: matcher,
+		logger:  logger,
 	}
 
 	// This is the effective "single line" to control detailed logging.
@@ -299,122 +301,17 @@ func (ts *TorrentSelector) filterByMinSeeders(results []indexers.IndexerResult, 
 	return filtered
 }
 
-// This function splits camelCase words
-func (ts *TorrentSelector) splitCamelCase(word string) []string {
-	// Regular expression to find camelCase boundaries
-	camelCaseRegex := regexp.MustCompile(`([a-z])([A-Z])`)
-
-	// Insert spaces before uppercase letters that follow lowercase letters
-	spaced := camelCaseRegex.ReplaceAllString(word, "$1 $2")
-
-	// Split by spaces and return non-empty parts
-	parts := strings.Fields(spaced)
-
-	// If we got multiple parts, return them. Otherwise return the original word
-	if len(parts) > 1 {
-		return parts
-	}
-	return []string{word}
-}
-
-// Enhanced extractMeaningfulWords with punctuation removal and camelCase support
-func (ts *TorrentSelector) extractMeaningfulWords(title string) []string {
-	stopWords := map[string]bool{
-		"the": true, "a": true, "an": true, "and": true, "or": true, "but": true,
-		"in": true, "on": true, "at": true, "to": true, "for": true, "of": true,
-		"with": true, "by": true, "from": true, "up": true, "about": true, "into": true,
-	}
-
-	// Step 1: Remove dots, commas, semicolons and other punctuation (but keep spaces and alphanumeric)
-	// This converts "Dr. Stone" -> "Dr Stone" and "Steins;Gate" -> "SteinsGate"
-	cleanTitle := regexp.MustCompile(`[^\w\s]`).ReplaceAllString(title, "")
-
-	// Step 2: Split by spaces to get individual words
-	words := regexp.MustCompile(`\s+`).Split(strings.TrimSpace(cleanTitle), -1)
-	var meaningfulWords []string
-
-	for _, word := range words {
-		word = strings.TrimSpace(word)
-		if len(word) > 1 {
-			// Step 3: Check if this word contains camelCase and split if needed
-			camelParts := ts.splitCamelCase(word)
-
-			// Add the original word if it's not a stop word
-			if !stopWords[strings.ToLower(word)] {
-				meaningfulWords = append(meaningfulWords, word)
-			}
-
-			// If camelCase was split, also add the individual parts
-			if len(camelParts) > 1 {
-				for _, part := range camelParts {
-					part = strings.TrimSpace(part)
-					if len(part) > 1 && !stopWords[strings.ToLower(part)] {
-						meaningfulWords = append(meaningfulWords, part)
-					}
-				}
-			}
-		}
-	}
-
-	// Remove duplicates
-	seen := make(map[string]bool)
-	var unique []string
-	for _, word := range meaningfulWords {
-		lowerWord := strings.ToLower(word)
-		if !seen[lowerWord] {
-			seen[lowerWord] = true
-			unique = append(unique, word)
-		}
-	}
-
-	return unique
-}
-
-// Enhanced filterBySeriesName with flexible matching
+// Enhanced filterBySeriesName with MatcherService
 func (ts *TorrentSelector) filterBySeriesName(results []indexers.IndexerResult, searchTerms []string, stats *FilterStats) []indexers.IndexerResult {
 	var filtered []indexers.IndexerResult
-	var allMeaningfulWords []string
-	for _, term := range searchTerms {
-		allMeaningfulWords = append(allMeaningfulWords, ts.extractMeaningfulWords(term)...)
-	}
-
-	if len(allMeaningfulWords) == 0 {
-		return results
-	}
 
 	for _, r := range results {
-		titleLower := strings.ToLower(r.Title)
 		matchFound := false
 
 		for _, term := range searchTerms {
-			// Strategy 1: All words must be found individually
-			meaningfulWords := ts.extractMeaningfulWords(term)
-			allWordsFound := true
-			for _, word := range meaningfulWords {
-				if !strings.Contains(titleLower, strings.ToLower(word)) {
-					allWordsFound = false
-					break
-				}
-			}
-			if allWordsFound {
+			if ts.matcher.Matches(term, r.Title) {
 				matchFound = true
 				break
-			}
-
-			// Strategy 2: Try original series title as-is (for exact matches)
-			if strings.Contains(titleLower, strings.ToLower(term)) {
-				matchFound = true
-				break
-			}
-
-			// Strategy 3: Try camelCase variations
-			camelParts := ts.splitCamelCase(term)
-			if len(camelParts) > 1 {
-				spacedVersion := strings.ToLower(strings.Join(camelParts, " "))
-				if strings.Contains(titleLower, spacedVersion) {
-					matchFound = true
-					break
-				}
 			}
 		}
 
@@ -422,7 +319,7 @@ func (ts *TorrentSelector) filterBySeriesName(results []indexers.IndexerResult, 
 			filtered = append(filtered, r)
 		} else {
 			stats.SeriesName++
-			ts.logReject(fmt.Sprintf("Series name not found in title using terms: %s", strings.Join(searchTerms, ", ")), r)
+			ts.logReject(fmt.Sprintf("Series name mismatch (terms: %s)", strings.Join(searchTerms, ", ")), r)
 		}
 	}
 	return filtered
