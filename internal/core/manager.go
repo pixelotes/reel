@@ -9,12 +9,17 @@ import (
 	"reel/internal/clients/indexers"
 	"reel/internal/clients/metadata"
 	"reel/internal/clients/notifications"
+	"reel/internal/clients/subtitles"
 	"reel/internal/clients/torrent"
 	"reel/internal/config"
 	"reel/internal/core/services"
 	"reel/internal/database/models"
 	"reel/internal/utils"
+
+	"gopkg.in/yaml.v3"
 )
+
+type SubtitleTrack = services.SubtitleTrack
 
 type Manager struct {
 	config    *config.Config
@@ -29,6 +34,9 @@ type Manager struct {
 	schedulerService  *services.SchedulerService
 	libraryService    *services.LibraryService
 	postProcessor     *services.PostProcessor // Kept for reload logic
+
+	// Clients
+	subtitleClient *subtitles.Client
 
 	searchQueue chan models.Media
 	httpClient  *http.Client
@@ -86,8 +94,11 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 	}
 
 	m.mediaRepo = models.NewMediaRepository(m.db, m.logger)
-	m.postProcessor = services.NewPostProcessor(cfg, m.logger, m.mediaRepo, notifiers)
 
+	// Initialize Subtitle Client
+	m.subtitleClient = subtitles.NewClient(cfg, m.logger)
+
+	m.postProcessor = services.NewPostProcessor(cfg, m.logger, m.mediaRepo, notifiers, m.subtitleClient)
 	// --- Initialize Metadata Clients ---
 	tmdbClient := metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language, metadataTimeout)
 	initMetadataProvider := func(provider string) metadata.Client {
@@ -369,14 +380,7 @@ func (m *Manager) PerformSearch(id int) ([]indexers.IndexerResult, error) {
 	return m.searcherService.PerformSearch(id)
 }
 
-func (m *Manager) StartDownload(mediaID int, downloadURL string, title string, size int64, indexer string) error {
-	// Need to reconstruct IndexerResult
-	t := indexers.IndexerResult{
-		Title:       title,
-		DownloadURL: downloadURL,
-		Size:        size,
-		Indexer:     indexer,
-	}
+func (m *Manager) StartDownload(mediaID int, t indexers.IndexerResult) error {
 	return m.downloaderService.StartDownload(mediaID, t)
 }
 
@@ -384,13 +388,7 @@ func (m *Manager) PerformEpisodeSearch(mediaID int, seasonNumber int, episodeNum
 	return m.searcherService.PerformEpisodeSearch(mediaID, seasonNumber, episodeNumber)
 }
 
-func (m *Manager) StartEpisodeDownload(mediaID int, seasonNumber int, episodeNumber int, downloadURL string, title string, size int64, indexer string) error {
-	t := indexers.IndexerResult{
-		Title:       title,
-		DownloadURL: downloadURL,
-		Size:        size,
-		Indexer:     indexer,
-	}
+func (m *Manager) StartEpisodeDownload(mediaID int, seasonNumber int, episodeNumber int, t indexers.IndexerResult) error {
 	return m.downloaderService.StartEpisodeDownload(mediaID, seasonNumber, episodeNumber, t)
 }
 
@@ -430,7 +428,7 @@ func (m *Manager) DeleteAnimeSearchTerm(id int) error {
 
 // SystemStatus & Config Facade
 
-func (m *Manager) GetSystemStatus() *SystemStatus {
+func (m *Manager) GetSystemStatus() (*SystemStatus, error) {
 	// Collect status from services
 	torrentStatus, _ := m.downloaderService.GetTorrentClientStatus()
 
@@ -450,10 +448,10 @@ func (m *Manager) GetSystemStatus() *SystemStatus {
 		TorrentClient:   tStatus,
 		IndexerClients:  indexerStatuses,
 		MetadataClients: metadataClients,
-	}
+	}, nil
 }
 
-func (m *Manager) TestIndexer(indexerKey string) (bool, error) {
+func (m *Manager) TestIndexerConnection(indexerKey string) (bool, error) {
 	return m.searcherService.TestIndexer(indexerKey)
 }
 
@@ -461,16 +459,20 @@ func (m *Manager) TestTorrentConnection() (bool, error) {
 	return m.downloaderService.TestTorrentConnection()
 }
 
-func (m *Manager) GetConfig() *config.Config {
-	return m.config
+func (m *Manager) GetCalendarEvents() ([]services.CalendarEvent, error) {
+	return []services.CalendarEvent{}, nil
 }
 
-func (m *Manager) SaveAndReloadConfig(newConfig *config.Config) error {
-	// Logic from original Manager
-	// Assuming SaveConfigToFile exists in utils or main handled saving.
-	// Manager usually just reloads. The api handler saves it.
-	// We just reload here.
-	m.reloadConfig(newConfig)
+func (m *Manager) GetConfig() (*config.Config, error) {
+	return m.config, nil
+}
+
+func (m *Manager) SaveAndReloadConfig(configData string) error {
+	var newConfig config.Config
+	if err := yaml.Unmarshal([]byte(configData), &newConfig); err != nil {
+		return err
+	}
+	m.reloadConfig(&newConfig)
 	return nil
 }
 

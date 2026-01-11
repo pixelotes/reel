@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"reel/internal/clients/notifications"
+	"reel/internal/clients/subtitles"
 	"reel/internal/clients/torrent"
 	"reel/internal/config"
 	"reel/internal/database/models"
@@ -19,19 +20,21 @@ import (
 
 // PostProcessor handles the tasks after a download is complete.
 type PostProcessor struct {
-	config    *config.Config
-	logger    *utils.Logger
-	mediaRepo *models.MediaRepository
-	notifiers []notifications.Notifier
+	config         *config.Config
+	logger         *utils.Logger
+	mediaRepo      *models.MediaRepository
+	notifiers      []notifications.Notifier
+	subtitleClient *subtitles.Client
 }
 
 // NewPostProcessor creates a new instance of the PostProcessor.
-func NewPostProcessor(cfg *config.Config, logger *utils.Logger, mediaRepo *models.MediaRepository, notifiers []notifications.Notifier) *PostProcessor {
+func NewPostProcessor(cfg *config.Config, logger *utils.Logger, mediaRepo *models.MediaRepository, notifiers []notifications.Notifier, subClient *subtitles.Client) *PostProcessor {
 	return &PostProcessor{
-		config:    cfg,
-		logger:    logger,
-		mediaRepo: mediaRepo,
-		notifiers: notifiers,
+		config:         cfg,
+		logger:         logger,
+		mediaRepo:      mediaRepo,
+		notifiers:      notifiers,
+		subtitleClient: subClient,
 	}
 }
 
@@ -298,6 +301,11 @@ func (pp *PostProcessor) renameFiles(media *models.Media, destination string, se
 			err := os.Rename(movedPath, newPath)
 			if err != nil {
 				pp.logger.Error("Failed to rename file:", err)
+			} else {
+				// Successfully renamed. Now check for subtitles.
+				if pp.subtitleClient != nil && pp.config.Subtitles.Enabled {
+					pp.downloadSubtitles(media, newPath, season, episode)
+				}
 			}
 		} else {
 			pp.logger.Error("Could not find file to rename at path:", movedPath)
@@ -313,5 +321,38 @@ func (pp *PostProcessor) notifyPostProcessCompleted(media *models.Media, torrent
 			notifier.NotifyPostProcessComplete(media, torrentName)
 			pp.logger.Info("Completed post-process notification for notifier", index)
 		}(n, i)
+	}
+}
+
+func (pp *PostProcessor) downloadSubtitles(media *models.Media, videoPath string, season, episode int) {
+	pp.logger.Info(fmt.Sprintf("Attempting to download subtitles for: %s", videoPath))
+
+	subs, err := pp.subtitleClient.Search(videoPath, media, season, episode)
+	if err != nil {
+		pp.logger.Error("Failed to search subtitles:", err)
+		return
+	}
+
+	if len(subs) == 0 {
+		pp.logger.Info("No subtitles found.")
+		return
+	}
+
+	// Download the best one (first one usually has highest score)
+	bestSub := subs[0]
+	pp.logger.Info("Downloading best subtitle:", bestSub.FileName, "Lang:", bestSub.Language)
+
+	// Construct subtitle path: same as video but with .lang.srt
+	// videoPath: /path/to/Movie (2020).mkv
+	// subPath:   /path/to/Movie (2020).en.srt
+
+	ext := filepath.Ext(videoPath)
+	base := strings.TrimSuffix(videoPath, ext)
+	subPath := fmt.Sprintf("%s.%s.srt", base, bestSub.Language)
+
+	if err := pp.subtitleClient.Download(bestSub, subPath); err != nil {
+		pp.logger.Error("Failed to download subtitle:", err)
+	} else {
+		pp.logger.Info("Subtitle downloaded to:", subPath)
 	}
 }
