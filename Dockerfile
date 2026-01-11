@@ -21,7 +21,7 @@ ARG PUID=1000
 ARG GUID=1000
 
 # Install required packages
-RUN apk --no-cache add ca-certificates tzdata
+RUN apk --no-cache add ca-certificates tzdata ffmpeg
 
 # Set the working directory
 WORKDIR /app

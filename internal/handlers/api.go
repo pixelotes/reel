@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -462,7 +463,56 @@ func (h *APIHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.ServeFile(w, r, filePath)
+	// 1. Direct Play for compatible extensions
+	ext := strings.ToLower(filepath.Ext(filePath))
+	if ext == ".mp4" || ext == ".m4v" || ext == ".mov" {
+		http.ServeFile(w, r, filePath)
+		return
+	}
+
+	// 2. Transmuxing using FFmpeg for others (mkv, avi, etc.)
+	ffmpegPath, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		// Fallback to ServeFile if FFmpeg is missing
+		h.logger.Warn("FFmpeg not found, falling back to direct play")
+		http.ServeFile(w, r, filePath)
+		return
+	}
+
+	// Set headers for MP4 streaming
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Connection", "keep-alive")
+	// Note: We don't set Content-Length as we don't know the size of the stream
+
+	// FFmpeg command to remux video (copy) and transcode audio (aac)
+	args := []string{
+		"-re",
+		"-i", filePath,
+		"-c:v", "copy",
+		"-c:a", "aac", "-ac", "2",
+		"-f", "mp4",
+		"-movflags", "frag_keyframe+empty_moov",
+		"pipe:1",
+	}
+
+	cmd := exec.CommandContext(r.Context(), ffmpegPath, args...)
+	cmd.Stdout = w
+	// We capture stderr to log distinct errors, but careful not to spam if client cancels
+	// cmd.Stderr = os.Stderr // Piping to stderr for debugging
+
+	if err := cmd.Start(); err != nil {
+		h.logger.Error("Failed to start FFmpeg:", err)
+		// Try fallback if start fails? Headers already set might be an issue.
+		// If we haven't written body, maybe... but ServeFile sets headers too.
+		return
+	}
+
+	if err := cmd.Wait(); err != nil {
+		// Check if error is due to context cancellation (client stopped)
+		if r.Context().Err() == nil {
+			h.logger.Error("FFmpeg streaming interrupted unexpectedly:", err)
+		}
+	}
 }
 
 // GetSubtitles handles finding, converting, and serving the subtitle file.
