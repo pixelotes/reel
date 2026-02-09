@@ -14,6 +14,7 @@ import (
 	"reel/internal/config"
 	"reel/internal/database/models"
 	"reel/internal/utils"
+	"reel/internal/version"
 )
 
 const (
@@ -22,11 +23,12 @@ const (
 )
 
 type Client struct {
-	apiKey    string
-	languages []string
-	logger    *utils.Logger
-	config    *config.Config
-	client    *http.Client
+	apiKey      string
+	languages   []string
+	logger      *utils.Logger
+	config      *config.Config
+	client      *http.Client
+	rateLimiter *RateLimiter
 }
 
 type Subtitle struct {
@@ -63,12 +65,18 @@ func NewClient(cfg *config.Config, logger *utils.Logger) *Client {
 	if len(langs) == 0 {
 		langs = []string{"en"}
 	}
+
+	// Rate limit: 5 requests per minute (conservative for free tier)
+	// OpenSubtitles allows ~200 requests/day
+	rateLimiter := NewRateLimiter(5, 1*time.Minute)
+
 	return &Client{
-		apiKey:    cfg.Subtitles.APIKey,
-		languages: langs,
-		logger:    logger,
-		config:    cfg,
-		client:    &http.Client{Timeout: 15 * time.Second},
+		apiKey:      cfg.Subtitles.APIKey,
+		languages:   langs,
+		logger:      logger,
+		config:      cfg,
+		client:      &http.Client{Timeout: 15 * time.Second},
+		rateLimiter: rateLimiter,
 	}
 }
 
@@ -141,6 +149,9 @@ func (c *Client) searchByMetadata(media *models.Media, season, episode int) ([]S
 }
 
 func (c *Client) performRequest(params url.Values) ([]Subtitle, error) {
+	// Rate limit requests
+	c.rateLimiter.Wait()
+
 	reqURL := fmt.Sprintf("%s/subtitles?%s", BaseURL, params.Encode())
 	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
@@ -186,10 +197,37 @@ func (c *Client) performRequest(params url.Values) ([]Subtitle, error) {
 	return results, nil
 }
 
-// Download requests the download link and saves the file.
+// Download requests the download link and saves the file with retry logic.
 func (c *Client) Download(sub Subtitle, destPath string) error {
+	maxRetries := 3
+	var lastErr error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 2^attempt seconds
+			backoff := time.Duration(1<<uint(attempt)) * time.Second
+			c.logger.Info(fmt.Sprintf("Retrying subtitle download (attempt %d/%d) after %v", attempt+1, maxRetries, backoff))
+			time.Sleep(backoff)
+		}
+
+		err := c.downloadAttempt(sub, destPath)
+		if err == nil {
+			return nil // Success!
+		}
+
+		lastErr = err
+		c.logger.Warn(fmt.Sprintf("Subtitle download attempt %d failed: %v", attempt+1, err))
+	}
+
+	return fmt.Errorf("failed to download subtitle after %d attempts: %w", maxRetries, lastErr)
+}
+
+// downloadAttempt performs a single download attempt
+func (c *Client) downloadAttempt(sub Subtitle, destPath string) error {
+	// Rate limit
+	c.rateLimiter.Wait()
+
 	// 1. Request Download Link
-	// POST /download with body {"file_id": 12345}
 	payload := map[string]int{"file_id": 0}
 	if id, err := strconv.Atoi(sub.Download); err == nil {
 		payload["file_id"] = id
@@ -203,7 +241,6 @@ func (c *Client) Download(sub Subtitle, destPath string) error {
 		return err
 	}
 	c.addHeaders(req)
-	// Important: Accept header for download
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.client.Do(req)
@@ -227,7 +264,6 @@ func (c *Client) Download(sub Subtitle, destPath string) error {
 	if err != nil {
 		return err
 	}
-	// No API headers needed for the S3/CDN link usually
 
 	dlRespObj, err := c.client.Do(dlReq)
 	if err != nil {
@@ -253,6 +289,6 @@ func (c *Client) Download(sub Subtitle, destPath string) error {
 func (c *Client) addHeaders(req *http.Request) {
 	req.Header.Set("Api-Key", c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
-	// Use a recognizable User-Agent
-	req.Header.Set("User-Agent", "Reel v1.0.0")
+	// Use dynamic version from build
+	req.Header.Set("User-Agent", version.GetUserAgent())
 }

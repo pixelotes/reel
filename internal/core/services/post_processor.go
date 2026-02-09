@@ -25,23 +25,86 @@ type PostProcessor struct {
 	mediaRepo      *models.MediaRepository
 	notifiers      []notifications.Notifier
 	subtitleClient *subtitles.Client
+	pipeline       *Pipeline // New pipeline-based processor
 }
 
 // NewPostProcessor creates a new instance of the PostProcessor.
 func NewPostProcessor(cfg *config.Config, logger *utils.Logger, mediaRepo *models.MediaRepository, notifiers []notifications.Notifier, subClient *subtitles.Client) *PostProcessor {
-	return &PostProcessor{
+	pp := &PostProcessor{
 		config:         cfg,
 		logger:         logger,
 		mediaRepo:      mediaRepo,
 		notifiers:      notifiers,
 		subtitleClient: subClient,
 	}
+
+	// Initialize pipeline if enabled
+	if cfg.PostProcessing.Pipeline.Enabled {
+		var err error
+		pp.pipeline, err = ConfigurablePipelineFactory(cfg, logger, mediaRepo, notifiers, subClient)
+		if err != nil {
+			logger.Error("Failed to create configurable pipeline, falling back to default:", err)
+			pp.pipeline = DefaultPipelineFactory(cfg, logger, mediaRepo, notifiers, subClient)
+		}
+		pp.pipeline.rollback = cfg.PostProcessing.Pipeline.Rollback
+		pp.logger.Info("PostProcessor: Pipeline mode enabled")
+	} else {
+		pp.logger.Info("PostProcessor: Legacy mode enabled")
+	}
+
+	return pp
 }
 
 // ProcessDownload is the main entry point for post-processing a completed download.
 func (pp *PostProcessor) ProcessDownload(media models.Media, torrentStatus torrent.TorrentStatus, seasonNumber int, episodeNumber int, downloadPath string) error {
 	pp.logger.Info("Starting post-processing for:", media.Title)
 
+	// Use pipeline if enabled
+	if pp.pipeline != nil {
+		return pp.processWithPipeline(media, torrentStatus, seasonNumber, episodeNumber, downloadPath)
+	}
+
+	// Legacy processing path
+	return pp.processLegacy(media, torrentStatus, seasonNumber, episodeNumber, downloadPath)
+}
+
+// processWithPipeline uses the new pipeline architecture
+func (pp *PostProcessor) processWithPipeline(media models.Media, torrentStatus torrent.TorrentStatus, seasonNumber int, episodeNumber int, downloadPath string) error {
+	mediaFiles := pp.identifyMediaFiles(downloadPath, torrentStatus.Files)
+	if len(mediaFiles) == 0 {
+		return fmt.Errorf("no media files identified for: %s", media.Title)
+	}
+
+	ctx := &ProcessingContext{
+		Media:         &media,
+		TorrentStatus: torrentStatus,
+		SeasonNumber:  seasonNumber,
+		EpisodeNumber: episodeNumber,
+		DownloadPath:  downloadPath,
+		OriginalFiles: mediaFiles,
+		Metadata:      make(map[string]string),
+		Errors:        make([]error, 0),
+	}
+
+	if err := pp.pipeline.Execute(ctx); err != nil {
+		pp.logger.Error("Pipeline execution failed:", err)
+		return err
+	}
+
+	// Log any non-fatal errors that occurred during processing
+	if len(ctx.Errors) > 0 {
+		pp.logger.Warn(fmt.Sprintf("Pipeline completed with %d non-fatal errors", len(ctx.Errors)))
+		for _, err := range ctx.Errors {
+			pp.logger.Warn(fmt.Sprintf("  - %v", err))
+		}
+	}
+
+	pp.logger.Info("Finished post-processing for:", media.Title)
+	return nil
+}
+
+// processLegacy uses the original monolithic approach
+func (pp *PostProcessor) processLegacy(media models.Media, torrentStatus torrent.TorrentStatus, seasonNumber int, episodeNumber int, downloadPath string) error {
 	destinationPath := pp.createDestinationFolder(&media, seasonNumber)
 	if destinationPath == "" {
 		err := fmt.Errorf("failed to create destination folder for: %s", media.Title)
@@ -136,12 +199,27 @@ func (pp *PostProcessor) processFilesWithFallback(media *models.Media, files []s
 	}
 
 	for _, file := range files {
-		if !waitForFile(file, 30*time.Second) {
+		if !pp.waitForFile(file) {
 			return fmt.Errorf("source file did not appear in time: %s", file)
 		}
 
 		var lastErr error
 		success := false
+		retries := 1
+		if pp.config.PostProcessing.Enabled && pp.config.PostProcessing.RetryAttempts > 0 {
+			retries = pp.config.PostProcessing.RetryAttempts
+		}
+
+		for attempt := 0; attempt < retries; attempt++ {
+			if attempt > 0 {
+				delay := 5 * time.Second
+				if pp.config.PostProcessing.Enabled && pp.config.PostProcessing.RetryDelay > 0 {
+					delay = time.Duration(pp.config.PostProcessing.RetryDelay) * time.Second
+				}
+				time.Sleep(delay)
+				pp.logger.Info(fmt.Sprintf("Retry attempt %d/%d for file: %s", attempt+1, retries, file))
+			}
+
 		for _, method := range moveMethods {
 			newPath := filepath.Join(destination, filepath.Base(file))
 			pp.logger.Info(fmt.Sprintf("Attempting to '%s' file: %s", method, file))
@@ -163,14 +241,19 @@ func (pp *PostProcessor) processFilesWithFallback(media *models.Media, files []s
 			if err == nil {
 				pp.logger.Info(fmt.Sprintf("Successfully processed file with method: '%s'", method))
 				success = true
-				break // Success, move to the next file
+				break // Success, move to the next method
 			}
 			lastErr = err
 			pp.logger.Warn(fmt.Sprintf("Method '%s' failed for file '%s': %v. Trying next method.", method, file, err))
 		}
 
+		if success {
+			break // Success, move to the next file
+		}
+		}
+
 		if !success {
-			pp.logger.Error(fmt.Sprintf("All processing methods failed for file '%s'. Last error: %v", file, lastErr))
+			pp.logger.Error(fmt.Sprintf("All processing methods failed for file '%s' after %d attempts. Last error: %v", file, retries, lastErr))
 			return fmt.Errorf("failed to process file '%s' after all fallbacks", file)
 		}
 	}
@@ -201,7 +284,12 @@ func (pp *PostProcessor) copyFileAndRemoveOriginal(src, dst string) error {
 }
 
 // waitForFile waits for a file to exist for a certain duration.
-func waitForFile(filePath string, timeout time.Duration) bool {
+func (pp *PostProcessor) waitForFile(filePath string) bool {
+	timeout := 30 * time.Second
+	if pp.config.PostProcessing.Enabled && pp.config.PostProcessing.WaitForFileTimeout > 0 {
+		timeout = time.Duration(pp.config.PostProcessing.WaitForFileTimeout) * time.Second
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -211,49 +299,25 @@ func waitForFile(filePath string, timeout time.Duration) bool {
 	for {
 		select {
 		case <-ctx.Done():
-			return false // Timeout reached
+			return false
 		case <-ticker.C:
-			if _, err := os.Stat(filePath); err == nil {
-				return true // File exists
+			if stat, err := os.Stat(filePath); err == nil {
+				// If validation is enabled, check file size
+				if pp.config.PostProcessing.Enabled && pp.config.PostProcessing.ValidateFiles {
+					minSize := int64(pp.config.PostProcessing.MinFileSizeMB) * 1024 * 1024
+					if stat.Size() < minSize {
+						continue // File too small, keep waiting
+					}
+				}
+				return true
 			}
 		}
 	}
 }
 
 func (pp *PostProcessor) parseQualityFromTorrentName(torrentName string) string {
-	lowerName := strings.ToLower(torrentName)
-	// Check for resolutions first
-	for _, res := range SUPPORTED_RESOLUTIONS {
-		if strings.Contains(lowerName, res) {
-			return res
-		}
-	}
-	// Fallback to other quality indicators
-	if strings.Contains(lowerName, "web-dl") || strings.Contains(lowerName, "webdl") {
-		return "WEB-DL"
-	}
-	if strings.Contains(lowerName, "bluray") {
-		return "BluRay"
-	}
-	if strings.Contains(lowerName, "webrip") {
-		return "WEBRip"
-	}
-	if strings.Contains(lowerName, "bdrip") {
-		return "BDRip"
-	}
-	if strings.Contains(lowerName, "brrip") {
-		return "BRRip"
-	}
-	if strings.Contains(lowerName, "hdtv") {
-		return "HDTV"
-	}
-	if strings.Contains(lowerName, "dvdrip") {
-		return "DVDRip"
-	}
-	if strings.Contains(lowerName, "xvid") {
-		return "Xvid" // Not really a quality, but it's quite common
-	}
-	return "Unknown"
+	// Use improved quality parser
+	return utils.ParseQuality(torrentName)
 }
 
 // renameFiles renames the moved/linked files to a clean, standardized format.
