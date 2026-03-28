@@ -21,6 +21,9 @@ torrent_client:
 notifications:
   pushbullet:
     api_key: ""
+  telegram:
+    bot_token: ""
+    chat_id: ""
 
 extra_trackers_list:
   - udp://tracker-1
@@ -65,6 +68,12 @@ tv-shows:
       url: "http://localhost:8080/torznab/tv"
       api_key: "your_scarf_api_key_here"
 
+subtitles:
+  enabled: true
+  api_key: "your_opensubtitles_api_key_here"
+  languages: ["en", "es"]
+  download_path: "" # Optional, defaults to same folder as media
+
 anime:
   providers: ["anidb"]
   download_folder: "/downloads/anime"
@@ -99,3 +108,11 @@ automation:
   - \bscreener\b
   - \bhdcam\b
   - \btelecine\b
+
+  # Scheduled Task Intervals (Optional - Defaults shown below)
+  # search_interval: "@every 30m"
+  # rss_processing_interval: "@every 1h"
+  # download_status_interval: "@every 10s"
+  # new_episodes_check_interval: "@every 6h"
+  # cleanup_interval: "@every 24h"
+  # retry_failed_interval: "@every 1h"

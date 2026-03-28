@@ -4,3 +4,4 @@ data/.torrent*
 data/*.db
 data/*.log
 media/
+reel
