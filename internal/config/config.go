@@ -40,10 +40,9 @@ type PipelineConfig struct {
 }
 
 type StageConfig struct {
-	Name      string            `yaml:"name"`                 // Stage name: validate, create_folders, move_files, rename, subtitles, notify
-	Enabled   bool              `yaml:"enabled"`              // Enable/disable this stage
-	Condition string            `yaml:"condition,omitempty"`  // Optional condition: e.g., "file_size > 100MB"
-	Options   map[string]string `yaml:"options,omitempty"`    // Stage-specific options
+	Name      string `yaml:"name"`                // Stage name: validate, create_folders, move_files, rename, subtitles, notify
+	Enabled   bool   `yaml:"enabled"`             // Enable/disable this stage
+	Condition string `yaml:"condition,omitempty"` // Optional condition: e.g., "file_size > 100MB"
 }
 
 type Config struct {
