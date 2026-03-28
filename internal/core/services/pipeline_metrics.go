@@ -392,7 +392,7 @@ func (mm *MetricsManager) cleanupOldHistory() {
 		}
 
 		dirPath := filepath.Join(historyDir, entry.Name())
-		dirInfo, err := entry.Info()
+		_, err := entry.Info()
 		if err != nil {
 			continue
 		}

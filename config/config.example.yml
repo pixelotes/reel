@@ -21,6 +21,9 @@ torrent_client:
 notifications:
   pushbullet:
     api_key: ""
+  telegram:
+    bot_token: ""
+    chat_id: ""
 
 extra_trackers_list:
   - udp://tracker-1

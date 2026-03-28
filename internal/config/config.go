@@ -127,6 +127,10 @@ type Config struct {
 		Pushbullet struct {
 			APIKey string `yaml:"api_key"`
 		} `yaml:"pushbullet"`
+		Telegram struct {
+			BotToken string `yaml:"bot_token"`
+			ChatID   string `yaml:"chat_id"`
+		} `yaml:"telegram"`
 	} `yaml:"notifications"`
 
 	Automation struct {

@@ -90,6 +90,12 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 				notifiers = append(notifiers, client)
 				m.logger.Info("Pushbullet notifier enabled.")
 			}
+		case "telegram":
+			if cfg.Notifications.Telegram.BotToken != "" && cfg.Notifications.Telegram.ChatID != "" {
+				client := notifications.NewTelegramClient(cfg.Notifications.Telegram.BotToken, cfg.Notifications.Telegram.ChatID, m.logger)
+				notifiers = append(notifiers, client)
+				m.logger.Info("Telegram notifier enabled.")
+			}
 		}
 	}
 

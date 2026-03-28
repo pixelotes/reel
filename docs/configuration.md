@@ -33,7 +33,10 @@ Reel is configured using a `config.yml` file. Here is a breakdown of all the ava
 | Setting      | Description                                |
 | ------------ | ------------------------------------------ |
 | `pushbullet` | The configuration for Pushbullet notifications. |
-| `api_key`    | The API key for Pushbullet.                |
+| `pushbullet.api_key`    | The API key for Pushbullet.                |
+| `telegram`   | The configuration for Telegram notifications.   |
+| `telegram.bot_token`    | The Telegram bot token (from @BotFather).  |
+| `telegram.chat_id`      | The Telegram chat ID to send messages to.  |
 
 ### `extra_trackers_list`
 
