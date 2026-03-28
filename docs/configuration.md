@@ -97,3 +97,226 @@ A list of extra trackers to add to new torrents.
 | `keep_torrents_seed_ratio`     | The seed ratio to reach before removing completed torrents.                |
 | `notifications`                | A list of notification providers to use.                                 |
 | `reject-common`                | A list of regular expressions to use for rejecting releases.             |
+
+### `postprocessing`
+
+Handles everything that happens after a download completes. See the [Postprocessing Pipeline](postprocessing_pipeline.md) documentation for a full reference with examples.
+
+| Setting                      | Description                                                              | Default |
+| ---------------------------- | ------------------------------------------------------------------------ | ------- |
+| `enabled`                    | Master switch for post-processing.                                       | `false` |
+| `validate_files`             | Enable file validation (extension and size checks).                      | `false` |
+| `min_file_size_mb`           | Minimum video file size in MB. Files below this are ignored.             | `1`     |
+| `wait_for_file_timeout`      | Seconds to wait for files to appear on disk.                             | `30`    |
+| `retry_attempts`             | Number of retries for file move/link operations.                         | `3`     |
+| `retry_delay`                | Seconds to wait between retries.                                         | `5`     |
+| `cleanup_on_failure`         | Delete processing state after successful completion.                     | `false` |
+| `keep_failed_downloads_days` | Days to retain failed download state for debugging.                      | `0`     |
+
+### `postprocessing.pipeline`
+
+| Setting    | Description                                                                | Default |
+| ---------- | -------------------------------------------------------------------------- | ------- |
+| `enabled`  | Use the pipeline architecture. When `false`, uses the legacy processor.    | `false` |
+| `rollback` | Automatically rollback completed stages if a stage fails.                  | `true`  |
+| `stages`   | Ordered list of stages. Empty means use the default set.                   | `[]`    |
+
+Each entry in `stages` accepts:
+
+| Field       | Description                                                                |
+| ----------- | -------------------------------------------------------------------------- |
+| `name`      | Stage name: `validate`, `create_folders`, `move_files`, `rename`, `subtitles`, `notify`, `permission_check`, `space_check`, `extract`, `health_check`, `enrich_metadata`, `duplicate_check`. |
+| `enabled`   | Whether the stage is active.                                               |
+| `condition` | Optional condition (e.g., `is_movie`, `file_size > 100MB`, `files > 1`).  |
+
+## Examples
+
+### Minimal Configuration
+
+```yaml
+app:
+  port: 8081
+  data_path: "./data"
+
+torrent_client:
+  type: "transmission"
+  host: "localhost:9091"
+  download_path: "/downloads/media"
+
+movies:
+  providers: ["tmdb"]
+  download_folder: "/downloads/movies"
+  destination_folder: "/media/movies"
+  move_method: ["hardlink", "move"]
+  sources:
+    - type: "scarf"
+      url: "http://localhost:8080/torznab/movies"
+      api_key: "your_key"
+
+database:
+  path: "./data/reel.db"
+
+automation:
+  search_interval: "1h"
+  quality_preferences: ["1080p", "720p"]
+  min_seeders: 5
+```
+
+### Full Configuration with Postprocessing Pipeline
+
+```yaml
+app:
+  port: 8081
+  data_path: "./data"
+  ui_enabled: true
+  ui_password: "changeme"
+  debug: false
+  jwt_secret: "your-jwt-secret"
+  search_timeout: 120
+
+torrent_client:
+  type: "qbittorrent"
+  host: "localhost:8080"
+  username: "admin"
+  password: "adminpass"
+  download_path: "/downloads/media"
+
+metadata:
+  language: "en"
+  timeout: 10
+  tmdb:
+    api_key: "your_tmdb_key"
+
+movies:
+  providers: ["tmdb", "imdb"]
+  download_folder: "/downloads/movies"
+  destination_folder: "/media/movies"
+  move_method: ["hardlink", "symlink", "move", "copy"]
+  sources:
+    - type: "scarf"
+      url: "http://localhost:8080/torznab/movies"
+      api_key: "your_key"
+
+tv-shows:
+  providers: ["tvmaze"]
+  download_folder: "/downloads/shows"
+  destination_folder: "/media/shows"
+  move_method: ["hardlink", "move"]
+  sources:
+    - type: "scarf"
+      url: "http://localhost:8080/torznab/tv"
+      api_key: "your_key"
+
+anime:
+  providers: ["anidb"]
+  download_folder: "/downloads/anime"
+  destination_folder: "/media/anime"
+  move_method: ["hardlink", "move"]
+  sources:
+    - type: "scarf"
+      url: "http://localhost:8080/torznab/anime"
+      api_key: "your_key"
+
+subtitles:
+  enabled: true
+  api_key: "your_opensubtitles_key"
+  languages: ["en", "es"]
+
+file_renaming:
+  movie_template: "{title} ({year}) [{quality}]"
+  series_template: "{title} - S{season}E{episode} [{quality}]"
+  anime_template: "{title} - {season}x{episode} [{quality}]"
+
+database:
+  path: "./data/reel.db"
+
+automation:
+  search_interval: "30m"
+  episode_download_delay_hours: 8
+  max_concurrent_downloads: 3
+  quality_preferences: ["1080p", "720p"]
+  min_seeders: 5
+  keep_torrents_for_days: 7
+  keep_torrents_seed_ratio: 1.2
+
+postprocessing:
+  enabled: true
+  validate_files: true
+  min_file_size_mb: 50
+  wait_for_file_timeout: 60
+  retry_attempts: 5
+  retry_delay: 10
+  cleanup_on_failure: true
+  keep_failed_downloads_days: 14
+  pipeline:
+    enabled: true
+    rollback: true
+    stages:
+      - name: permission_check
+        enabled: true
+      - name: space_check
+        enabled: true
+      - name: extract
+        enabled: true
+      - name: health_check
+        enabled: true
+      - name: validate
+        enabled: true
+      - name: enrich_metadata
+        enabled: true
+      - name: duplicate_check
+        enabled: true
+        condition: "is_movie"
+      - name: create_folders
+        enabled: true
+      - name: move_files
+        enabled: true
+      - name: rename
+        enabled: true
+      - name: subtitles
+        enabled: true
+      - name: notify
+        enabled: true
+
+notifications:
+  pushbullet:
+    api_key: "your_pushbullet_key"
+```
+
+### TV Shows with Conditional Subtitles
+
+Only download subtitles for files larger than 500MB (skip samples/extras):
+
+```yaml
+postprocessing:
+  enabled: true
+  pipeline:
+    enabled: true
+    stages:
+      - name: validate
+        enabled: true
+      - name: create_folders
+        enabled: true
+      - name: move_files
+        enabled: true
+      - name: rename
+        enabled: true
+      - name: subtitles
+        enabled: true
+        condition: "file_size > 500MB"
+      - name: notify
+        enabled: true
+```
+
+### Simple Setup Without Pipeline
+
+Use the legacy post-processor for a simpler setup without stages:
+
+```yaml
+postprocessing:
+  enabled: true
+  validate_files: true
+  min_file_size_mb: 50
+  pipeline:
+    enabled: false
+```
