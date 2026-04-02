@@ -1,0 +1,76 @@
+site_name: Reel
+site_description: Lightweight media management for low-end devices
+site_url: https://pixelotes.github.io/reel
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+
+repo_url: https://github.com/pixelotes/reel
+repo_name: pixelotes/reel
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quick-start.md
+  - Configuration:
+    - Reference: configuration/reference.md
+    - Examples: configuration/examples.md
+  - Media Types:
+    - Movies: media/movies.md
+    - TV Shows: media/tv-shows.md
+    - Anime: media/anime.md
+  - Providers:
+    - Indexers: providers/indexers.md
+    - Torrent Clients: providers/torrent-clients.md
+    - Metadata: providers/metadata.md
+    - Notifications: providers/notifications.md
+    - Subtitles: providers/subtitles.md
+  - Post-Processing:
+    - Overview: pipeline/overview.md
+    - Stages: pipeline/stages.md
+    - Conditions: pipeline/conditions.md
+    - Recovery: pipeline/recovery.md
+  - Advanced:
+    - File Renaming: advanced/file-renaming.md
+    - Automation: advanced/automation.md
+    - Quality Filtering: advanced/quality-filtering.md

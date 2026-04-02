@@ -198,7 +198,13 @@ func (c *Client) performRequest(params url.Values) ([]Subtitle, error) {
 }
 
 // Download requests the download link and saves the file with retry logic.
+// Skips if the subtitle file already exists.
 func (c *Client) Download(sub Subtitle, destPath string) error {
+	if _, err := os.Stat(destPath); err == nil {
+		c.logger.Info("Subtitle already exists, skipping:", destPath)
+		return nil
+	}
+
 	maxRetries := 3
 	var lastErr error
 
@@ -280,10 +286,19 @@ func (c *Client) downloadAttempt(sub Subtitle, destPath string) error {
 	if err != nil {
 		return err
 	}
-	defer outFile.Close()
 
-	_, err = io.Copy(outFile, dlRespObj.Body)
-	return err
+	if _, err = io.Copy(outFile, dlRespObj.Body); err != nil {
+		outFile.Close()
+		os.Remove(destPath)
+		return err
+	}
+
+	if err = outFile.Sync(); err != nil {
+		outFile.Close()
+		os.Remove(destPath)
+		return err
+	}
+	return outFile.Close()
 }
 
 func (c *Client) addHeaders(req *http.Request) {

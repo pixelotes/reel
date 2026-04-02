@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -25,7 +26,7 @@ func NewConditionalStage(stage Stage, condition string, logger *utils.Logger) *C
 }
 
 func (cs *ConditionalStage) Name() string {
-	return cs.stage.Name() + "_conditional"
+	return cs.stage.Name()
 }
 
 func (cs *ConditionalStage) Execute(ctx *ProcessingContext) error {
@@ -61,7 +62,7 @@ func (cs *ConditionalStage) evaluateCondition(ctx *ProcessingContext) bool {
 	case "is_movie":
 		return ctx.Media.Type == "movie"
 	case "is_tv", "is_tvshow", "is_tv_show":
-		return ctx.Media.Type == "tv_show"
+		return ctx.Media.Type == "tvshow"
 	case "is_anime":
 		return ctx.Media.Type == "anime"
 	}
@@ -176,8 +177,9 @@ func (cs *ConditionalStage) evaluateFileSizeCondition(condition string, ctx *Pro
 
 // getFileSize returns file size in bytes (0 on error)
 func (cs *ConditionalStage) getFileSize(path string) int64 {
-	// This is a simplified version - in practice we'd need to import os
-	// For now, return 0 as placeholder
-	// The actual implementation would use os.Stat
-	return 0
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
 }

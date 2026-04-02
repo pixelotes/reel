@@ -81,7 +81,7 @@ Here’s a glimpse of what’s planned for the future:
   - (Done) Addition of external trackers to torrents.
 - Integrations:
   - More metadata providers.
-  - A built-in subtitle downloader.
+  - (Done) A built-in subtitle downloader.
 
 ## 📄 License
 Reel is open-source software licensed under the MIT License.

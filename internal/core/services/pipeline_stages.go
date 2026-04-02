@@ -275,14 +275,24 @@ func (s *MoveFilesStage) copyFileAndRemoveOriginal(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer destinationFile.Close()
 
 	if _, err = io.Copy(destinationFile, sourceFile); err != nil {
+		destinationFile.Close()
+		os.Remove(dst)
 		return err
 	}
 
+	if err = destinationFile.Sync(); err != nil {
+		destinationFile.Close()
+		os.Remove(dst)
+		return err
+	}
+	destinationFile.Close()
+
 	return os.Remove(src)
 }
+
+const renameMetadataPrefix = "rename:"
 
 // RenameStage renames files according to configured templates
 type RenameStage struct {
@@ -354,8 +364,8 @@ func (s *RenameStage) Execute(ctx *ProcessingContext) error {
 		s.logger.Info(fmt.Sprintf("Renamed: %s -> %s", filepath.Base(oldPath), newName))
 		renamedFiles = append(renamedFiles, newPath)
 
-		// Store for rollback
-		ctx.Metadata[newPath] = oldPath
+		// Store for rollback (prefixed to avoid collisions with other metadata)
+		ctx.Metadata[renameMetadataPrefix+newPath] = oldPath
 	}
 
 	// Update ProcessedFiles with new names
@@ -364,8 +374,12 @@ func (s *RenameStage) Execute(ctx *ProcessingContext) error {
 }
 
 func (s *RenameStage) Rollback(ctx *ProcessingContext) error {
-	// Restore original names
-	for newPath, oldPath := range ctx.Metadata {
+	// Restore original names (only entries with renameMetadataPrefix prefix)
+	for key, oldPath := range ctx.Metadata {
+		if !strings.HasPrefix(key, renameMetadataPrefix) {
+			continue
+		}
+		newPath := strings.TrimPrefix(key, renameMetadataPrefix)
 		if err := os.Rename(newPath, oldPath); err != nil {
 			s.logger.Warn(fmt.Sprintf("Failed to restore filename during rollback: %v", err))
 		}

@@ -5,3 +5,5 @@ data/*.db
 data/*.log
 media/
 reel
+coverage.out
+coverage.html

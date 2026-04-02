@@ -8,3 +8,6 @@ Dockerfile
 .dockerignore
 docker-compose.yml
 media/
+coverage.out
+coverage.html
+documentation/

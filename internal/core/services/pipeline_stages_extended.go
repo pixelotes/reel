@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"reel/internal/config"
@@ -161,8 +162,8 @@ func (s *ExtractionStage) extractRar(rarPath, destDir string) ([]string, error) 
 
 	// Find extracted files
 	extractedFiles := make([]string, 0)
-	filepath.Walk(extractDir, func(path string, info os.FileInfo, err error) error {
-		if err == nil && !info.IsDir() {
+	filepath.WalkDir(extractDir, func(path string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
 			extractedFiles = append(extractedFiles, path)
 		}
 		return nil
@@ -236,7 +237,7 @@ func (s *HealthCheckStage) verifyVideoFile(filePath string) error {
 	}
 	defer f.Close()
 
-	buffer := make([]byte, 1024*1024) // 1MB
+	buffer := make([]byte, 8*1024) // 8KB - enough to verify file headers
 	n, err := io.ReadFull(f, buffer)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		return fmt.Errorf("failed to read file: %w", err)
@@ -338,8 +339,8 @@ func (s *DuplicateCheckStage) Execute(ctx *ProcessingContext) error {
 	if info, err := os.Stat(ctx.DestinationDir); err == nil && info.IsDir() {
 		// List video files in destination
 		existingFiles := make([]string, 0)
-		filepath.Walk(ctx.DestinationDir, func(path string, info os.FileInfo, err error) error {
-			if err == nil && !info.IsDir() && isVideoFile(path) {
+		filepath.WalkDir(ctx.DestinationDir, func(path string, d os.DirEntry, err error) error {
+			if err == nil && !d.IsDir() && isVideoFile(path) {
 				existingFiles = append(existingFiles, path)
 			}
 			return nil
@@ -445,7 +446,6 @@ func (s *SpaceCheckStage) Execute(ctx *ProcessingContext) error {
 		return nil
 	}
 
-	// Calculate total size of files to be processed
 	var totalSize int64
 	for _, file := range ctx.OriginalFiles {
 		if info, err := os.Stat(file); err == nil {
@@ -453,20 +453,33 @@ func (s *SpaceCheckStage) Execute(ctx *ProcessingContext) error {
 		}
 	}
 
-	// Get available space at destination
-	// Note: This is platform-specific, basic implementation
-	// For production, use syscall.Statfs on Unix or similar
-	destParent := filepath.Dir(ctx.DestinationDir)
-	if info, err := os.Stat(destParent); err == nil && info.IsDir() {
-		// Add 10% buffer for safety
-		requiredSpace := int64(float64(totalSize) * 1.1)
-		s.logger.Info(fmt.Sprintf("Space check: required ~%d MB", requiredSpace/(1024*1024)))
+	// Add 10% buffer for safety
+	requiredSpace := int64(float64(totalSize) * 1.1)
 
-		// Store in metadata for reference
-		if ctx.Metadata == nil {
-			ctx.Metadata = make(map[string]string)
-		}
-		ctx.Metadata["required_space_mb"] = fmt.Sprintf("%d", requiredSpace/(1024*1024))
+	if ctx.Metadata == nil {
+		ctx.Metadata = make(map[string]string)
+	}
+	ctx.Metadata["required_space_mb"] = fmt.Sprintf("%d", requiredSpace/(1024*1024))
+
+	// Check available disk space at destination
+	destPath := ctx.DestinationDir
+	if err := os.MkdirAll(destPath, 0755); err != nil {
+		destPath = filepath.Dir(destPath)
+	}
+
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(destPath, &stat); err != nil {
+		s.logger.Warn(fmt.Sprintf("Could not check disk space: %v", err))
+		return nil
+	}
+
+	availableSpace := int64(stat.Bavail) * int64(stat.Bsize)
+	s.logger.Info(fmt.Sprintf("Space check: required ~%d MB, available ~%d MB",
+		requiredSpace/(1024*1024), availableSpace/(1024*1024)))
+
+	if availableSpace < requiredSpace {
+		return fmt.Errorf("insufficient disk space: need %d MB, have %d MB",
+			requiredSpace/(1024*1024), availableSpace/(1024*1024))
 	}
 
 	return nil

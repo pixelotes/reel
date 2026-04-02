@@ -486,7 +486,6 @@ func (h *APIHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 
 	// FFmpeg command to remux video (copy) and transcode audio (aac)
 	args := []string{
-		"-re",
 		"-i", filePath,
 		"-c:v", "copy",
 		"-c:a", "aac", "-ac", "2",

@@ -272,14 +272,20 @@ func (pp *PostProcessor) copyFileAndRemoveOriginal(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer destinationFile.Close()
 
-	_, err = io.Copy(destinationFile, sourceFile)
-	if err != nil {
+	if _, err = io.Copy(destinationFile, sourceFile); err != nil {
+		destinationFile.Close()
+		os.Remove(dst)
 		return err
 	}
 
-	// The copy was successful, now remove the original file.
+	if err = destinationFile.Sync(); err != nil {
+		destinationFile.Close()
+		os.Remove(dst)
+		return err
+	}
+	destinationFile.Close()
+
 	return os.Remove(src)
 }
 

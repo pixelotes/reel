@@ -90,6 +90,35 @@ file_renaming:
   series_template: "{title} - S{season}E{episode} [{quality}]"
   anime_template: "{title} - {season}x{episode} [{quality}]"
 
+postprocessing:
+  enabled: true
+  validate_files: true          # Check if files meet minimum requirements
+  min_file_size_mb: 10          # Minimum file size to consider valid (in MB)
+  wait_for_file_timeout: 30     # How long to wait for files to appear (seconds)
+  retry_attempts: 3             # Number of retry attempts for failed operations
+  retry_delay: 5                # Delay between retries (seconds)
+  cleanup_on_failure: false     # Remove files if postprocessing fails
+  keep_failed_downloads_days: 7 # Days to keep failed downloads before cleanup
+  pipeline:
+    enabled: true               # Use pipeline architecture (recommended)
+    rollback: true              # Rollback completed stages on failure
+
+    # Optional: Configure stages (leave empty for defaults)
+    # stages:
+    #   - name: validate
+    #     enabled: true
+    #   - name: create_folders
+    #     enabled: true
+    #   - name: move_files
+    #     enabled: true
+    #   - name: rename
+    #     enabled: true
+    #   - name: subtitles
+    #     enabled: true
+    #     condition: "is_movie"  # Only for movies
+    #   - name: notify
+    #     enabled: true
+
 database:
   path: "./data/reel.db"
 
