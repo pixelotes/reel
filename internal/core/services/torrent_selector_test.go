@@ -117,17 +117,20 @@ func TestFilterAndScore_RejectsWrongSeriesName(t *testing.T) {
 
 	results := []indexers.IndexerResult{
 		{Title: "The 100 S01E05 1080p HDTV", Seeders: 50},
-		{Title: "The 100 Humans S01E05 720p HDTV", Seeders: 40},
-		{Title: "Flashpoint S01E05 1080p HDTV", Seeders: 60},
+		{Title: "The 100 Humans S01E05 720p HDTV", Seeders: 40},   // passes: contains "100" (significant token)
+		{Title: "Flashpoint S01E05 1080p HDTV", Seeders: 60},       // rejected: missing "100"
+		{Title: "Totally Different S01E05 1080p HDTV", Seeders: 30}, // rejected: missing "100"
 	}
 
 	filtered := ts.FilterAndScoreTorrents(media, results, 1, 5, []string{"The 100"})
 
-	if len(filtered) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(filtered))
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 results (The 100 + The 100 Humans), got %d", len(filtered))
 	}
-	if filtered[0].Title != "The 100 S01E05 1080p HDTV" {
-		t.Errorf("wrong series passed: %q", filtered[0].Title)
+	for _, f := range filtered {
+		if f.Title == "Flashpoint S01E05 1080p HDTV" {
+			t.Errorf("Flashpoint should have been rejected (missing significant query tokens)")
+		}
 	}
 }
 

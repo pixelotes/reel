@@ -3,7 +3,7 @@ package metadata
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -84,7 +84,7 @@ func (t *TMDBClient) SearchMovie(title string, year int) ([]*MovieResult, error)
 
 	// --- Start Logging ---
 	log.Printf("TMDB Response Status Code: %d", resp.StatusCode)
-	bodyBytes, err := ioutil.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read TMDB response body: %w", err)
 	}
@@ -92,7 +92,7 @@ func (t *TMDBClient) SearchMovie(title string, year int) ([]*MovieResult, error)
 	// --- End Logging ---
 
 	// Re-create a reader for the JSON decoder since the original has been consumed
-	resp.Body = ioutil.NopCloser(strings.NewReader(string(bodyBytes)))
+	resp.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
 
 	var searchResp tmdbSearchResponse
 

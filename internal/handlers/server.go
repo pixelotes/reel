@@ -64,6 +64,9 @@ func (s *Server) Start() error {
 	// Streaming routes
 	protected.HandleFunc("/stream/video/{id}", s.apiHandler.StreamVideo).Methods("GET")
 	protected.HandleFunc("/stream/subtitles/{id}", s.apiHandler.GetSubtitles).Methods("GET")
+	protected.HandleFunc("/stream/manga/{id}/pages", s.apiHandler.GetMangaPages).Methods("GET")
+	protected.HandleFunc("/stream/manga/{id}/page/{page:[0-9]+}", s.apiHandler.ServeMangaPage).Methods("GET")
+	protected.HandleFunc("/stream/ebook/{id}", s.apiHandler.StreamEbook).Methods("GET")
 
 	//Subtitles
 	protected.HandleFunc("/stream/subtitles/{id:[0-9]+}", s.apiHandler.GetSubtitles).Methods("GET")

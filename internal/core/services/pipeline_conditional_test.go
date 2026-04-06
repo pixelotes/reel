@@ -179,6 +179,22 @@ func TestConditional_FileSizeLess(t *testing.T) {
 	}
 }
 
+func TestConditional_IsEbook(t *testing.T) {
+	called := false
+	inner := &spyStage{name: "inner", executeFunc: func(ctx *ProcessingContext) error {
+		called = true
+		return nil
+	}}
+
+	stage := NewConditionalStage(inner, "is_ebook", testLogger())
+	ctx := testContext(t, models.MediaTypeEbook)
+	stage.Execute(ctx)
+
+	if !called {
+		t.Error("is_ebook should match ebook media type")
+	}
+}
+
 func TestConditional_UnknownCondition_DefaultsTrue(t *testing.T) {
 	called := false
 	inner := &spyStage{name: "inner", executeFunc: func(ctx *ProcessingContext) error {

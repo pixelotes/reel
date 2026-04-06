@@ -126,6 +126,28 @@ func TestValidateStage_DisabledSkips(t *testing.T) {
 	}
 }
 
+func TestValidateStage_EbookExtensions(t *testing.T) {
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+	cfg := testConfig(srcDir, dstDir)
+
+	epub := createTestFile(t, srcDir, "book.epub", 2)
+	pdf := createTestFile(t, srcDir, "book.pdf", 2)
+	mobi := createTestFile(t, srcDir, "book.mobi", 2)
+	createTestFile(t, srcDir, "movie.mkv", 2) // should be filtered out for ebooks
+
+	ctx := testContext(t, models.MediaTypeEbook)
+	ctx.OriginalFiles = []string{epub, pdf, mobi, srcDir + "/movie.mkv"}
+
+	stage := NewValidateStage(cfg, testLogger())
+	if err := stage.Execute(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ctx.OriginalFiles) != 3 {
+		t.Errorf("expected 3 ebook files, got %d", len(ctx.OriginalFiles))
+	}
+}
+
 func TestValidateStage_Rollback_IsNoop(t *testing.T) {
 	cfg := testConfig(t.TempDir(), t.TempDir())
 	stage := NewValidateStage(cfg, testLogger())

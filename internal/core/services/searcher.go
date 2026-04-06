@@ -29,6 +29,19 @@ func NewSearcherService(clients map[models.MediaType][]IndexerClientWithMode, ts
 	}
 }
 
+// getSearchTerms returns the media title plus any additional anime search terms.
+func (s *SearcherService) getSearchTerms(media *models.Media) []string {
+	terms := []string{media.Title}
+	if media.Type == models.MediaTypeAnime {
+		if animeTerms, err := s.mediaRepo.GetAnimeSearchTerms(media.ID); err == nil {
+			for _, term := range animeTerms {
+				terms = append(terms, term.Term)
+			}
+		}
+	}
+	return terms
+}
+
 func (s *SearcherService) performSearch(media *models.Media, season, episode int) ([]indexers.IndexerResult, error) {
 	clients := s.indexerClients[media.Type]
 	if len(clients) == 0 {
@@ -38,16 +51,7 @@ func (s *SearcherService) performSearch(media *models.Media, season, episode int
 
 	var allResults []indexers.IndexerResult
 
-	// Get search terms
-	searchTerms := []string{media.Title}
-	if media.Type == models.MediaTypeAnime {
-		animeSearchTerms, err := s.mediaRepo.GetAnimeSearchTerms(media.ID)
-		if err == nil {
-			for _, term := range animeSearchTerms {
-				searchTerms = append(searchTerms, term.Term)
-			}
-		}
-	}
+	searchTerms := s.getSearchTerms(media)
 
 	tmdbIDStr := ""
 	if media.TMDBId != nil {
@@ -63,7 +67,7 @@ func (s *SearcherService) performSearch(media *models.Media, season, episode int
 			var err error
 
 			query := searchTerm
-			if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+			if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime || media.Type == models.MediaTypeManga {
 				if searchMode == "search" && season > 0 && episode > 0 {
 					query = fmt.Sprintf("%s S%02dE%02d", searchTerm, season, episode)
 				}
@@ -78,8 +82,8 @@ func (s *SearcherService) performSearch(media *models.Media, season, episode int
 						results = append(results, fallbackResults...)
 					}
 				}
-			} else { // Movie
-				if media.Year > 0 {
+			} else { // Movie or Ebook
+				if media.Type == models.MediaTypeMovie && media.Year > 0 {
 					query = fmt.Sprintf("%s %d", searchTerm, media.Year)
 				}
 				results, err = client.SearchMovies(query, tmdbIDStr, searchMode)
@@ -113,15 +117,7 @@ func (s *SearcherService) PerformSearch(id int) ([]indexers.IndexerResult, error
 		return nil, err
 	}
 
-	searchTerms := []string{media.Title}
-	if media.Type == models.MediaTypeAnime {
-		animeSearchTerms, err := s.mediaRepo.GetAnimeSearchTerms(media.ID)
-		if err == nil {
-			for _, term := range animeSearchTerms {
-				searchTerms = append(searchTerms, term.Term)
-			}
-		}
-	}
+	searchTerms := s.getSearchTerms(media)
 
 	// Use the TorrentSelector to filter and score the results
 	filteredResults := s.torrentSelector.FilterAndScoreTorrents(media, results, 0, 0, searchTerms)
@@ -138,8 +134,8 @@ func (s *SearcherService) PerformEpisodeSearch(mediaID int, seasonNumber int, ep
 		return nil, fmt.Errorf("media not found")
 	}
 
-	if media.Type != models.MediaTypeTVShow && media.Type != models.MediaTypeAnime {
-		return nil, fmt.Errorf("media is not a TV show or anime")
+	if media.Type != models.MediaTypeTVShow && media.Type != models.MediaTypeAnime && media.Type != models.MediaTypeManga {
+		return nil, fmt.Errorf("media is not a TV show, anime, or manga")
 	}
 
 	// Perform search with specific season/episode
@@ -148,15 +144,7 @@ func (s *SearcherService) PerformEpisodeSearch(mediaID int, seasonNumber int, ep
 		return nil, err
 	}
 
-	searchTerms := []string{media.Title}
-	if media.Type == models.MediaTypeAnime {
-		animeSearchTerms, err := s.mediaRepo.GetAnimeSearchTerms(media.ID)
-		if err == nil {
-			for _, term := range animeSearchTerms {
-				searchTerms = append(searchTerms, term.Term)
-			}
-		}
-	}
+	searchTerms := s.getSearchTerms(media)
 
 	// Use the TorrentSelector to filter and score the results
 	filteredResults := s.torrentSelector.FilterAndScoreTorrents(media, results, seasonNumber, episodeNumber, searchTerms)
@@ -189,15 +177,7 @@ func (s *SearcherService) FindBestTorrent(media *models.Media, season, episode i
 		return nil, err
 	}
 
-	searchTerms := []string{media.Title}
-	if media.Type == models.MediaTypeAnime {
-		animeSearchTerms, err := s.mediaRepo.GetAnimeSearchTerms(media.ID)
-		if err == nil {
-			for _, term := range animeSearchTerms {
-				searchTerms = append(searchTerms, term.Term)
-			}
-		}
-	}
+	searchTerms := s.getSearchTerms(media)
 
 	return s.torrentSelector.SelectBestTorrent(media, results, season, episode, searchTerms), nil
 }

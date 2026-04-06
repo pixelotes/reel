@@ -179,7 +179,7 @@ func (p *Pipeline) performRollback(stages []Stage, ctx *ProcessingContext, state
 	}
 
 	if rollbackCount > 0 {
-		p.logger.Info(fmt.Sprintf("Pipeline: Rollback complete (%d successful, %d errors)", rollbackCount, rollbackErrors))
+		p.logger.Warn(fmt.Sprintf("Pipeline: Rollback complete (%d successful, %d errors)", rollbackCount, rollbackErrors))
 	}
 
 	// Update state with rollback info

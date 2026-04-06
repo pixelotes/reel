@@ -1,0 +1,56 @@
+app:
+  port: 8081
+  data_path: "/app/data"
+  jwt_secret: "dev-secret-change-me"
+  ui_enabled: true
+  ui_password: "admin"
+
+database:
+  path: "/app/data/reel.db"
+
+torrent_client:
+  type: direct
+  host: "localhost"
+
+metadata:
+  language: "es"
+
+# Required but unused for this test
+movies:
+  download_folder: "/app/data/downloads/movies"
+  destination_folder: "/app/data/media/movies"
+  move_method: ["copy"]
+tv-shows:
+  download_folder: "/app/data/downloads/tvshows"
+  destination_folder: "/app/data/media/tvshows"
+  move_method: ["copy"]
+anime:
+  download_folder: "/app/data/downloads/anime"
+  destination_folder: "/app/data/media/anime"
+  move_method: ["copy"]
+
+# Ebooks
+ebooks:
+  providers:
+    - gutendex
+  sources:
+    - type: gutendex
+  download_folder: "/app/data/downloads/ebooks"
+  destination_folder: "/app/data/media/ebooks"
+  move_method: ["copy"]
+
+# Manga
+manga:
+  providers:
+    - mangadex
+  languages:
+    - es
+    - en
+  download_folder: "/app/data/downloads/manga"
+  destination_folder: "/app/data/media/manga"
+  move_method: ["copy"]
+
+automation:
+  search_interval: "@every 30m"
+  download_status_interval: "@every 10s"
+  min_seeders: 0

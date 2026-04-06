@@ -3,7 +3,7 @@ data/reel.db*
 data/.torrent*
 data/*.db
 data/*.log
-media/
+/media/
 reel
 coverage.out
 coverage.html

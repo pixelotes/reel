@@ -8,15 +8,50 @@ import (
 	"reel/internal/utils"
 )
 
+// Pre-compiled regex patterns for Normalize and IsIgnorable
+var (
+	nonAlphanumericRegex   = regexp.MustCompile(`[^a-z0-9\s]`)
+	seasonEpisodeRegex     = regexp.MustCompile(`(?i)^(s\d+e\d+|\d+x\d+|s\d+|e\d+)$`)
+	yearRegex              = regexp.MustCompile(`^(19|20)\d{2}$`)
+	resolutionTokenRegex   = regexp.MustCompile(`(?i)^(\d{3,4}p|4k|8k)$`)
+)
+
+// Package-level lookup maps for IsIgnorable
+var techTerms = map[string]bool{
+	"hevc": true, "x264": true, "x265": true, "h264": true, "h265": true,
+	"web": true, "webdl": true, "bluray": true, "hdtv": true, "remux": true,
+	"aac": true, "ac3": true, "dts": true, "dolby": true,
+	"proper": true, "repack": true, "subbed": true, "dubbed": true,
+	"hdr": true, "10bit": true, "atmos": true,
+}
+
+var stopWords = map[string]bool{
+	"the": true, "a": true, "an": true, "and": true, "&": true,
+	"part": true, "vol": true, "season": true, "episode": true,
+}
+
 type MatcherService struct {
-	config *config.Config
-	logger *utils.Logger
+	config         *config.Config
+	logger         *utils.Logger
+	rejectPatterns []*regexp.Regexp
 }
 
 func NewMatcherService(cfg *config.Config, logger *utils.Logger) *MatcherService {
+	// Pre-compile reject patterns once at initialization
+	rejectPatterns := make([]*regexp.Regexp, 0, len(cfg.Automation.RejectCommon))
+	for _, word := range cfg.Automation.RejectCommon {
+		re, err := regexp.Compile("(?i)" + word)
+		if err != nil {
+			logger.Error("Invalid reject pattern:", word, "Error:", err)
+			continue
+		}
+		rejectPatterns = append(rejectPatterns, re)
+	}
+
 	return &MatcherService{
-		config: cfg,
-		logger: logger,
+		config:         cfg,
+		logger:         logger,
+		rejectPatterns: rejectPatterns,
 	}
 }
 
@@ -29,8 +64,7 @@ func (m *MatcherService) Normalize(text string) string {
 	text = strings.ReplaceAll(text, "-", " ")
 
 	// Remove anything that is not a letter, number, or space
-	re := regexp.MustCompile(`[^a-z0-9\s]`)
-	text = re.ReplaceAllString(text, "")
+	text = nonAlphanumericRegex.ReplaceAllString(text, "")
 
 	// Collapse multiple spaces
 	return strings.Join(strings.Fields(text), " ")
@@ -44,34 +78,17 @@ func (m *MatcherService) Tokenize(text string) []string {
 // IsIgnorable checks if a token is safe to ignore (metadata, technical term, or stop word).
 func (m *MatcherService) IsIgnorable(token string) bool {
 	token = strings.ToLower(token)
-	// 1. Season/Episode patterns (s01e01, 1x01, s01, e01)
-	if matched, _ := regexp.MatchString(`(?i)^(s\d+e\d+|\d+x\d+|s\d+|e\d+)$`, token); matched {
+	if seasonEpisodeRegex.MatchString(token) {
 		return true
 	}
-	// 2. Year (1900-2099)
-	if matched, _ := regexp.MatchString(`^(19|20)\d{2}$`, token); matched {
+	if yearRegex.MatchString(token) {
 		return true
 	}
-	// 3. Resolution (720p, 1080p, 2160p, 4k, 8k)
-	if matched, _ := regexp.MatchString(`(?i)^(\d{3,4}p|4k|8k)$`, token); matched {
+	if resolutionTokenRegex.MatchString(token) {
 		return true
-	}
-	// 4. Common technical terms
-	techTerms := map[string]bool{
-		"hevc": true, "x264": true, "x265": true, "h264": true, "h265": true,
-		"web": true, "webdl": true, "bluray": true, "hdtv": true, "remux": true,
-		"aac": true, "ac3": true, "dts": true, "dolby": true,
-		"proper": true, "repack": true, "subbed": true, "dubbed": true,
-		"hdr": true, "10bit": true, "atmos": true,
 	}
 	if techTerms[token] {
 		return true
-	}
-
-	// 5. Stop words that are safe to have as "extra" in candidate
-	stopWords := map[string]bool{
-		"the": true, "a": true, "an": true, "and": true, "&": true,
-		"part": true, "vol": true, "season": true, "episode": true,
 	}
 	return stopWords[token]
 }
@@ -81,10 +98,9 @@ func (m *MatcherService) IsIgnorable(token string) bool {
 // 1. ALL tokens in the query must form a subset of the candidate tokens.
 // 2. Any "extra" tokens in the candidate must be "ignorable" (metadata or stop words).
 func (m *MatcherService) Matches(query string, candidateTitle string) bool {
-	// 1. Check Global Rejection List first
-	for _, word := range m.config.Automation.RejectCommon {
-		// Use regex for reject words as they might be patterns like "\bword\b"
-		if matched, _ := regexp.MatchString("(?i)"+word, candidateTitle); matched {
+	// 1. Check Global Rejection List first (using pre-compiled patterns)
+	for _, pattern := range m.rejectPatterns {
+		if pattern.MatchString(candidateTitle) {
 			return false
 		}
 	}
@@ -115,18 +131,48 @@ func (m *MatcherService) Matches(query string, candidateTitle string) bool {
 	}
 
 	for _, token := range candidateTokens {
-		// If token is in the query, it's explained.
 		if queryMap[token] {
 			continue
 		}
-
-		// If token is ignorable, it's allowed noise.
 		if m.IsIgnorable(token) {
 			continue
 		}
-
-		// Found an extra word that is NOT in query and NOT ignorable -> REJECT
 		return false
+	}
+
+	return true
+}
+
+// MatchesLoose checks that the candidate contains the significant words from the query
+// and does not match any reject pattern. It does NOT reject extra unknown words.
+// Use this when episode filtering already guarantees the correct content.
+func (m *MatcherService) MatchesLoose(query string, candidateTitle string) bool {
+	for _, pattern := range m.rejectPatterns {
+		if pattern.MatchString(candidateTitle) {
+			return false
+		}
+	}
+
+	queryTokens := m.Tokenize(query)
+	candidateTokens := m.Tokenize(candidateTitle)
+
+	if len(queryTokens) == 0 {
+		return false
+	}
+
+	// Only require significant (non-ignorable) query tokens to be present
+	candidateMap := make(map[string]bool)
+	for _, token := range candidateTokens {
+		candidateMap[token] = true
+	}
+
+	for _, token := range queryTokens {
+		if m.IsIgnorable(token) {
+			continue
+		}
+		if !candidateMap[token] {
+			return false
+		}
 	}
 
 	return true

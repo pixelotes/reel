@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"reel/internal/clients/metadata"
+	"reel/internal/clients/subtitles"
 	"reel/internal/config"
 	"reel/internal/database/models"
 	"reel/internal/utils"
@@ -19,14 +20,16 @@ type LibraryService struct {
 	config          *config.Config
 	mediaRepo       *models.MediaRepository
 	metadataClients map[models.MediaType][]metadata.Client
+	subtitleClient  *subtitles.Client
 	logger          *utils.Logger
 }
 
-func NewLibraryService(cfg *config.Config, repo *models.MediaRepository, clients map[models.MediaType][]metadata.Client, logger *utils.Logger) *LibraryService {
+func NewLibraryService(cfg *config.Config, repo *models.MediaRepository, clients map[models.MediaType][]metadata.Client, subClient *subtitles.Client, logger *utils.Logger) *LibraryService {
 	return &LibraryService{
 		config:          cfg,
 		mediaRepo:       repo,
 		metadataClients: clients,
+		subtitleClient:  subClient,
 		logger:          logger,
 	}
 }
@@ -72,7 +75,85 @@ func (l *LibraryService) AddMedia(mediaType models.MediaType, id string, title s
 				}
 				l.logger.Info("Movie data processed successfully")
 			} else {
-				l.logger.Info("No movie metadata found")
+				l.logger.Warn("No movie metadata found")
+			}
+		case models.MediaTypeManga:
+			l.logger.Info("Processing manga metadata...")
+			if mangaClient, ok := client.(metadata.MangaClient); ok {
+				mangas, err := mangaClient.SearchManga(title)
+				if err != nil {
+					l.logger.Error("Manga metadata search failed:", err)
+				} else if len(mangas) > 0 {
+					manga := mangas[0]
+					l.logger.Info("Manga metadata found - Title:", manga.Title)
+					overview = &manga.Description
+					posterURL = &manga.CoverURL
+					if title == "" {
+						title = manga.Title
+					}
+					if year == 0 {
+						year = manga.Year
+					}
+
+					// Get chapters and build TVShow structure
+					langs := l.config.Manga.Languages
+					if len(langs) == 0 {
+						langs = []string{l.config.Metadata.Language}
+					}
+					chapters, chErr := mangaClient.GetMangaChapters(manga.ID, langs)
+					if chErr == nil && len(chapters) > 0 {
+						// Build seasons from volumes, chapters as episodes
+						tvShowData = &metadata.TVShowResult{
+							ID:      manga.ID,
+							Title:   manga.Title,
+							Year:    manga.Year,
+							Status:  manga.Status,
+							Seasons: make(map[int][]metadata.Episode),
+						}
+						for _, ch := range chapters {
+							vol := 1
+							if ch.Volume != "" {
+								fmt.Sscanf(ch.Volume, "%d", &vol)
+								if vol == 0 {
+									vol = 1
+								}
+							}
+							var epNum int
+							fmt.Sscanf(ch.Chapter, "%d", &epNum)
+							if epNum == 0 {
+								continue
+							}
+							tvShowData.Seasons[vol] = append(tvShowData.Seasons[vol], metadata.Episode{
+								EpisodeNumber: epNum,
+								Title:         ch.Title,
+								AirDate:       ch.CreatedAt,
+							})
+						}
+					}
+					l.logger.Info("Manga data processed successfully")
+				}
+			}
+		case models.MediaTypeEbook:
+			l.logger.Info("Processing ebook metadata...")
+			if bookClient, ok := client.(metadata.BookClient); ok {
+				bookData, err := bookClient.SearchBook(title, "")
+				if err != nil {
+					l.logger.Error("Ebook metadata search failed:", err)
+				} else if len(bookData) > 0 {
+					l.logger.Info("Ebook metadata found - Title:", bookData[0].Title)
+					overview = &bookData[0].Overview
+					posterURL = &bookData[0].PosterURL
+					rating = &bookData[0].Rating
+					if title == "" {
+						title = bookData[0].Title
+					}
+					if year == 0 {
+						year = bookData[0].Year
+					}
+					l.logger.Info("Ebook data processed successfully")
+				} else {
+					l.logger.Warn("No ebook metadata found")
+				}
 			}
 		case models.MediaTypeTVShow, models.MediaTypeAnime:
 			l.logger.Info("Processing TV show/anime metadata...")
@@ -93,13 +174,13 @@ func (l *LibraryService) AddMedia(mediaType models.MediaType, id string, title s
 				}
 				l.logger.Info("TV show/anime data processed successfully")
 			} else {
-				l.logger.Info("No TV show/anime metadata found")
+				l.logger.Warn("No TV show/anime metadata found")
 			}
 		}
 	}
 
 	var tvShowID *int
-	if (mediaType == models.MediaTypeTVShow || mediaType == models.MediaTypeAnime) && tvShowData != nil {
+	if (mediaType == models.MediaTypeTVShow || mediaType == models.MediaTypeAnime || mediaType == models.MediaTypeManga) && tvShowData != nil {
 		l.logger.Info("Creating TV show/anime database entries...")
 		show := &models.TVShow{
 			Status:   tvShowData.Status,
@@ -190,7 +271,7 @@ func (l *LibraryService) CheckForNewEpisodes() {
 	}
 
 	for _, item := range media {
-		if item.Type == models.MediaTypeTVShow || item.Type == models.MediaTypeAnime {
+		if item.Type == models.MediaTypeTVShow || item.Type == models.MediaTypeAnime || item.Type == models.MediaTypeManga {
 			if item.Status == models.StatusMonitoring || item.Status == models.StatusPending {
 				provider := l.metadataClients[item.Type][0] // Assuming first provider
 				l.updateShowMetadata(&item, provider)
@@ -293,7 +374,7 @@ func (l *LibraryService) UpdateShowProgress(mediaID int) {
 		return // Not a show, nothing to do
 	}
 
-	var downloadableEpisodes, downloadedEpisodes, pendingEpisodes, downloadingEpisodes, tbaEpisodes int
+	var downloadableEpisodes, downloadedEpisodes, pendingEpisodes, downloadingEpisodes, tbaEpisodes, failedEpisodes int
 
 	for _, season := range show.Seasons {
 		for _, episode := range season.Episodes {
@@ -312,6 +393,8 @@ func (l *LibraryService) UpdateShowProgress(mediaID int) {
 				downloadingEpisodes++
 			case models.StatusTBA:
 				tbaEpisodes++
+			case models.StatusFailed:
+				failedEpisodes++
 			}
 		}
 	}
@@ -327,6 +410,8 @@ func (l *LibraryService) UpdateShowProgress(mediaID int) {
 		newStatus = models.StatusDownloading
 	} else if pendingEpisodes > 0 {
 		newStatus = models.StatusPending
+	} else if failedEpisodes > 0 && downloadedEpisodes == 0 {
+		newStatus = models.StatusFailed
 	} else {
 		if tbaEpisodes > 0 || strings.ToLower(show.Status) == "running" {
 			newStatus = models.StatusMonitoring
@@ -352,10 +437,14 @@ func (l *LibraryService) GetPendingMediaForProcessing() []models.Media {
 		l.logger.Error("Failed to get failed media:", err)
 	}
 
-	// New: Get all series that have at least one failed episode.
 	seriesWithFailedEpisodes, err := l.mediaRepo.GetSeriesWithFailedEpisodes()
 	if err != nil {
 		l.logger.Error("Failed to get series with failed episodes:", err)
+	}
+
+	seriesWithPendingEpisodes, err := l.mediaRepo.GetSeriesWithPendingEpisodes()
+	if err != nil {
+		l.logger.Error("Failed to get series with pending episodes:", err)
 	}
 
 	// Use a map to collect and de-duplicate all media items that need processing.
@@ -367,6 +456,9 @@ func (l *LibraryService) GetPendingMediaForProcessing() []models.Media {
 		mediaMap[item.ID] = item
 	}
 	for _, item := range seriesWithFailedEpisodes {
+		mediaMap[item.ID] = item
+	}
+	for _, item := range seriesWithPendingEpisodes {
 		mediaMap[item.ID] = item
 	}
 
@@ -389,28 +481,67 @@ func (l *LibraryService) SearchMetadata(query string, mediaType string) ([]inter
 		return nil, fmt.Errorf("no metadata provider configured for '%s'", mediaType)
 	}
 
-	client := providers[0] // Use first provider
-	var results []interface{}
-	if mediaType == string(models.MediaTypeMovie) {
-		res, err := client.SearchMovie(query, 0)
+	// Try each provider in order, fall back to next on error
+	var lastErr error
+	for _, client := range providers {
+		var results []interface{}
+		var err error
+
+		switch mediaType {
+		case string(models.MediaTypeMovie):
+			var res []*metadata.MovieResult
+			res, err = client.SearchMovie(query, 0)
+			if err == nil {
+				for _, r := range res {
+					results = append(results, r)
+				}
+			}
+		case string(models.MediaTypeTVShow), string(models.MediaTypeAnime):
+			var res []*metadata.TVShowResult
+			res, err = client.SearchTVShow(query)
+			if err == nil {
+				for _, r := range res {
+					results = append(results, r)
+				}
+			}
+		case string(models.MediaTypeManga):
+			if mangaClient, ok := client.(metadata.MangaClient); ok {
+				var res []*metadata.MangaResult
+				res, err = mangaClient.SearchManga(query)
+				if err == nil {
+					for _, r := range res {
+						results = append(results, r)
+					}
+				}
+			} else {
+				continue
+			}
+		case string(models.MediaTypeEbook):
+			if bookClient, ok := client.(metadata.BookClient); ok {
+				var res []*metadata.BookResult
+				res, err = bookClient.SearchBook(query, "")
+				if err == nil {
+					for _, r := range res {
+						results = append(results, r)
+					}
+				}
+			} else {
+				continue // This provider doesn't support books, try next
+			}
+		default:
+			return nil, fmt.Errorf("unsupported media type for metadata search: %s", mediaType)
+		}
+
 		if err != nil {
-			return nil, err
+			l.logger.Warn("Metadata provider failed, trying next:", err)
+			lastErr = err
+			continue
 		}
-		for _, r := range res {
-			results = append(results, r)
-		}
-	} else if mediaType == string(models.MediaTypeTVShow) || mediaType == string(models.MediaTypeAnime) {
-		res, err := client.SearchTVShow(query)
-		if err != nil {
-			return nil, err
-		}
-		for _, r := range res {
-			results = append(results, r)
-		}
-	} else {
-		return nil, fmt.Errorf("unsupported media type for metadata search: %s", mediaType)
+
+		return results, nil
 	}
-	return results, nil
+
+	return nil, fmt.Errorf("all metadata providers failed, last error: %w", lastErr)
 }
 
 func (l *LibraryService) GetMediaFilePath(mediaID int, seasonNumber int, episodeNumber int) (string, error) {
@@ -430,6 +561,10 @@ func (l *LibraryService) GetMediaFilePath(mediaID int, seasonNumber int, episode
 		baseDestPath = l.config.TVShows.DestinationFolder
 	case models.MediaTypeAnime:
 		baseDestPath = l.config.Anime.DestinationFolder
+	case models.MediaTypeEbook:
+		baseDestPath = l.config.Ebooks.DestinationFolder
+	case models.MediaTypeManga:
+		baseDestPath = l.config.Manga.DestinationFolder
 	default:
 		return "", fmt.Errorf("unknown media type: %s", media.Type)
 	}
@@ -438,28 +573,60 @@ func (l *LibraryService) GetMediaFilePath(mediaID int, seasonNumber int, episode
 	mediaFolderName := fmt.Sprintf("%s (%d)", safeTitle, media.Year)
 	fullPath := filepath.Join(baseDestPath, mediaFolderName)
 
-	if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+	isSeries := media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime || media.Type == models.MediaTypeManga
+	isSeasonFoldered := media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime
+	if isSeasonFoldered {
 		if seasonNumber <= 0 {
 			return "", fmt.Errorf("season number must be provided for TV shows")
 		}
-		seasonFolderName := fmt.Sprintf("S%02d", seasonNumber)
-		fullPath = filepath.Join(fullPath, seasonFolderName)
+		fullPath = filepath.Join(fullPath, fmt.Sprintf("S%02d", seasonNumber))
 	}
 
-	// Scan the directory for a video file
 	files, err := os.ReadDir(fullPath)
 	if err != nil {
 		return "", fmt.Errorf("could not read destination directory '%s': %w", fullPath, err)
 	}
 
 	videoExtensions := map[string]bool{".mkv": true, ".mp4": true, ".avi": true, ".mov": true}
+	ebookExtensions := map[string]bool{".epub": true, ".pdf": true, ".mobi": true, ".azw3": true, ".fb2": true}
+	mangaExtensions := map[string]bool{".cbz": true, ".cbr": true}
 
 	for _, file := range files {
-		if !file.IsDir() {
-			ext := strings.ToLower(filepath.Ext(file.Name()))
+		if file.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(file.Name()))
+		switch media.Type {
+		case models.MediaTypeEbook:
+			if ebookExtensions[ext] {
+				return filepath.Join(fullPath, file.Name()), nil
+			}
+		case models.MediaTypeManga:
+			if mangaExtensions[ext] {
+				if episodeNumber <= 0 {
+					return filepath.Join(fullPath, file.Name()), nil
+				}
+				upperName := strings.ToUpper(file.Name())
+				// Match renamed files: S01E01, S001E001, etc.
+				episodePatterns := []string{
+					fmt.Sprintf("S%02dE%02d", seasonNumber, episodeNumber),
+					fmt.Sprintf("S%03dE%03d", seasonNumber, episodeNumber),
+					fmt.Sprintf("S%dE%d", seasonNumber, episodeNumber),
+				}
+				for _, p := range episodePatterns {
+					if strings.Contains(upperName, p) {
+						return filepath.Join(fullPath, file.Name()), nil
+					}
+				}
+				// Also match "Chapter XX" format (pre-rename or custom templates)
+				chapterPattern := fmt.Sprintf("Chapter %02d", episodeNumber)
+				if strings.Contains(file.Name(), chapterPattern) {
+					return filepath.Join(fullPath, file.Name()), nil
+				}
+			}
+		default:
 			if videoExtensions[ext] {
-				// If it's a TV show/anime, match the episode number
-				if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+				if isSeries {
 					if episodeNumber <= 0 {
 						return "", fmt.Errorf("episode number must be provided for TV shows")
 					}
@@ -467,14 +634,14 @@ func (l *LibraryService) GetMediaFilePath(mediaID int, seasonNumber int, episode
 					if strings.Contains(strings.ToUpper(file.Name()), episodePattern) {
 						return filepath.Join(fullPath, file.Name()), nil
 					}
-				} else { // It's a movie, return the first video file found
+				} else {
 					return filepath.Join(fullPath, file.Name()), nil
 				}
 			}
 		}
 	}
 
-	return "", fmt.Errorf("no video file found in %s", fullPath)
+	return "", fmt.Errorf("no media file found in %s", fullPath)
 }
 
 func (l *LibraryService) GetAllSubtitleFiles(mediaID int, seasonNumber int, episodeNumber int) ([]SubtitleTrack, error) {
@@ -742,4 +909,110 @@ func (l *LibraryService) AddAnimeSearchTerm(mediaID int, term string) (*models.A
 
 func (l *LibraryService) DeleteAnimeSearchTerm(id int) error {
 	return l.mediaRepo.DeleteAnimeSearchTerm(id)
+}
+
+// ScanMissingSubtitles iterates all downloaded media and downloads subtitles
+// for configured languages that are not yet present on disk.
+func (l *LibraryService) ScanMissingSubtitles() {
+	if !l.config.Subtitles.Enabled || l.subtitleClient == nil {
+		return
+	}
+
+	configuredLangs := l.config.Subtitles.Languages
+	if len(configuredLangs) == 0 {
+		return
+	}
+
+	downloaded, err := l.mediaRepo.GetByStatus(models.StatusDownloaded)
+	if err != nil {
+		l.logger.Error("Subtitle scan: failed to get downloaded media:", err)
+		return
+	}
+
+	l.logger.Info(fmt.Sprintf("Subtitle scan: checking %d media items for missing subtitles", len(downloaded)))
+
+	for _, media := range downloaded {
+		if media.Type == models.MediaTypeEbook || media.Type == models.MediaTypeManga {
+			continue
+		}
+
+		if media.Type == models.MediaTypeMovie {
+			l.scanSubtitlesForFile(&media, 0, 0, configuredLangs)
+			continue
+		}
+
+		// TV Show / Anime — iterate episodes
+		if media.TVShowID == nil {
+			continue
+		}
+		show, err := l.mediaRepo.GetTVShowByMediaID(media.ID)
+		if err != nil || show == nil {
+			continue
+		}
+		for _, season := range show.Seasons {
+			for _, ep := range season.Episodes {
+				if ep.Status != models.StatusDownloaded {
+					continue
+				}
+				l.scanSubtitlesForFile(&media, season.SeasonNumber, ep.EpisodeNumber, configuredLangs)
+			}
+		}
+	}
+
+	l.logger.Info("Subtitle scan: complete")
+}
+
+func (l *LibraryService) scanSubtitlesForFile(media *models.Media, season, episode int, configuredLangs []string) {
+	videoPath, err := l.GetMediaFilePath(media.ID, season, episode)
+	if err != nil {
+		return // file not found on disk, skip silently
+	}
+
+	// Check which languages are already present
+	existing, _ := l.GetAllSubtitleFiles(media.ID, season, episode)
+	existingLangs := make(map[string]bool)
+	for _, sub := range existing {
+		existingLangs[sub.Language] = true
+	}
+
+	// Find missing languages
+	var missing []string
+	for _, lang := range configuredLangs {
+		if !existingLangs[lang] {
+			missing = append(missing, lang)
+		}
+	}
+
+	if len(missing) == 0 {
+		return
+	}
+
+	label := media.Title
+	if season > 0 {
+		label = fmt.Sprintf("%s S%02dE%02d", media.Title, season, episode)
+	}
+	l.logger.Info(fmt.Sprintf("Subtitle scan: %s missing [%s]", label, strings.Join(missing, ", ")))
+
+	subs, err := l.subtitleClient.Search(videoPath, media, season, episode)
+	if err != nil || len(subs) == 0 {
+		return
+	}
+
+	baseName := strings.TrimSuffix(videoPath, filepath.Ext(videoPath))
+	for i, lang := range missing {
+		if i > 0 {
+			time.Sleep(20 * time.Second)
+		}
+		for _, sub := range subs {
+			if sub.Language == lang {
+				subPath := fmt.Sprintf("%s.%s.srt", baseName, lang)
+				if err := l.subtitleClient.Download(sub, subPath); err != nil {
+					l.logger.Warn(fmt.Sprintf("Subtitle scan: failed to download %s sub for %s: %v", lang, label, err))
+				} else {
+					l.logger.Info(fmt.Sprintf("Subtitle scan: downloaded %s sub for %s", lang, label))
+				}
+				break
+			}
+		}
+	}
 }

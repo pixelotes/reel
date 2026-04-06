@@ -25,21 +25,32 @@ type FilterStats struct {
 }
 
 type TorrentSelector struct {
-	config       *config.Config
-	matcher      *MatcherService
-	logger       *utils.Logger
-	filterLogger *log.Logger // New detailed logger
+	config         *config.Config
+	matcher        *MatcherService
+	logger         *utils.Logger
+	filterLogger   *log.Logger
+	rejectPatterns []*regexp.Regexp
 }
 
 func NewTorrentSelector(cfg *config.Config, matcher *MatcherService, logger *utils.Logger) *TorrentSelector {
-	ts := &TorrentSelector{
-		config:  cfg,
-		matcher: matcher,
-		logger:  logger,
+	// Pre-compile reject patterns once
+	rejectPatterns := make([]*regexp.Regexp, 0, len(cfg.Automation.RejectCommon))
+	for _, pattern := range cfg.Automation.RejectCommon {
+		re, err := regexp.Compile("(?i)" + pattern)
+		if err != nil {
+			logger.Error("Invalid reject regex pattern:", pattern, "Error:", err)
+			continue
+		}
+		rejectPatterns = append(rejectPatterns, re)
 	}
 
-	// This is the effective "single line" to control detailed logging.
-	// If the config value is not "detail", the filterLogger will be nil.
+	ts := &TorrentSelector{
+		config:         cfg,
+		matcher:        matcher,
+		logger:         logger,
+		rejectPatterns: rejectPatterns,
+	}
+
 	if cfg.App.FilterLogLevel == "detail" {
 		filterLogger, err := utils.NewFilterLogger(cfg.App.DataPath)
 		if err != nil {
@@ -53,8 +64,9 @@ func NewTorrentSelector(cfg *config.Config, matcher *MatcherService, logger *uti
 	return ts
 }
 
-// logReject logs a rejected torrent to filter.log if the logger is enabled.
+// logReject logs a rejected torrent to filter.log and debug output.
 func (ts *TorrentSelector) logReject(reason string, result indexers.IndexerResult) {
+	ts.logger.Debug(fmt.Sprintf("REJECT: [%s] %s (seeders: %d)", reason, result.Title, result.Seeders))
 	if ts.filterLogger != nil {
 		ts.filterLogger.Printf("REJECT: [%s] | %s", reason, result.Title)
 	}
@@ -110,8 +122,10 @@ func (ts *TorrentSelector) FilterAndScoreTorrents(media *models.Media, results [
 		results = ts.filterBySeriesName(results, searchTerms, stats)
 	}
 
-	// Step 3: Filter by quality (resolution)
-	results = ts.filterByQuality(results, media.MinQuality, media.MaxQuality, stats)
+	// Step 3: Filter by quality (resolution) — skip for non-video media
+	if media.Type != models.MediaTypeEbook && media.Type != models.MediaTypeManga {
+		results = ts.filterByQuality(results, media.MinQuality, media.MaxQuality, stats)
+	}
 
 	// Step 4: Filter by minimum seeders
 	results = ts.filterByMinSeeders(results, stats)
@@ -195,38 +209,33 @@ func (ts *TorrentSelector) SelectBestTorrent(media *models.Media, results []inde
 
 // filterByRejectPatterns removes torrents that match any of the reject regex patterns
 func (ts *TorrentSelector) filterByRejectPatterns(results []indexers.IndexerResult, stats *FilterStats) []indexers.IndexerResult {
-	var filtered []indexers.IndexerResult
+	filtered := make([]indexers.IndexerResult, 0, len(results))
 	for _, r := range results {
-		rejected := false
-		var matchedPattern string
-		for _, rejectPattern := range ts.config.Automation.RejectCommon {
-			regex, err := regexp.Compile("(?i)" + rejectPattern)
-			if err != nil {
-				ts.logger.Error("Invalid regex pattern:", rejectPattern, "Error:", err)
-				continue
-			}
-			if regex.MatchString(r.Title) {
-				rejected = true
-				matchedPattern = rejectPattern
-				break
-			}
-		}
-		if !rejected {
-			filtered = append(filtered, r)
-		} else {
+		if pattern := ts.matchesRejectPattern(r.Title); pattern != nil {
 			stats.RejectPatterns++
-			ts.logReject(fmt.Sprintf("Matches reject pattern '%s'", matchedPattern), r)
+			ts.logReject(fmt.Sprintf("Matches reject pattern '%s'", pattern.String()), r)
+		} else {
+			filtered = append(filtered, r)
 		}
 	}
 	return filtered
 }
 
-// filterByEpisodeNumber filters torrents to only include those with the correct episode number
-func (ts *TorrentSelector) filterByEpisodeNumber(results []indexers.IndexerResult, season, episode int, stats *FilterStats) []indexers.IndexerResult {
-	var filtered []indexers.IndexerResult
+func (ts *TorrentSelector) matchesRejectPattern(title string) *regexp.Regexp {
+	for _, pattern := range ts.rejectPatterns {
+		if pattern.MatchString(title) {
+			return pattern
+		}
+	}
+	return nil
+}
 
-	// --- Standard SxxExx patterns ---
-	standardPatterns := []*regexp.Regexp{
+// seasonPackPattern detects full season packs that should not match as individual episodes.
+var seasonPackPattern = regexp.MustCompile(`(?i)(s\d+[\s.]+complete|s\d+[\s.]+full|s\d+[\s.]+pack|s\d+[\s.]+batch|complete[\s.]+season|complete[\s.]+series|season[\s.]+\d+[\s.]+complete|season[\s.]+\d+[\s.]+full)`)
+
+// buildEpisodePatterns pre-compiles all regex patterns for a given season/episode pair.
+func buildEpisodePatterns(season, episode int) (standard []*regexp.Regexp, absolute []*regexp.Regexp, resolutionGuard *regexp.Regexp) {
+	standard = []*regexp.Regexp{
 		regexp.MustCompile(fmt.Sprintf(`(?i)s0*%de0*%d(?:\D|$)`, season, episode)),
 		regexp.MustCompile(fmt.Sprintf(`(?i)(?:\D|^)%dx0*%d(?:\D|$)`, season, episode)),
 		regexp.MustCompile(fmt.Sprintf(`(?i)s%02de%02d`, season, episode)),
@@ -234,37 +243,46 @@ func (ts *TorrentSelector) filterByEpisodeNumber(results []indexers.IndexerResul
 		regexp.MustCompile(fmt.Sprintf(`(?i)%dx%02d`, season, episode)),
 		regexp.MustCompile(fmt.Sprintf(`(?i)%dx%d`, season, episode)),
 	}
-
-	// --- Lenient, absolute number patterns (for single-season shows) ---
-	absolutePatterns := []*regexp.Regexp{
-		// Matches " 01 ", " - 01.", "[01]", etc. It looks for the number surrounded by non-alphanumeric characters.
+	absolute = []*regexp.Regexp{
 		regexp.MustCompile(fmt.Sprintf(`(?i)[^a-z0-9]%02d[^a-z0-9]`, episode)),
 		regexp.MustCompile(fmt.Sprintf(`(?i)[^a-z0-9]%d[^a-z0-9]`, episode)),
-		// Matches at the very end of the string, e.g., "Series Name 01"
 		regexp.MustCompile(fmt.Sprintf(`(?i)\s%02d$`, episode)),
 		regexp.MustCompile(fmt.Sprintf(`(?i)\s%d$`, episode)),
 	}
+	resolutionGuard = regexp.MustCompile(fmt.Sprintf(`(?i)%dp`, episode))
+	return
+}
+
+func matchesAny(patterns []*regexp.Regexp, title string) bool {
+	for _, p := range patterns {
+		if p.MatchString(title) {
+			return true
+		}
+	}
+	return false
+}
+
+// filterByEpisodeNumber filters torrents to only include those with the correct episode number
+func (ts *TorrentSelector) filterByEpisodeNumber(results []indexers.IndexerResult, season, episode int, stats *FilterStats) []indexers.IndexerResult {
+	standardPatterns, absolutePatterns, resolutionGuard := buildEpisodePatterns(season, episode)
+	filtered := make([]indexers.IndexerResult, 0, len(results))
 
 	for _, r := range results {
-		matched := false
-
-		// 1. Try standard patterns first
-		for _, pattern := range standardPatterns {
-			if pattern.MatchString(r.Title) {
-				matched = true
-				break
-			}
+		// Reject season packs early — they contain season numbers but no specific episode
+		if seasonPackPattern.MatchString(r.Title) {
+			stats.EpisodeNumber++
+			ts.logReject("Season pack (not a single episode)", r)
+			continue
 		}
 
-		// 2. If no standard match, and it's season 1, try absolute number patterns
+		matched := matchesAny(standardPatterns, r.Title)
+
+		// If no standard match, and it's season 1, try absolute number patterns
 		if !matched && season == 1 {
 			for _, pattern := range absolutePatterns {
-				if pattern.MatchString(r.Title) {
-					// Extra check to avoid matching resolutions like 1080p
-					if !regexp.MustCompile(fmt.Sprintf(`(?i)%dp`, episode)).MatchString(r.Title) {
-						matched = true
-						break
-					}
+				if pattern.MatchString(r.Title) && !resolutionGuard.MatchString(r.Title) {
+					matched = true
+					break
 				}
 			}
 		}
@@ -283,7 +301,7 @@ func (ts *TorrentSelector) filterByEpisodeNumber(results []indexers.IndexerResul
 func (ts *TorrentSelector) filterByQuality(results []indexers.IndexerResult, minQuality, maxQuality string, stats *FilterStats) []indexers.IndexerResult {
 	minRank := RESOLUTION_RANK[minQuality]
 	maxRank := RESOLUTION_RANK[maxQuality]
-	var filtered []indexers.IndexerResult
+	filtered := make([]indexers.IndexerResult, 0, len(results))
 
 	for _, r := range results {
 		rank := getResolutionRank(r.Title)
@@ -299,7 +317,7 @@ func (ts *TorrentSelector) filterByQuality(results []indexers.IndexerResult, min
 
 // filterByMinSeeders filters torrents by minimum number of seeders
 func (ts *TorrentSelector) filterByMinSeeders(results []indexers.IndexerResult, stats *FilterStats) []indexers.IndexerResult {
-	var filtered []indexers.IndexerResult
+	filtered := make([]indexers.IndexerResult, 0, len(results))
 	for _, r := range results {
 		if r.Seeders >= ts.config.Automation.MinSeeders {
 			filtered = append(filtered, r)
@@ -313,13 +331,13 @@ func (ts *TorrentSelector) filterByMinSeeders(results []indexers.IndexerResult, 
 
 // Enhanced filterBySeriesName with MatcherService
 func (ts *TorrentSelector) filterBySeriesName(results []indexers.IndexerResult, searchTerms []string, stats *FilterStats) []indexers.IndexerResult {
-	var filtered []indexers.IndexerResult
+	filtered := make([]indexers.IndexerResult, 0, len(results))
 
 	for _, r := range results {
 		matchFound := false
 
 		for _, term := range searchTerms {
-			if ts.matcher.Matches(term, r.Title) {
+			if ts.matcher.MatchesLoose(term, r.Title) {
 				matchFound = true
 				break
 			}
