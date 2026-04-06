@@ -44,6 +44,7 @@ func (s *SchedulerService) Start() {
 	s.cron.AddFunc(s.getInterval(s.config.Automation.RSSProcessingInterval, "@every 1h"), s.rssService.ProcessRSSFeeds)
 	s.cron.AddFunc(s.getInterval(s.config.Automation.CleanupInterval, "@every 24h"), s.downloaderService.CleanupCompletedTorrents)
 	s.cron.AddFunc(s.getInterval(s.config.Automation.RetryFailedInterval, "@every 1h"), s.processPendingMedia) // Retry logic reused
+	s.cron.AddFunc(s.getInterval(s.config.Automation.SubtitleScanInterval, "@every 12h"), s.libraryService.ScanMissingSubtitles)
 
 	s.cron.Start()
 	s.logger.Info("Scheduler started with dynamic intervals.")
@@ -51,6 +52,7 @@ func (s *SchedulerService) Start() {
 	// Run immediate tasks on startup
 	go s.processPendingMedia()
 	go s.rssService.ProcessRSSFeeds()
+	go s.libraryService.ScanMissingSubtitles()
 }
 
 func (s *SchedulerService) Stop() {

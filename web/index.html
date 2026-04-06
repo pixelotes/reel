@@ -11,6 +11,14 @@
     <!-- codemirror 5.65.20 -->
     <link rel="stylesheet" href="./css/codemirror.min.css">
     <link rel="stylesheet" href="./css/material-darker.min.css">
+    <!-- manga-viewer -->
+    <link rel="stylesheet" href="./css/manga-viewer.min.css">
+    <script type="module">
+        import MangaViewer from './js/manga-viewer.min.js';
+        window.MangaViewer = MangaViewer;
+    </script>
+    <!-- epub.js 0.3.93 -->
+    <script src="./js/epub.min.js"></script>
     
     <style>
         :root {
@@ -269,6 +277,8 @@
                     <option value="movie">Movies</option>
                     <option value="tvshow">TV Shows</option>
                     <option value="anime">Anime</option>
+                    <option value="ebook">Ebooks</option>
+                    <option value="manga">Manga</option>
                 </select>
                 <input type="search" id="search-filter" placeholder="Search titles...">
                 <button id="refresh-btn">🔄</button>
@@ -306,6 +316,12 @@
         <div id="logs-page" class="page">
             <h2>Application Logs</h2>
             <div class="filter-bar">
+                <select id="log-level-filter">
+                    <option value="warn" selected>Warn+</option>
+                    <option value="info">Info+</option>
+                    <option value="debug">Debug+</option>
+                    <option value="error">Error+</option>
+                </select>
                 <input type="search" id="log-filter" placeholder="Filter logs..." style="flex: 1;">
                 <button id="pause-logs-btn">⏸️ Pause</button>
                 <button id="resume-logs-btn" style="display: none;">▶️ Resume</button>
@@ -345,6 +361,21 @@
         </div>
     </div>
 
+    <!-- Manga viewer fullscreen container (hidden by default) -->
+    <div id="manga-viewer-container" style="display:none; position:fixed; inset:0; z-index:2000;"></div>
+    <div id="epub-viewer-container" style="display:none; position:fixed; inset:0; z-index:2000; background:#fff;">
+        <div id="epub-header" style="display:flex; align-items:center; justify-content:space-between; padding:8px 16px; background:#1a1a2e; color:#fff; height:48px; box-sizing:border-box;">
+            <button id="epub-close-btn" style="background:none; border:none; color:#fff; font-size:20px; cursor:pointer;">✕</button>
+            <span id="epub-title" style="font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; margin:0 16px; text-align:center;"></span>
+            <span id="epub-location" style="font-size:12px; opacity:0.7;"></span>
+        </div>
+        <div id="epub-body" style="flex:1; position:absolute; top:48px; bottom:48px; left:0; right:0;"></div>
+        <div id="epub-footer" style="display:flex; align-items:center; justify-content:center; gap:16px; padding:8px; background:#1a1a2e; position:absolute; bottom:0; left:0; right:0; height:48px; box-sizing:border-box;">
+            <button id="epub-prev" style="background:none; border:1px solid #fff; color:#fff; padding:4px 16px; border-radius:4px; cursor:pointer;">← Prev</button>
+            <button id="epub-next" style="background:none; border:1px solid #fff; color:#fff; padding:4px 16px; border-radius:4px; cursor:pointer;">Next →</button>
+        </div>
+    </div>
+
     <div id="add-media-modal" class="modal-backdrop">
         <div class="modal-content">
             <span class="modal-close">&times;</span>
@@ -357,6 +388,8 @@
                         <option value="movie" selected>Movie</option>
                         <option value="tvshow">TV Show</option>
                         <option value="anime">Anime</option>
+                        <option value="ebook">Ebook</option>
+                        <option value="manga">Manga</option>
                     </select>
                 </div>
     
@@ -371,7 +404,7 @@
     
                 <div class="form-row">
                     <input type="text" name="title" id="modal-title-input" placeholder="Title" required style="flex: 2;">
-                    <input type="number" name="year" id="modal-year-input" placeholder="Year" min="1900" max="2030" style="flex: 1;">
+                    <input type="number" name="year" id="modal-year-input" placeholder="Year" min="1" max="2030" style="flex: 1;">
                 </div>
                 
                 <div id="modal-tv-show-options" style="display: none;">
@@ -382,7 +415,7 @@
                     </div>
                 </div>
     
-                <div class="form-row">
+                <div id="modal-quality-options" class="form-row">
                     <div style="flex: 1;">
                         <label for="modal-min-quality">Minimum Quality</label>
                         <select name="min_quality" id="modal-min-quality" required>
@@ -493,7 +526,11 @@
             // --- New UI Functions ---
             function updateTVShowOptionsVisibility(typeSelector, optionsContainer) {
                 const selectedType = typeSelector.value;
-                optionsContainer.style.display = (selectedType === 'tvshow' || selectedType === 'anime') ? 'block' : 'none';
+                const hideQuality = selectedType === 'ebook' || selectedType === 'manga';
+                const showEpisodes = selectedType === 'tvshow' || selectedType === 'anime' || selectedType === 'manga';
+                optionsContainer.style.display = showEpisodes ? 'block' : 'none';
+                const qualityOpts = document.getElementById('modal-quality-options');
+                if (qualityOpts) qualityOpts.style.display = hideQuality ? 'none' : 'flex';
             }
 
             function setupAddMediaModal() {
@@ -888,7 +925,7 @@ async function refreshData() {
                         language: formData.get('language'), min_quality: minQuality, max_quality: maxQuality,
                         auto_download: document.getElementById('auto-download-checkbox').checked,
                     };
-                    if (body.type === 'tvshow' || body.type === 'anime') {
+                    if (body.type === 'tvshow' || body.type === 'anime' || body.type === 'manga') {
                         body.start_season = parseInt(formData.get('start_season'));
                         body.start_episode = parseInt(formData.get('start_episode'));
                     }
@@ -928,7 +965,7 @@ async function refreshData() {
                         max_quality: maxQuality,
                         auto_download: form.querySelector('#modal-auto-download-checkbox').checked,
                     };
-                    if (body.type === 'tvshow' || body.type === 'anime') {
+                    if (body.type === 'tvshow' || body.type === 'anime' || body.type === 'manga') {
                         body.start_season = parseInt(form.querySelector('#modal-start-season-select').value);
                         body.start_episode = parseInt(form.querySelector('#modal-start-episode-select').value);
                     }
@@ -1017,7 +1054,7 @@ async function refreshData() {
                 document.getElementById(`${prefix}metadata-results`).innerHTML = '';
 
                 const currentMediaType = document.getElementById(`${prefix}media-type`).value;
-                if (currentMediaType === 'tvshow' || currentMediaType === 'anime') {
+                if (currentMediaType === 'tvshow' || currentMediaType === 'anime' || currentMediaType === 'manga') {
                     populateTVEpisodeSelectors(item.seasons, target);
                 }
             };
@@ -1096,14 +1133,19 @@ async function refreshData() {
                 }
 
                 let tvShowDetailsHtml = '';
-                if (media.type === 'tvshow' || media.type === 'anime') {
+                if (media.type === 'tvshow' || media.type === 'anime' || media.type === 'manga') {
                     try {
                         const response = await fetchWithAuth(`/api/v1/media/${mediaId}/tv-details`);
                         if (response.ok) {
                             const show = await response.json();
-                            tvShowDetailsHtml = `<h4>Seasons</h4><div style="max-height: 250px; overflow-y: auto; border: 1px solid var(--border-color); padding: 1rem; border-radius: 4px;">
-                                ${show.seasons.map(season => `<details class="season-details" data-season-number="${season.season_number}"><summary>Season ${season.season_number}</summary><div class="episode-list">
-                                ${season.episodes.map(ep => `<div class="episode-item" data-season-number="${season.season_number}" data-episode-number="${ep.episode_number}"><span>${ep.episode_number}. ${ep.title} <em style="color:#aaa; font-size: 0.8rem;">(${ep.air_date})</em></span><span class="media-status status-${ep.status}">${ep.status}</span><button class="secondary" onclick="manualEpisodeSearch(${media.id}, ${season.season_number}, ${ep.episode_number})">🔍</button><button class="secondary" ${ep.status === 'downloaded' ? '' : 'disabled style="opacity: 0.4;"'} onclick="playVideo(${media.id}, ${season.season_number}, ${ep.episode_number})">▶️</button></div>`).join('')}</div></details>`).join('')}</div>`;
+                            const totalEpisodes = show.seasons ? show.seasons.reduce((sum, s) => sum + (s.episodes ? s.episodes.length : 0), 0) : 0;
+                            if (media.type === 'manga' && totalEpisodes === 0) {
+                                tvShowDetailsHtml = `<h4>Chapters</h4><p style="color: var(--warning-color, #e2a308); margin: 1rem 0;">No chapters found in your configured language. The manga may only be available in other languages on MangaDex.</p>`;
+                            } else {
+                                tvShowDetailsHtml = `<h4>${media.type === 'manga' ? 'Chapters' : 'Seasons'}</h4><div style="max-height: 250px; overflow-y: auto; border: 1px solid var(--border-color); padding: 1rem; border-radius: 4px;">
+                                ${show.seasons.map(season => `<details class="season-details" data-season-number="${season.season_number}"><summary>${media.type === 'manga' ? 'Volume' : 'Season'} ${season.season_number}</summary><div class="episode-list">
+                                ${season.episodes.map(ep => `<div class="episode-item" data-season-number="${season.season_number}" data-episode-number="${ep.episode_number}"><span>${ep.episode_number}. ${ep.title} <em style="color:#aaa; font-size: 0.8rem;">(${ep.air_date})</em>${ep.torrent_name ? `<br><small style="color:#888; font-size: 0.7rem;" title="${ep.torrent_name}">📦 ${ep.torrent_name}</small>` : ''}</span><span class="media-status status-${ep.status}">${ep.status}</span><button class="secondary" onclick="manualEpisodeSearch(${media.id}, ${season.season_number}, ${ep.episode_number})">🔍</button>${media.type === 'manga' ? `<button class="secondary" ${ep.status === 'downloaded' ? '' : 'disabled style="opacity: 0.4;"'} onclick="openMangaViewer(${media.id}, ${season.season_number}, ${ep.episode_number}, '${ep.title.replace(/'/g,"\\'")}')">📖</button>` : `<button class="secondary" ${ep.status === 'downloaded' ? '' : 'disabled style="opacity: 0.4;"'} onclick="playVideo(${media.id}, ${season.season_number}, ${ep.episode_number})">▶️</button>`}</div>`).join('')}</div></details>`).join('')}</div>`;
+                            }
                         }
                     } catch (e) { tvShowDetailsHtml = '<p style="color:var(--error-color)">Could not load season details.</p>'; }
                 }
@@ -1122,7 +1164,7 @@ async function refreshData() {
                     `;
                 }
                 
-                content.innerHTML = `<h2>${media.title} (${media.year}) ${media.status === 'downloaded' ? `<button class="secondary" style="font-size: 1rem; padding: 0.2rem 0.5rem;" onclick="playVideo(${media.id})">▶️ Play</button>` : ''}</h2>
+                content.innerHTML = `<h2>${media.title} (${media.year}) ${media.status === 'downloaded' ? (media.type === 'ebook' ? `<button class="secondary" style="font-size: 1rem; padding: 0.2rem 0.5rem;" onclick="openEpubViewer(${media.id}, '${media.title.replace(/'/g,"\\'")}')">📖 Read</button>` : `<button class="secondary" style="font-size: 1rem; padding: 0.2rem 0.5rem;" onclick="playVideo(${media.id})">▶️ Play</button>`) : ''}</h2>
                     <div style="display: flex; gap: 2rem; margin-bottom: 2rem;">
                         ${media.poster_url ? `<img src="${media.poster_url}" alt="${media.title}" style="width: 200px; border-radius: 8px;">` : ''}
                         <div style="flex: 1;"><p><strong>Type:</strong> ${media.type.charAt(0).toUpperCase() + media.type.slice(1)}</p><p><strong>Quality Range:</strong> ${media.min_quality} - ${media.max_quality}</p><p><strong>Status:</strong> <span id="detail-status" class="media-status status-${media.status}">${media.status}</span></p><div id="detail-progress-container" style="display: ${media.status === 'downloading' ? 'block' : 'none'};"><div class="progress-bar" style="height: 10px;"><div id="detail-progress-fill" class="progress-fill" style="width: ${media.progress * 100}%"></div></div><p id="detail-progress-text"><strong>Progress:</strong> ${Math.round(media.progress * 100)}%</p></div><p><strong>Added:</strong> ${new Date(media.added_at).toLocaleString()}</p><div id="detail-completed-at">${media.completed_at ? `<p><strong>Completed:</strong> ${new Date(media.completed_at).toLocaleString()}</p>` : ''}</div></div></div>
@@ -1130,7 +1172,8 @@ async function refreshData() {
                     ${tvShowDetailsHtml}
                     ${animeSearchTermsHtml}
                     <div style="display: flex; gap: 1rem; margin-top: 2rem; border-top: 1px solid var(--border-color); padding-top: 1rem;">
-                        ${media.type === 'movie' && media.status !== 'downloading' && media.status !== 'downloaded' ? `<button onclick="manualMovieSearch(${media.id})">🔍 Manual Search</button>` : ''}
+                        ${(media.type === 'movie' || media.type === 'ebook') && media.status !== 'downloading' && media.status !== 'downloaded' ? `<button onclick="manualMovieSearch(${media.id})">🔍 Manual Search</button>` : ''}
+                        ${media.type === 'manga' && media.status !== 'downloading' && media.status !== 'downloaded' ? `<button onclick="retryMedia(${media.id})">🔍 Search Chapters</button>` : ''}
                         ${media.status === 'failed' || media.status === 'pending' ? `<button onclick="retryMedia(${media.id})">🔄 Retry</button>` : ''}
                         <button onclick="showMediaSettingsModal(${media.id})">⚙️ Config</button>
                         <button onclick="deleteMedia(${media.id})" class="danger">🗑️ Delete</button>
@@ -1153,6 +1196,140 @@ async function refreshData() {
                 document.getElementById('settings-modal').style.display = 'flex';
             };
             
+            function closeMangaViewer() {
+                const container = document.getElementById('manga-viewer-container');
+                if (container.style.display === 'none') return;
+                container.style.display = 'none';
+                container.innerHTML = '';
+                document.removeEventListener('keydown', closeMangaViewer._handler);
+                window.removeEventListener('popstate', closeMangaViewer._popHandler);
+            }
+
+            window.openMangaViewer = async function(mediaId, seasonNumber, episodeNumber, title) {
+                if (!window.MangaViewer) {
+                    showToast('Manga viewer not loaded yet, please try again', 'error');
+                    return;
+                }
+
+                const container = document.getElementById('manga-viewer-container');
+                container.innerHTML = '';
+                container.style.display = 'block';
+
+                let pagesResp;
+                try {
+                    pagesResp = await fetchWithAuth(`/api/v1/stream/manga/${mediaId}/pages?season=${seasonNumber}&episode=${episodeNumber}`);
+                } catch (e) {
+                    container.style.display = 'none';
+                    showToast('Could not load chapter pages: ' + e.message, 'error');
+                    return;
+                }
+
+                const { count } = await pagesResp.json();
+                const pages = Array.from({ length: count }, (_, i) =>
+                    `/api/v1/stream/manga/${mediaId}/page/${i}?season=${seasonNumber}&episode=${episodeNumber}`
+                );
+
+                const innerDiv = document.createElement('div');
+                innerDiv.id = 'mv-inner';
+                innerDiv.style.cssText = 'position:absolute;inset:0;';
+                container.appendChild(innerDiv);
+
+                new window.MangaViewer({
+                    container: '#mv-inner',
+                    pages,
+                    title,
+                    direction: 'rtl',
+                    showHeader: true,
+                    showFooter: true,
+                    storageKey: `manga_${mediaId}_s${seasonNumber}e${episodeNumber}`,
+                    backUrl: '#close-manga',
+                });
+
+                // Intercept the native back button click to close the viewer
+                container.addEventListener('click', (e) => {
+                    const link = e.target.closest('a.mv-header-btn');
+                    if (link) { e.preventDefault(); closeMangaViewer(); }
+                });
+
+                // Escape key to close
+                closeMangaViewer._handler = (e) => { if (e.key === 'Escape') closeMangaViewer(); };
+                document.addEventListener('keydown', closeMangaViewer._handler);
+
+                // Browser back button: push a state so back closes the viewer instead of navigating away
+                history.pushState({ mangaViewer: true }, '');
+                closeMangaViewer._popHandler = () => closeMangaViewer();
+                window.addEventListener('popstate', closeMangaViewer._popHandler);
+            };
+
+            // --- EPUB Viewer ---
+            let epubInstance = null;
+            let epubRendition = null;
+
+            function closeEpubViewer() {
+                const container = document.getElementById('epub-viewer-container');
+                container.style.display = 'none';
+                if (epubRendition) epubRendition.destroy();
+                if (epubInstance) epubInstance.destroy();
+                epubRendition = null;
+                epubInstance = null;
+                document.removeEventListener('keydown', closeEpubViewer._handler);
+            }
+
+            window.openEpubViewer = async function(mediaId, title) {
+                if (typeof ePub === 'undefined') {
+                    showToast('EPUB viewer not loaded yet', 'error');
+                    return;
+                }
+
+                const container = document.getElementById('epub-viewer-container');
+                const body = document.getElementById('epub-body');
+                body.innerHTML = '';
+                container.style.display = 'block';
+                document.getElementById('epub-title').textContent = title || '';
+                document.getElementById('epub-location').textContent = '';
+
+                try {
+                    const resp = await fetchWithAuth(`/api/v1/stream/ebook/${mediaId}`);
+                    if (!resp.ok) throw new Error('Failed to fetch ebook');
+                    const blob = await resp.blob();
+
+                    epubInstance = ePub(blob);
+                    epubRendition = epubInstance.renderTo(body, {
+                        width: '100%',
+                        height: '100%',
+                        spread: 'auto',
+                    });
+
+                    // Restore saved position or start from beginning
+                    const savedLocation = localStorage.getItem(`epub_pos_${mediaId}`);
+                    epubRendition.display(savedLocation || undefined);
+
+                    // Save position on page change
+                    epubRendition.on('relocated', (location) => {
+                        localStorage.setItem(`epub_pos_${mediaId}`, location.start.cfi);
+                        const pct = Math.round((location.start.percentage || 0) * 100);
+                        document.getElementById('epub-location').textContent = pct + '%';
+                    });
+
+                    // Navigation buttons
+                    document.getElementById('epub-prev').onclick = () => epubRendition.prev();
+                    document.getElementById('epub-next').onclick = () => epubRendition.next();
+                    document.getElementById('epub-close-btn').onclick = closeEpubViewer;
+
+                    // Keyboard navigation
+                    closeEpubViewer._handler = (e) => {
+                        if (e.key === 'Escape') closeEpubViewer();
+                        if (e.key === 'ArrowLeft') epubRendition.prev();
+                        if (e.key === 'ArrowRight') epubRendition.next();
+                    };
+                    document.addEventListener('keydown', closeEpubViewer._handler);
+
+                } catch (e) {
+                    container.style.display = 'none';
+                    showToast('Could not open ebook: ' + e.message, 'error');
+                }
+            };
+
             window.playVideo = function(mediaId, seasonNumber = 0, episodeNumber = 0) {
                 const modal = document.getElementById('video-player-modal');
                 const player = videojs('reel-player');
@@ -1216,20 +1393,36 @@ async function refreshData() {
                     const response = await fetchWithAuth(`/api/v1/media/${mediaId}/season/${seasonNumber}/episode/${episodeNumber}/search`);
                     if (!response.ok) throw new Error('Search failed');
                     const results = await response.json();
-                    displayManualSearchResultsInModal(results, (r) => manualEpisodeDownload(mediaId, seasonNumber, episodeNumber, r));
-                } catch (error) { 
-                    content.innerHTML = `<p style="color:var(--error-color)">Error: ${error.message}</p>`; 
-                } finally { 
+                    displayManualSearchResultsInModal(results, (r) => manualEpisodeDownload(mediaId, seasonNumber, episodeNumber, r), mediaId, seasonNumber, episodeNumber);
+                } catch (error) {
+                    displayManualSearchResultsInModal([], null, mediaId, seasonNumber, episodeNumber);
+                    content.insertAdjacentHTML('afterbegin', `<p style="color:var(--error-color)">Search error: ${error.message}</p>`);
+                } finally {
                     showLoading(false);
                 }
             };
 
-            function displayManualSearchResultsInModal(results, downloadCallback) {
+            function displayManualSearchResultsInModal(results, downloadCallback, mediaId, seasonNumber, episodeNumber) {
                 const content = document.getElementById('manual-search-content');
-                if (!results || results.length === 0) { content.innerHTML = '<p>No results found.</p>'; return; }
-                content.innerHTML = `<h4>Manual Search Results</h4><div style="max-height: 400px; overflow-y: auto;">
+                const isEpisode = mediaId !== undefined && seasonNumber !== undefined && episodeNumber !== undefined;
+                const customUrlHtml = isEpisode ? `<div style="margin-bottom: 1rem; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-secondary);">
+                    <label style="font-size: 0.85rem; font-weight: bold;">Paste magnet or torrent URL</label>
+                    <div style="display: flex; gap: 0.5rem; margin-top: 0.4rem;">
+                        <input type="text" id="custom-episode-url" placeholder="magnet:?xt=urn:btih:... or https://..." style="flex:1; padding: 0.4rem; font-size: 0.85rem;">
+                        <button class="secondary" id="custom-episode-download-btn" style="white-space:nowrap;">Download URL</button>
+                    </div>
+                </div>` : '';
+                const resultsHtml = (!results || results.length === 0) ? '<p>No results found from indexers.</p>' : `<div style="max-height: 400px; overflow-y: auto;">
                     ${results.map(r => `<div class="manual-search-result"><span class="manual-search-title" title="${r.Title}">${r.Title}</span><span>${(r.Size/(1024*1024)).toFixed(2)} MB</span><span style="color:var(--success-color);">▲ ${r.Seeders}</span><span style="color:var(--error-color);">▼ ${r.Leechers}</span><span>${r.Score}</span><button class="secondary" data-result='${JSON.stringify(r).replace(/'/g, "\\'")}'>Download</button></div>`).join('')}</div>`;
-                content.querySelectorAll('button').forEach(b => b.addEventListener('click', () => downloadCallback(JSON.parse(b.dataset.result))));
+                content.innerHTML = `<h4>Manual Search Results</h4>${customUrlHtml}${resultsHtml}`;
+                content.querySelectorAll('.manual-search-result button').forEach(b => b.addEventListener('click', () => downloadCallback(JSON.parse(b.dataset.result))));
+                if (isEpisode) {
+                    document.getElementById('custom-episode-download-btn').addEventListener('click', () => {
+                        const url = document.getElementById('custom-episode-url').value.trim();
+                        if (!url) { showToast('Please paste a URL', 'error'); return; }
+                        manualEpisodeDownload(mediaId, seasonNumber, episodeNumber, { Title: 'Custom URL', DownloadURL: url, Size: 0, Seeders: 0, Leechers: 0 });
+                    });
+                }
             }
 
             window.manualDownload = async function(mediaId, result) {
@@ -1494,6 +1687,7 @@ async function refreshData() {
 
                         logLine = document.createElement('div');
                         logLine.className = 'log-line';
+                        logLine.dataset.level = logData.level;
 
                         const timestampEl = document.createElement('span');
                         timestampEl.className = 'log-timestamp';
@@ -1501,7 +1695,7 @@ async function refreshData() {
 
                         const levelEl = document.createElement('span');
                         levelEl.className = `log-level log-level-${logData.level}`;
-                        levelEl.textContent = logData.level;
+                        levelEl.textContent = logData.level.toUpperCase();
 
                         const messageEl = document.createElement('span');
                         messageEl.className = 'log-message';
@@ -1515,6 +1709,7 @@ async function refreshData() {
                         // Fallback for any non-JSON messages
                         logLine = document.createElement('div');
                         logLine.className = 'log-line';
+                        logLine.dataset.level = 'info';
                         logLine.textContent = event.data;
                     }
 
@@ -1532,6 +1727,7 @@ async function refreshData() {
                 };
 
                 logFilter.addEventListener('input', applyLogFilter);
+                document.getElementById('log-level-filter').addEventListener('change', applyLogFilter);
                 clearLogsBtn.addEventListener('click', () => logContainer.innerHTML = '');
 
                 pauseBtn.addEventListener('click', () => {
@@ -1548,11 +1744,18 @@ async function refreshData() {
                 });
             }
 
+            const LOG_LEVEL_RANK = { debug: 0, info: 1, warn: 2, error: 3, fatal: 4 };
+
             function applyLogFilter() {
                 const filterText = document.getElementById('log-filter').value.toLowerCase();
+                const minLevel = document.getElementById('log-level-filter').value;
+                const minRank = LOG_LEVEL_RANK[minLevel] || 0;
+
                 document.querySelectorAll('#log-container .log-line').forEach(line => {
-                    const lineVisible = line.textContent.toLowerCase().includes(filterText);
-                    line.style.display = lineVisible ? '' : 'none';
+                    const lineLevel = line.dataset.level || 'info';
+                    const levelOk = (LOG_LEVEL_RANK[lineLevel] ?? 1) >= minRank;
+                    const textOk = !filterText || line.textContent.toLowerCase().includes(filterText);
+                    line.style.display = (levelOk && textOk) ? '' : 'none';
                 });
             }
         });

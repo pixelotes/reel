@@ -19,6 +19,8 @@ type FileRenamingConfig struct {
 	MovieTemplate  string `yaml:"movie_template"`
 	SeriesTemplate string `yaml:"series_template"`
 	AnimeTemplate  string `yaml:"anime_template"`
+	EbookTemplate  string `yaml:"ebook_template"`
+	MangaTemplate  string `yaml:"manga_template"`
 }
 
 type PostProcessingConfig struct {
@@ -86,6 +88,9 @@ type Config struct {
 		Trakt struct {
 			ClientID string `yaml:"client_id"`
 		} `yaml:"trakt"`
+		GoogleBooks struct {
+			APIKey string `yaml:"api_key"`
+		} `yaml:"google_books"`
 	} `yaml:"metadata"`
 
 	Subtitles struct {
@@ -119,6 +124,22 @@ type Config struct {
 		MoveMethod        []string       `yaml:"move_method"`
 	} `yaml:"anime"`
 
+	Ebooks struct {
+		Providers         []string       `yaml:"providers"`
+		Sources           []SourceConfig `yaml:"sources"`
+		DownloadFolder    string         `yaml:"download_folder"`
+		DestinationFolder string         `yaml:"destination_folder"`
+		MoveMethod        []string       `yaml:"move_method"`
+	} `yaml:"ebooks"`
+
+	Manga struct {
+		Providers         []string `yaml:"providers"`
+		DownloadFolder    string   `yaml:"download_folder"`
+		DestinationFolder string   `yaml:"destination_folder"`
+		MoveMethod        []string `yaml:"move_method"`
+		Languages         []string `yaml:"languages"` // Priority order: ["en", "es"] - tries en first, falls back to es
+	} `yaml:"manga"`
+
 	Database struct {
 		Path string `yaml:"path"`
 	} `yaml:"database"`
@@ -140,6 +161,7 @@ type Config struct {
 		NewEpisodesCheckInterval  string   `yaml:"new_episodes_check_interval"`
 		CleanupInterval           string   `yaml:"cleanup_interval"`
 		RetryFailedInterval       string   `yaml:"retry_failed_interval"`
+		SubtitleScanInterval      string   `yaml:"subtitle_scan_interval"`
 		MaxConcurrentDownloads    int      `yaml:"max_concurrent_downloads"`
 		QualityPreferences        []string `yaml:"quality_preferences"`
 		MinSeeders                int      `yaml:"min_seeders"`
@@ -153,7 +175,7 @@ type Config struct {
 	RejectCommon      []string `yaml:"reject-common"`
 	ExtraTrackersList []string `yaml:"extra_trackers_list"`
 
-	FileRenaming   FileRenamingConfig   `yaml:"file_renaming"`
+	FileRenaming FileRenamingConfig `yaml:"file_renaming"`
 	PostProcessing PostProcessingConfig `yaml:"postprocessing"`
 }
 
@@ -264,16 +286,16 @@ func (c *Config) Validate() error {
 	if c.TorrentClient.Type == "" {
 		return fmt.Errorf("torrent_client.type is required")
 	}
-	validTorrentClients := [6]string{"transmission", "qbittorrent", "aria2", "deluge", "mock", ""}
+	validTorrentClients := [7]string{"transmission", "qbittorrent", "aria2", "deluge", "direct", "mock", ""}
 	valid := false
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 6; i++ {
 		if c.TorrentClient.Type == validTorrentClients[i] {
 			valid = true
 			break
 		}
 	}
 	if !valid {
-		return fmt.Errorf("torrent_client.type must be one of: transmission, qbittorrent, aria2, deluge, mock")
+		return fmt.Errorf("torrent_client.type must be one of: transmission, qbittorrent, aria2, deluge, direct, mock")
 	}
 	if c.TorrentClient.Host == "" {
 		return fmt.Errorf("torrent_client.host is required")
@@ -293,6 +315,18 @@ func (c *Config) Validate() error {
 	}
 	if err := c.validateMediaType("anime", c.Anime.DownloadFolder, c.Anime.DestinationFolder, c.Anime.MoveMethod); err != nil {
 		return err
+	}
+	// Manga is optional - only validate if configured
+	if len(c.Manga.Providers) > 0 {
+		if err := c.validateMediaType("manga", c.Manga.DownloadFolder, c.Manga.DestinationFolder, c.Manga.MoveMethod); err != nil {
+			return err
+		}
+	}
+	// Ebooks are optional - only validate if configured
+	if len(c.Ebooks.Sources) > 0 || len(c.Ebooks.Providers) > 0 {
+		if err := c.validateMediaType("ebooks", c.Ebooks.DownloadFolder, c.Ebooks.DestinationFolder, c.Ebooks.MoveMethod); err != nil {
+			return err
+		}
 	}
 
 	// Validate subtitles

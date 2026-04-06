@@ -142,6 +142,10 @@ func (pp *PostProcessor) createDestinationFolder(media *models.Media, seasonNumb
 		baseDestPath = pp.config.TVShows.DestinationFolder
 	case models.MediaTypeAnime:
 		baseDestPath = pp.config.Anime.DestinationFolder
+	case models.MediaTypeEbook:
+		baseDestPath = pp.config.Ebooks.DestinationFolder
+	case models.MediaTypeManga:
+		baseDestPath = pp.config.Manga.DestinationFolder
 	default:
 		pp.logger.Error("Unknown media type for destination path:", media.Type)
 		return ""
@@ -166,15 +170,19 @@ func (pp *PostProcessor) createDestinationFolder(media *models.Media, seasonNumb
 	return fullPath
 }
 
-// identifyMediaFiles finds the relevant video and subtitle files within the downloaded content.
+// identifyMediaFiles finds the relevant media files within the downloaded content.
 func (pp *PostProcessor) identifyMediaFiles(downloadPath string, torrentFiles []string) []string {
-	videoExtensions := map[string]bool{".mkv": true, ".mp4": true, ".avi": true, ".mov": true}
-	subtitleExtensions := map[string]bool{".srt": true, ".sub": true, ".ass": true}
+	validExtensions := map[string]bool{
+		".mkv": true, ".mp4": true, ".avi": true, ".mov": true,
+		".srt": true, ".sub": true, ".ass": true,
+		".cbz": true, ".cbr": true,
+		".epub": true, ".pdf": true, ".mobi": true, ".azw3": true, ".fb2": true,
+	}
 
 	var files []string
 	for _, file := range torrentFiles {
 		ext := strings.ToLower(filepath.Ext(file))
-		if videoExtensions[ext] || subtitleExtensions[ext] {
+		if validExtensions[ext] {
 			fullPath := filepath.Join(downloadPath, file)
 			files = append(files, fullPath)
 		}
@@ -192,6 +200,10 @@ func (pp *PostProcessor) processFilesWithFallback(media *models.Media, files []s
 		moveMethods = pp.config.TVShows.MoveMethod
 	case models.MediaTypeAnime:
 		moveMethods = pp.config.Anime.MoveMethod
+	case models.MediaTypeEbook:
+		moveMethods = pp.config.Ebooks.MoveMethod
+	case models.MediaTypeManga:
+		moveMethods = pp.config.Manga.MoveMethod
 	}
 
 	if len(moveMethods) == 0 {
@@ -286,7 +298,10 @@ func (pp *PostProcessor) copyFileAndRemoveOriginal(src, dst string) error {
 	}
 	destinationFile.Close()
 
-	return os.Remove(src)
+	if err := os.Remove(src); err != nil {
+		pp.logger.Warn("Could not remove source file after copy (non-fatal):", err)
+	}
+	return nil
 }
 
 // waitForFile waits for a file to exist for a certain duration.
@@ -344,6 +359,10 @@ func (pp *PostProcessor) renameFiles(media *models.Media, destination string, se
 			template = pp.config.FileRenaming.SeriesTemplate
 		case models.MediaTypeAnime:
 			template = pp.config.FileRenaming.AnimeTemplate
+		case models.MediaTypeEbook:
+			template = pp.config.FileRenaming.EbookTemplate
+		case models.MediaTypeManga:
+			template = pp.config.FileRenaming.MangaTemplate
 		}
 
 		if template == "" {

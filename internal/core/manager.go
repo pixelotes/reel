@@ -119,6 +119,14 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 			return metadata.NewAniListClient(metadataTimeout)
 		case "trakt":
 			return metadata.NewTraktClient(cfg.Metadata.Trakt.ClientID, tmdbClient, metadataTimeout, m.logger)
+		case "googlebooks":
+			return metadata.NewGoogleBooksClient(cfg.Metadata.GoogleBooks.APIKey, metadataTimeout)
+		case "openlibrary":
+			return metadata.NewOpenLibraryClient(metadataTimeout)
+		case "gutendex":
+			return metadata.NewGutendexClient(metadataTimeout)
+		case "mangadex":
+			return metadata.NewMangaDexClient(metadataTimeout, cfg.Metadata.Language)
 		}
 		return nil
 	}
@@ -142,6 +150,18 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 			metadataClients[models.MediaTypeAnime] = append(metadataClients[models.MediaTypeAnime], client)
 		}
 	}
+	// Ebooks
+	for _, providerName := range cfg.Ebooks.Providers {
+		if client := initMetadataProvider(providerName); client != nil {
+			metadataClients[models.MediaTypeEbook] = append(metadataClients[models.MediaTypeEbook], client)
+		}
+	}
+	// Manga
+	for _, providerName := range cfg.Manga.Providers {
+		if client := initMetadataProvider(providerName); client != nil {
+			metadataClients[models.MediaTypeManga] = append(metadataClients[models.MediaTypeManga], client)
+		}
+	}
 
 	// --- Initialize Indexer Clients ---
 	initIndexerClient := func(source config.SourceConfig) indexers.Client {
@@ -152,6 +172,8 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 			return indexers.NewJackettClient(source.URL, source.APIKey, searchTimeout)
 		case "prowlarr":
 			return indexers.NewProwlarrClient(source.URL, source.APIKey, searchTimeout)
+		case "gutendex":
+			return indexers.NewGutendexIndexer(searchTimeout, cfg.Metadata.Language)
 		}
 		return nil
 	}
@@ -190,6 +212,30 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 			}
 		}
 	}
+	// Ebooks
+	for _, source := range cfg.Ebooks.Sources {
+		if source.Type != "rss" {
+			if client := initIndexerClient(source); client != nil {
+				indexerClients[models.MediaTypeEbook] = append(indexerClients[models.MediaTypeEbook], services.IndexerClientWithMode{
+					Client: client,
+					Source: source,
+				})
+			}
+		}
+	}
+
+	// Manga - MangaDex is both metadata and indexer, register automatically
+	if len(cfg.Manga.Providers) > 0 {
+		langs := cfg.Manga.Languages
+		if len(langs) == 0 {
+			langs = []string{cfg.Metadata.Language}
+		}
+		mangadexIndexer := indexers.NewMangaDexIndexer(searchTimeout, langs, cfg.Metadata.Language)
+		indexerClients[models.MediaTypeManga] = append(indexerClients[models.MediaTypeManga], services.IndexerClientWithMode{
+			Client: mangadexIndexer,
+			Source: config.SourceConfig{Type: "mangadex"},
+		})
+	}
 
 	// --- Initialize Torrent Client ---
 	var torrentClient torrent.TorrentClient
@@ -206,6 +252,8 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 			m.logger.Fatal("Failed to create Deluge client:", err)
 		}
 		torrentClient = client
+	case "direct":
+		torrentClient = torrent.NewDirectDownloadClient(m.logger)
 	case "mock":
 		torrentClient = torrent.NewMockClient(m.logger)
 	default:
@@ -216,7 +264,7 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 	matcherService := services.NewMatcherService(cfg, m.logger)
 	torrentSelector := services.NewTorrentSelector(cfg, matcherService, m.logger)
 
-	m.libraryService = services.NewLibraryService(cfg, m.mediaRepo, metadataClients, m.logger)
+	m.libraryService = services.NewLibraryService(cfg, m.mediaRepo, metadataClients, m.subtitleClient, m.logger)
 	m.downloaderService = services.NewDownloaderService(cfg, m.logger, torrentClient, m.mediaRepo, m.postProcessor, notifiers)
 	m.searcherService = services.NewSearcherService(indexerClients, torrentSelector, m.mediaRepo, m.logger)
 	m.rssService = services.NewRSSService(cfg, m.mediaRepo, m.downloaderService, torrentSelector, matcherService, m.logger, m.httpClient)
@@ -246,9 +294,9 @@ func (m *Manager) startSearchQueueWorker() {
 	m.logger.Info("Search queue worker started.")
 	for media := range m.searchQueue {
 		switch media.Type {
-		case models.MediaTypeMovie:
+		case models.MediaTypeMovie, models.MediaTypeEbook:
 			m.searchAndDownloadMovie(&media)
-		case models.MediaTypeTVShow, models.MediaTypeAnime:
+		case models.MediaTypeTVShow, models.MediaTypeAnime, models.MediaTypeManga:
 			m.searchAndDownloadNextEpisode(&media)
 		}
 		time.Sleep(30 * time.Second)
@@ -280,7 +328,7 @@ func (m *Manager) searchAndDownloadMovie(media *models.Media) {
 			m.mediaRepo.UpdateStatus(media.ID, models.StatusFailed)
 		}
 	} else {
-		m.logger.Info("No suitable torrent found for movie:", media.Title)
+		m.logger.Warn("No suitable torrent found for movie:", media.Title)
 		m.mediaRepo.UpdateStatus(media.ID, models.StatusFailed)
 	}
 }
@@ -296,7 +344,7 @@ func (m *Manager) searchAndDownloadNextEpisode(media *models.Media) {
 	// Iterate through seasons to find pending episodes
 	for _, season := range show.Seasons {
 		for _, episode := range season.Episodes {
-			if episode.Status == models.StatusPending {
+			if episode.Status == models.StatusPending || episode.Status == models.StatusFailed {
 				m.logger.Info(fmt.Sprintf("Searching for %s S%02dE%02d", media.Title, season.SeasonNumber, episode.EpisodeNumber))
 
 				// Update episode status to searching
@@ -316,7 +364,7 @@ func (m *Manager) searchAndDownloadNextEpisode(media *models.Media) {
 						// Update status handled in service? Downloader service handles failure status (logic in StartEpisodeDownload).
 					}
 				} else {
-					m.logger.Info("No suitable torrent found for episode:", media.Title)
+					m.logger.Warn("No suitable torrent found for episode:", media.Title)
 					// Mark as failed or leave pending?
 					// Ideally mark failed so it can be retried later.
 					// We'll leave it pending or mark failed?

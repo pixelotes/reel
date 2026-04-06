@@ -2,10 +2,10 @@ package services
 
 import (
 	"fmt"
+	"os"
 	"strings"
+	"syscall"
 	"time"
-
-	"github.com/shirou/gopsutil/disk"
 
 	"reel/internal/clients/indexers"
 	"reel/internal/clients/notifications"
@@ -19,6 +19,7 @@ type DownloaderService struct {
 	config        *config.Config
 	logger        *utils.Logger
 	torrentClient torrent.TorrentClient
+	directClient  torrent.TorrentClient // For direct HTTP downloads (ebooks)
 	mediaRepo     *models.MediaRepository
 	postProcessor *PostProcessor
 	notifiers     []notifications.Notifier
@@ -29,24 +30,34 @@ func NewDownloaderService(cfg *config.Config, logger *utils.Logger, torrentClien
 		config:        cfg,
 		logger:        logger,
 		torrentClient: torrentClient,
+		directClient:  torrent.NewDirectDownloadClient(logger),
 		mediaRepo:     mediaRepo,
 		postProcessor: pp,
 		notifiers:     notifiers,
 	}
 }
 
+// clientFor returns the direct download client for ebooks, torrent client for everything else.
+func (d *DownloaderService) clientFor(mediaType models.MediaType) torrent.TorrentClient {
+	if mediaType == models.MediaTypeEbook || mediaType == models.MediaTypeManga {
+		return d.directClient
+	}
+	return d.torrentClient
+}
+
 func (d *DownloaderService) checkDiskSpace(downloadPath string, size int64, mediaID int, title string) error {
 	const securityBuffer int64 = 500 * 1024 * 1024 // 500MB
 	requiredSpace := uint64(size + securityBuffer)
 
-	usage, err := disk.Usage(downloadPath)
-	if err != nil {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(downloadPath, &stat); err != nil {
 		d.logger.Error("Failed to check disk space for path", downloadPath, ":", err)
 		return fmt.Errorf("could not verify disk space: %w", err)
 	}
+	freeSpace := stat.Bavail * uint64(stat.Bsize)
 
-	if usage.Free < requiredSpace {
-		d.logger.Warn(fmt.Sprintf("Not enough disk space in %s. Required: %d bytes, Available: %d bytes", downloadPath, requiredSpace, usage.Free))
+	if freeSpace < requiredSpace {
+		d.logger.Warn(fmt.Sprintf("Not enough disk space in %s. Required: %d bytes, Available: %d bytes", downloadPath, requiredSpace, freeSpace))
 
 		// Create a dummy media object for notification (since we only have ID here usually, but caller might have media)
 		// Ideally we should pass media object, but let's see usages.
@@ -75,8 +86,14 @@ func (d *DownloaderService) StartDownload(mediaID int, t indexers.IndexerResult)
 		downloadPath = d.config.TVShows.DownloadFolder
 	case models.MediaTypeAnime:
 		downloadPath = d.config.Anime.DownloadFolder
+	case models.MediaTypeEbook:
+		downloadPath = d.config.Ebooks.DownloadFolder
 	default:
 		downloadPath = d.config.TorrentClient.DownloadPath // Fallback
+	}
+
+	if err := os.MkdirAll(downloadPath, os.ModePerm); err != nil {
+		return fmt.Errorf("failed to create download directory: %w", err)
 	}
 
 	if err := d.checkDiskSpace(downloadPath, t.Size, mediaID, t.Title); err != nil {
@@ -88,11 +105,12 @@ func (d *DownloaderService) StartDownload(mediaID int, t indexers.IndexerResult)
 		return err
 	}
 
+	client := d.clientFor(media.Type)
 	d.logger.Info("Sending to download client:", d.config.TorrentClient.Type)
 
 	var hash string
 
-	if d.config.App.MagnetToTorrentEnabled && strings.HasPrefix(t.DownloadURL, "magnet:") {
+	if media.Type != models.MediaTypeEbook && d.config.App.MagnetToTorrentEnabled && strings.HasPrefix(t.DownloadURL, "magnet:") {
 		timeout := time.Duration(d.config.App.MagnetToTorrentTimeout) * time.Second
 		if timeout <= 0 {
 			timeout = 60 * time.Second // Default to 60 seconds
@@ -101,22 +119,29 @@ func (d *DownloaderService) StartDownload(mediaID int, t indexers.IndexerResult)
 		torrentFileBytes, convErr := utils.ConvertMagnetToTorrent(t.DownloadURL, timeout, d.config.App.DataPath, d.logger)
 		if convErr == nil {
 			d.logger.Info("Magnet conversion successful, adding as .torrent file.")
-			hash, err = d.torrentClient.AddTorrentFile(torrentFileBytes, downloadPath)
+			hash, err = client.AddTorrentFile(torrentFileBytes, downloadPath)
 		} else {
 			d.logger.Warn("Magnet conversion failed:", convErr, "- falling back to magnet link.")
-			hash, err = d.torrentClient.AddTorrent(t.DownloadURL, downloadPath)
+			hash, err = client.AddTorrent(t.DownloadURL, downloadPath)
 		}
 	} else {
-		hash, err = d.torrentClient.AddTorrent(t.DownloadURL, downloadPath)
+		hash, err = client.AddTorrent(t.DownloadURL, downloadPath)
 	}
 
 	if err != nil {
-		d.logger.Error("Failed to add torrent to client:", err)
-		d.mediaRepo.UpdateStatus(mediaID, models.StatusFailed)
-		return err
+		// If the torrent already exists, log a warning but treat it as success
+		if hash != "" && strings.Contains(err.Error(), "already exists") {
+			d.logger.Warn("Torrent already in client, skipping:", err)
+		} else {
+			d.logger.Error("Failed to add torrent to client:", err)
+			d.mediaRepo.UpdateStatus(mediaID, models.StatusFailed)
+			return err
+		}
 	}
 
-	d.addExtraTrackers(hash)
+	if media.Type != models.MediaTypeEbook {
+		d.addExtraTrackers(hash)
+	}
 
 	// Notification
 	d.notifyDownloadStarted(media, t.Title)
@@ -138,8 +163,8 @@ func (d *DownloaderService) StartEpisodeDownload(mediaID int, seasonNumber int, 
 		return fmt.Errorf("media not found")
 	}
 
-	if media.Type != models.MediaTypeTVShow && media.Type != models.MediaTypeAnime {
-		return fmt.Errorf("media is not a TV show or anime")
+	if media.Type != models.MediaTypeTVShow && media.Type != models.MediaTypeAnime && media.Type != models.MediaTypeManga {
+		return fmt.Errorf("media is not a TV show, anime, or manga")
 	}
 
 	var downloadPath string
@@ -148,8 +173,14 @@ func (d *DownloaderService) StartEpisodeDownload(mediaID int, seasonNumber int, 
 		downloadPath = d.config.TVShows.DownloadFolder
 	case models.MediaTypeAnime:
 		downloadPath = d.config.Anime.DownloadFolder
+	case models.MediaTypeManga:
+		downloadPath = d.config.Manga.DownloadFolder
 	default:
 		downloadPath = d.config.TorrentClient.DownloadPath // Fallback
+	}
+
+	if err := os.MkdirAll(downloadPath, os.ModePerm); err != nil {
+		return fmt.Errorf("failed to create download directory: %w", err)
 	}
 
 	if err := d.checkDiskSpace(downloadPath, t.Size, mediaID, t.Title); err != nil {
@@ -164,10 +195,12 @@ func (d *DownloaderService) StartEpisodeDownload(mediaID int, seasonNumber int, 
 	d.logger.Info(fmt.Sprintf("Starting manual download for %s S%02dE%02d: %s",
 		media.Title, seasonNumber, episodeNumber, t.Title))
 
-	// Start the torrent download
+	// Start the download
+	client := d.clientFor(media.Type)
 	var hash string
 
-	if d.config.App.MagnetToTorrentEnabled && strings.HasPrefix(t.DownloadURL, "magnet:") {
+	isMangaOrEbook := media.Type == models.MediaTypeManga || media.Type == models.MediaTypeEbook
+	if !isMangaOrEbook && d.config.App.MagnetToTorrentEnabled && strings.HasPrefix(t.DownloadURL, "magnet:") {
 		timeout := time.Duration(d.config.App.MagnetToTorrentTimeout) * time.Second
 		if timeout <= 0 {
 			timeout = 60 * time.Second // Default to 60 seconds
@@ -176,21 +209,27 @@ func (d *DownloaderService) StartEpisodeDownload(mediaID int, seasonNumber int, 
 		torrentFileBytes, convErr := utils.ConvertMagnetToTorrent(t.DownloadURL, timeout, d.config.App.DataPath, d.logger)
 		if convErr == nil {
 			d.logger.Info("Magnet conversion successful, adding as .torrent file.")
-			hash, err = d.torrentClient.AddTorrentFile(torrentFileBytes, downloadPath)
+			hash, err = client.AddTorrentFile(torrentFileBytes, downloadPath)
 		} else {
 			d.logger.Warn("Magnet conversion failed:", convErr, "- falling back to magnet link.")
-			hash, err = d.torrentClient.AddTorrent(t.DownloadURL, downloadPath)
+			hash, err = client.AddTorrent(t.DownloadURL, downloadPath)
 		}
 	} else {
-		hash, err = d.torrentClient.AddTorrent(t.DownloadURL, downloadPath)
+		hash, err = client.AddTorrent(t.DownloadURL, downloadPath)
 	}
 
 	if err != nil {
-		d.logger.Error("Failed to add episode torrent to client:", err)
-		return err
+		if hash != "" && strings.Contains(err.Error(), "already exists") {
+			d.logger.Warn("Episode torrent already in client, skipping:", err)
+		} else {
+			d.logger.Error("Failed to add episode torrent to client:", err)
+			return err
+		}
 	}
 
-	d.addExtraTrackers(hash)
+	if !isMangaOrEbook {
+		d.addExtraTrackers(hash)
+	}
 
 	d.logger.Info("Episode torrent successfully sent to download client! Hash:", hash)
 
@@ -227,12 +266,12 @@ func (d *DownloaderService) UpdateDownloadStatus() {
 	}
 
 	for _, media := range downloadingMedia {
-		// --- Logic for Movies (remains the same) ---
-		if media.Type == models.MediaTypeMovie {
+		// --- Logic for Movies and Ebooks (no episodes) ---
+		if media.Type == models.MediaTypeMovie || media.Type == models.MediaTypeEbook {
 			if media.TorrentHash == nil {
 				continue
 			}
-			status, err := d.torrentClient.GetTorrentStatus(*media.TorrentHash)
+			status, err := d.clientFor(media.Type).GetTorrentStatus(*media.TorrentHash)
 			if err != nil {
 				d.logger.Error("Failed to get torrent status for", media.Title, ":", err)
 				d.mediaRepo.UpdateStatus(media.ID, models.StatusFailed)
@@ -240,11 +279,10 @@ func (d *DownloaderService) UpdateDownloadStatus() {
 			}
 
 			if status.IsCompleted {
-				var completedAt *time.Time
 				now := time.Now()
-				completedAt = &now
+				// Mark as downloaded BEFORE launching post-processing to prevent duplicate runs
+				d.mediaRepo.UpdateProgress(media.ID, models.StatusDownloaded, 1.0, &now)
 				go d.postProcessor.ProcessDownload(media, status, 0, 0, status.DownloadDir)
-				d.mediaRepo.UpdateProgress(media.ID, models.StatusDownloaded, 1.0, completedAt)
 			} else {
 				d.mediaRepo.UpdateProgress(media.ID, models.StatusDownloading, status.Progress, nil)
 			}
@@ -252,7 +290,7 @@ func (d *DownloaderService) UpdateDownloadStatus() {
 		}
 
 		// --- New Per-Episode Logic for TV Shows & Anime ---
-		if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+		if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime || media.Type == models.MediaTypeManga {
 			if media.TVShowID == nil {
 				continue
 			}
@@ -281,7 +319,7 @@ func (d *DownloaderService) UpdateDownloadStatus() {
 					continue
 				}
 
-				status, err := d.torrentClient.GetTorrentStatus(*episode.TorrentHash)
+				status, err := d.clientFor(media.Type).GetTorrentStatus(*episode.TorrentHash)
 				if err != nil {
 					d.logger.Error("Failed to get torrent status for episode:", media.Title, episode.Title, err)
 					// Mark this specific episode as failed
@@ -292,10 +330,9 @@ func (d *DownloaderService) UpdateDownloadStatus() {
 
 				if status.IsCompleted {
 					d.logger.Info("Episode download completed:", media.Title, fmt.Sprintf("S%02dE%02d", seasonMap[episode.SeasonID], episode.EpisodeNumber))
-					// Post-process this specific, completed episode
-					go d.postProcessor.ProcessDownload(media, status, seasonMap[episode.SeasonID], episode.EpisodeNumber, status.DownloadDir)
-					// Update this specific episode's status to downloaded
+					// Mark as downloaded BEFORE launching post-processing to prevent duplicate runs
 					d.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, seasonMap[episode.SeasonID], episode.EpisodeNumber, models.StatusDownloaded, nil, nil)
+					go d.postProcessor.ProcessDownload(media, status, seasonMap[episode.SeasonID], episode.EpisodeNumber, status.DownloadDir)
 				}
 				// If not complete, we don't need to do anything here.
 				// The overall show progress will be updated below by UpdateShowProgress (called by Scheduler/Library)

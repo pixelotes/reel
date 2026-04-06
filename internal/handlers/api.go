@@ -1,14 +1,16 @@
 package handlers
 
 import (
+	"archive/zip"
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -514,6 +516,135 @@ func (h *APIHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// StreamEbook serves an ebook file (EPUB, PDF, etc.) for the given media ID.
+func (h *APIHandler) StreamEbook(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	mediaID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+
+	filePath, err := h.manager.GetMediaFilePath(mediaID, 0, 0)
+	if err != nil {
+		h.logger.Error("Could not get ebook file path:", err)
+		respondError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	http.ServeFile(w, r, filePath)
+}
+
+// GetMangaPages returns the ordered list of image filenames inside a CBZ chapter.
+func (h *APIHandler) GetMangaPages(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	mediaID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+	seasonNumber, _ := strconv.Atoi(r.URL.Query().Get("season"))
+	episodeNumber, _ := strconv.Atoi(r.URL.Query().Get("episode"))
+
+	cbzPath, err := h.manager.GetMediaFilePath(mediaID, seasonNumber, episodeNumber)
+	if err != nil {
+		respondError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	rc, err := zip.OpenReader(cbzPath)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Could not open CBZ: "+err.Error())
+		return
+	}
+	defer rc.Close()
+
+	imageExts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".webp": true, ".gif": true}
+	var pages []string
+	for _, f := range rc.File {
+		if !f.FileInfo().IsDir() {
+			ext := strings.ToLower(filepath.Ext(f.Name))
+			if imageExts[ext] {
+				pages = append(pages, f.Name)
+			}
+		}
+	}
+	sort.Strings(pages)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"pages": pages, "count": len(pages)})
+}
+
+// ServeMangaPage extracts and serves a single image page from a CBZ chapter.
+func (h *APIHandler) ServeMangaPage(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	mediaID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		return
+	}
+	pageIndex, err := strconv.Atoi(vars["page"])
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid page number")
+		return
+	}
+	seasonNumber, _ := strconv.Atoi(r.URL.Query().Get("season"))
+	episodeNumber, _ := strconv.Atoi(r.URL.Query().Get("episode"))
+
+	cbzPath, err := h.manager.GetMediaFilePath(mediaID, seasonNumber, episodeNumber)
+	if err != nil {
+		respondError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	rc, err := zip.OpenReader(cbzPath)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Could not open CBZ")
+		return
+	}
+	defer rc.Close()
+
+	imageExts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".webp": true, ".gif": true}
+	var pages []*zip.File
+	for _, f := range rc.File {
+		if !f.FileInfo().IsDir() {
+			ext := strings.ToLower(filepath.Ext(f.Name))
+			if imageExts[ext] {
+				pages = append(pages, f)
+			}
+		}
+	}
+	sort.Slice(pages, func(i, j int) bool { return pages[i].Name < pages[j].Name })
+
+	if pageIndex < 0 || pageIndex >= len(pages) {
+		respondError(w, http.StatusNotFound, fmt.Sprintf("Page %d out of range (total: %d)", pageIndex, len(pages)))
+		return
+	}
+
+	f := pages[pageIndex]
+	fr, err := f.Open()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Could not read page")
+		return
+	}
+	defer fr.Close()
+
+	ext := strings.ToLower(filepath.Ext(f.Name))
+	contentType := "image/jpeg"
+	switch ext {
+	case ".png":
+		contentType = "image/png"
+	case ".webp":
+		contentType = "image/webp"
+	case ".gif":
+		contentType = "image/gif"
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	io.Copy(w, fr)
+}
+
 // GetSubtitles handles finding, converting, and serving the subtitle file.
 func (h *APIHandler) GetSubtitles(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
@@ -686,7 +817,8 @@ func (h *APIHandler) AddAnimeSearchTerm(w http.ResponseWriter, r *http.Request) 
 
 	term, err := h.manager.AddAnimeSearchTerm(id, req.Term)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to add search term")
+		h.logger.Error("Failed to add search term:", err)
+		respondError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to add search term: %v", err))
 		return
 	}
 
@@ -719,7 +851,7 @@ func (h *APIHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
-	body, err := ioutil.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "Could not read request body")
 		return
@@ -776,7 +908,7 @@ func (s *Server) handleLogsWebsocket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Watch for new content
+	// Watch for new content with batching to reduce CPU usage
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		s.logger.Error("Failed to create file watcher:", "error", err)
@@ -796,9 +928,12 @@ func (s *Server) handleLogsWebsocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	file.Seek(0, os.SEEK_END) // Start at the end of the file
+	file.Seek(0, os.SEEK_END)
 
 	reader := bufio.NewReader(file)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	hasNewData := false
 
 	for {
 		select {
@@ -807,24 +942,30 @@ func (s *Server) handleLogsWebsocket(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if event.Op&fsnotify.Write == fsnotify.Write && event.Name == logFilePath {
-				for {
-					line, err := reader.ReadBytes('\n')
-					if err != nil {
-						break // No more lines
-					}
-					if err := conn.WriteMessage(websocket.TextMessage, line); err != nil {
-						return // Client closed
-					}
-				}
+				hasNewData = true
 			}
 		case err, ok := <-watcher.Errors:
 			if !ok {
 				return
 			}
 			s.logger.Error("File watcher error:", "error", err)
-		case <-time.After(1 * time.Second): // Periodically check for client close
+		case <-ticker.C:
+			// Batch: flush all new lines every 2 seconds
+			if hasNewData {
+				hasNewData = false
+				for {
+					line, err := reader.ReadBytes('\n')
+					if err != nil {
+						break
+					}
+					if err := conn.WriteMessage(websocket.TextMessage, line); err != nil {
+						return
+					}
+				}
+			}
+			// Ping to detect closed connections
 			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				return // Client closed connection
+				return
 			}
 		}
 	}
