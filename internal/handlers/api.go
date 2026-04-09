@@ -288,7 +288,7 @@ func (h *APIHandler) ManualDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	respondJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "Torrent sent to download client"})
 }
 
 func (h *APIHandler) GetTVShowDetails(w http.ResponseWriter, r *http.Request) {
