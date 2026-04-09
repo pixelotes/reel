@@ -11,6 +11,7 @@ Reel manages downloads through a single torrent client configured in the `torren
 | Transmission | 9091 | Web API (RPC) | Username/password (optional) |
 | qBittorrent | 8080 | Web API (session cookies) | Username/password (required) |
 | Aria2 | 6800 | JSON-RPC | RPC secret token |
+| Rain | 7246 | JSON-RPC 2.0 | None |
 | Deluge | 8112 | JSON-RPC | Username/password (required) |
 
 ---
@@ -68,6 +69,25 @@ torrent_client:
 
 ---
 
+## Rain
+
+[Rain](https://github.com/cenkalti/rain) is a lightweight Go BitTorrent client, battle-tested in production at put.io since 2019. It exposes a JSON-RPC 2.0 API with no authentication. Ideal for resource-constrained environments like Raspberry Pi.
+
+```yaml
+torrent_client:
+  type: "rain"
+  host: "http://localhost:7246"
+  download_path: "/downloads/media"
+```
+
+!!! warning "Download path"
+    Rain does not support per-torrent download directories. All torrents download to the `datadir` configured in Rain's own `config.yaml`. Make sure `download_path` in Reel matches Rain's `datadir` setting.
+
+!!! tip "Resource usage"
+    Rain uses ~9 MiB RAM with tuned cache settings, making it the lightest option for ARM devices. See the [Storm container](https://github.com/pixelotes/storm) for a Pi-optimized Docker setup.
+
+---
+
 ## Deluge
 
 Deluge uses a JSON-RPC API with automatic reconnection. Both username and password are required.
@@ -90,7 +110,7 @@ torrent_client:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `type` | string | Yes | Client type: `transmission`, `qbittorrent`, `aria2`, or `deluge`. |
+| `type` | string | Yes | Client type: `transmission`, `qbittorrent`, `aria2`, `rain`, or `deluge`. |
 | `host` | string | Yes | Host and port, or full URL for the client API. |
 | `username` | string | Depends | Username for authentication. Used by Transmission, qBittorrent, and Deluge. |
 | `password` | string | Depends | Password for authentication. |
@@ -101,13 +121,14 @@ torrent_client:
 
 ## Choosing a Client
 
-| Feature | Transmission | qBittorrent | Aria2 | Deluge |
-|---------|-------------|-------------|-------|--------|
-| Resource usage | Low | Medium | Very low | Medium |
-| Web UI included | Yes | Yes | No | Yes |
-| Auth optional | Yes | No | N/A (token) | No |
-| Auto-reconnect | No | No | No | Yes |
-| Best for | Simplicity | Feature-rich UI | Headless/minimal | Plugin ecosystem |
+| Feature | Transmission | qBittorrent | Aria2 | Rain | Deluge |
+|---------|-------------|-------------|-------|------|--------|
+| Resource usage | Low | Medium | Very low | Very low | Medium |
+| Web UI included | Yes | Yes | No | No | Yes |
+| Auth optional | Yes | No | N/A (token) | N/A | No |
+| Auto-reconnect | No | No | No | No | Yes |
+| Per-torrent download path | Yes | Yes | Yes | No | Yes |
+| Best for | Simplicity | Feature-rich UI | Headless/minimal | Pi/ARM minimal | Plugin ecosystem |
 
 !!! tip "Raspberry Pi users"
-    Transmission and Aria2 have the lowest resource footprint, making them the best choices for ARM devices and single-board computers.
+    Rain and Aria2 have the lowest resource footprint, making them the best choices for ARM devices and single-board computers. Rain has the advantage of reliable session persistence and resume, unlike Aria2 which has known issues with BitTorrent session handling.

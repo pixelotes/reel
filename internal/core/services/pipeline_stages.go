@@ -379,6 +379,17 @@ func (s *RenameStage) Execute(ctx *ProcessingContext) error {
 			newName = r.Replace(template) + ext
 		}
 
+		// Sanitize characters not allowed on FAT32/exFAT/NTFS filesystems
+		newName = strings.NewReplacer(
+			":", " -",
+			"<", "",
+			">", "",
+			"\"", "",
+			"|", "",
+			"?", "",
+			"*", "",
+		).Replace(newName)
+
 		newPath := filepath.Join(filepath.Dir(oldPath), newName)
 
 		if err := os.Rename(oldPath, newPath); err != nil {

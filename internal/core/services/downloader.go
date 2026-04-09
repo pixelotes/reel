@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -23,6 +24,7 @@ type DownloaderService struct {
 	mediaRepo     *models.MediaRepository
 	postProcessor *PostProcessor
 	notifiers     []notifications.Notifier
+	statusMu      sync.Mutex
 }
 
 func NewDownloaderService(cfg *config.Config, logger *utils.Logger, torrentClient torrent.TorrentClient, mediaRepo *models.MediaRepository, pp *PostProcessor, notifiers []notifications.Notifier) *DownloaderService {
@@ -258,6 +260,11 @@ func (d *DownloaderService) addExtraTrackers(hash string) {
 }
 
 func (d *DownloaderService) UpdateDownloadStatus() {
+	if !d.statusMu.TryLock() {
+		return // Previous status check still running
+	}
+	defer d.statusMu.Unlock()
+
 	// Get all media items (movies or series) that have at least one active download.
 	downloadingMedia, err := d.mediaRepo.GetByStatus(models.StatusDownloading)
 	if err != nil {
@@ -282,7 +289,12 @@ func (d *DownloaderService) UpdateDownloadStatus() {
 				now := time.Now()
 				// Mark as downloaded BEFORE launching post-processing to prevent duplicate runs
 				d.mediaRepo.UpdateProgress(media.ID, models.StatusDownloaded, 1.0, &now)
-				go d.postProcessor.ProcessDownload(media, status, 0, 0, status.DownloadDir)
+				go func() {
+					if err := d.postProcessor.ProcessDownload(media, status, 0, 0, status.DownloadDir); err != nil {
+						d.logger.Error("Post-processing failed for", media.Title, ":", err)
+						d.mediaRepo.UpdateStatus(media.ID, models.StatusFailed)
+					}
+				}()
 			} else {
 				d.mediaRepo.UpdateProgress(media.ID, models.StatusDownloading, status.Progress, nil)
 			}
@@ -332,7 +344,11 @@ func (d *DownloaderService) UpdateDownloadStatus() {
 					d.logger.Info("Episode download completed:", media.Title, fmt.Sprintf("S%02dE%02d", seasonMap[episode.SeasonID], episode.EpisodeNumber))
 					// Mark as downloaded BEFORE launching post-processing to prevent duplicate runs
 					d.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, seasonMap[episode.SeasonID], episode.EpisodeNumber, models.StatusDownloaded, nil, nil)
-					go d.postProcessor.ProcessDownload(media, status, seasonMap[episode.SeasonID], episode.EpisodeNumber, status.DownloadDir)
+					go func(m models.Media, s torrent.TorrentStatus, sn, en int) {
+						if err := d.postProcessor.ProcessDownload(m, s, sn, en, s.DownloadDir); err != nil {
+							d.logger.Error(fmt.Sprintf("Post-processing failed for %s S%02dE%02d: %v", m.Title, sn, en, err))
+						}
+					}(media, status, seasonMap[episode.SeasonID], episode.EpisodeNumber)
 				}
 				// If not complete, we don't need to do anything here.
 				// The overall show progress will be updated below by UpdateShowProgress (called by Scheduler/Library)

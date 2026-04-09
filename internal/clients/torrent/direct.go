@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"crypto/sha1"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,23 @@ import (
 
 	"reel/internal/utils"
 )
+
+// ComicInfo represents the ComicInfo.xml metadata embedded in CBZ files.
+type ComicInfo struct {
+	XMLName     xml.Name `xml:"ComicInfo"`
+	Series      string   `xml:"Series,omitempty"`
+	Title       string   `xml:"Title,omitempty"`
+	Number      string   `xml:"Number,omitempty"`
+	Volume      string   `xml:"Volume,omitempty"`
+	Summary     string   `xml:"Summary,omitempty"`
+	Writer      string   `xml:"Writer,omitempty"`
+	Penciller   string   `xml:"Penciller,omitempty"`
+	Year        int      `xml:"Year,omitempty"`
+	PageCount   int      `xml:"PageCount,omitempty"`
+	LanguageISO string   `xml:"LanguageISO,omitempty"`
+	Manga       string   `xml:"Manga,omitempty"`
+	Web         string   `xml:"Web,omitempty"`
+}
 
 // DirectDownloadClient implements TorrentClient for direct HTTP downloads.
 // Used for downloading files (ebooks, etc.) directly from URLs without a torrent client.
@@ -335,6 +353,15 @@ func (c *DirectDownloadClient) downloadMangaChapter(dl *directDownload) {
 		}
 	}
 
+	// Write ComicInfo.xml with chapter/manga metadata
+	if comicInfo := c.fetchComicInfo(chapterID, len(files)); comicInfo != nil {
+		if w, err := zipWriter.Create("ComicInfo.xml"); err == nil {
+			enc := xml.NewEncoder(w)
+			enc.Indent("", "  ")
+			enc.Encode(comicInfo)
+		}
+	}
+
 	zipWriter.Close()
 	cbzFile.Sync()
 	cbzFile.Close()
@@ -373,4 +400,139 @@ func (c *DirectDownloadClient) downloadPageToZip(zw *zip.Writer, pageURL, pageNa
 
 	_, err = io.Copy(w, resp.Body)
 	return err
+}
+
+// fetchComicInfo fetches chapter and manga metadata from MangaDex and builds a ComicInfo.
+func (c *DirectDownloadClient) fetchComicInfo(chapterID string, pageCount int) *ComicInfo {
+	chapterURL := fmt.Sprintf("https://api.mangadex.org/chapter/%s?includes[]=manga", chapterID)
+	req, err := http.NewRequest("GET", chapterURL, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("User-Agent", "Reel/1.0")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+
+	var chResp struct {
+		Data struct {
+			Attributes struct {
+				Chapter            string `json:"chapter"`
+				Volume             string `json:"volume"`
+				Title              string `json:"title"`
+				TranslatedLanguage string `json:"translatedLanguage"`
+			} `json:"attributes"`
+			Relationships []struct {
+				ID         string          `json:"id"`
+				Type       string          `json:"type"`
+				Attributes json.RawMessage `json:"attributes"`
+			} `json:"relationships"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&chResp); err != nil {
+		return nil
+	}
+
+	info := &ComicInfo{
+		Number:      chResp.Data.Attributes.Chapter,
+		Volume:      chResp.Data.Attributes.Volume,
+		Title:       chResp.Data.Attributes.Title,
+		LanguageISO: chResp.Data.Attributes.TranslatedLanguage,
+		PageCount:   pageCount,
+		Manga:       "YesAndRightToLeft",
+		Web:         fmt.Sprintf("https://mangadex.org/chapter/%s", chapterID),
+	}
+
+	// Extract manga info from included relationships
+	for _, rel := range chResp.Data.Relationships {
+		if rel.Type != "manga" || rel.Attributes == nil {
+			continue
+		}
+		var attrs struct {
+			Title       map[string]string `json:"title"`
+			Description map[string]string `json:"description"`
+			Year        *int              `json:"year"`
+		}
+		if err := json.Unmarshal(rel.Attributes, &attrs); err != nil {
+			break
+		}
+		if t, ok := attrs.Title["en"]; ok {
+			info.Series = t
+		} else if t, ok := attrs.Title["ja-ro"]; ok {
+			info.Series = t
+		} else {
+			for _, t := range attrs.Title {
+				info.Series = t
+				break
+			}
+		}
+		if d, ok := attrs.Description["en"]; ok {
+			info.Summary = d
+		}
+		if attrs.Year != nil {
+			info.Year = *attrs.Year
+		}
+		// Fetch author/artist from manga endpoint
+		c.fetchMangaCreators(rel.ID, info)
+		break
+	}
+
+	return info
+}
+
+// fetchMangaCreators fetches author and artist names from the manga endpoint.
+func (c *DirectDownloadClient) fetchMangaCreators(mangaID string, info *ComicInfo) {
+	mangaURL := fmt.Sprintf("https://api.mangadex.org/manga/%s?includes[]=author&includes[]=artist", mangaID)
+	req, err := http.NewRequest("GET", mangaURL, nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("User-Agent", "Reel/1.0")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+
+	var mangaResp struct {
+		Data struct {
+			Relationships []struct {
+				Type       string `json:"type"`
+				Attributes *struct {
+					Name string `json:"name"`
+				} `json:"attributes,omitempty"`
+			} `json:"relationships"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&mangaResp); err != nil {
+		return
+	}
+
+	for _, rel := range mangaResp.Data.Relationships {
+		if rel.Attributes == nil {
+			continue
+		}
+		switch rel.Type {
+		case "author":
+			if info.Writer == "" {
+				info.Writer = rel.Attributes.Name
+			}
+		case "artist":
+			if info.Penciller == "" {
+				info.Penciller = rel.Attributes.Name
+			}
+		}
+	}
 }

@@ -261,6 +261,7 @@ func (c *Config) setDefaults() {
 				{Name: "create_folders", Enabled: true},
 				{Name: "move_files", Enabled: true},
 				{Name: "rename", Enabled: true},
+				{Name: "save_metadata", Enabled: true},
 				{Name: "subtitles", Enabled: true},
 				{Name: "notify", Enabled: true},
 			}
@@ -286,16 +287,16 @@ func (c *Config) Validate() error {
 	if c.TorrentClient.Type == "" {
 		return fmt.Errorf("torrent_client.type is required")
 	}
-	validTorrentClients := [7]string{"transmission", "qbittorrent", "aria2", "deluge", "direct", "mock", ""}
+	validTorrentClients := [9]string{"transmission", "qbittorrent", "aria2", "rain", "storm", "deluge", "direct", "mock", ""}
 	valid := false
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 8; i++ {
 		if c.TorrentClient.Type == validTorrentClients[i] {
 			valid = true
 			break
 		}
 	}
 	if !valid {
-		return fmt.Errorf("torrent_client.type must be one of: transmission, qbittorrent, aria2, deluge, direct, mock")
+		return fmt.Errorf("torrent_client.type must be one of: transmission, qbittorrent, aria2, rain, storm, deluge, direct, mock")
 	}
 	if c.TorrentClient.Host == "" {
 		return fmt.Errorf("torrent_client.host is required")

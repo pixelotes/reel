@@ -1375,7 +1375,7 @@ async function refreshData() {
                     const response = await fetchWithAuth(`/api/v1/media/${mediaId}/search`);
                     if (!response.ok) throw new Error('Search failed');
                     const results = await response.json();
-                    displayManualSearchResultsInModal(results, (r) => manualDownload(mediaId, r));
+                    displayManualSearchResultsInModal(results, (r) => manualDownload(mediaId, r), mediaId);
                 } catch (error) { 
                     content.innerHTML = `<p style="color:var(--error-color)">Error: ${error.message}</p>`; 
                 } finally {
@@ -1404,32 +1404,38 @@ async function refreshData() {
 
             function displayManualSearchResultsInModal(results, downloadCallback, mediaId, seasonNumber, episodeNumber) {
                 const content = document.getElementById('manual-search-content');
-                const isEpisode = mediaId !== undefined && seasonNumber !== undefined && episodeNumber !== undefined;
-                const customUrlHtml = isEpisode ? `<div style="margin-bottom: 1rem; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-secondary);">
+                const isEpisode = seasonNumber !== undefined && episodeNumber !== undefined;
+                const customUrlHtml = `<div style="margin-bottom: 1rem; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-secondary);">
                     <label style="font-size: 0.85rem; font-weight: bold;">Paste magnet or torrent URL</label>
                     <div style="display: flex; gap: 0.5rem; margin-top: 0.4rem;">
-                        <input type="text" id="custom-episode-url" placeholder="magnet:?xt=urn:btih:... or https://..." style="flex:1; padding: 0.4rem; font-size: 0.85rem;">
-                        <button class="secondary" id="custom-episode-download-btn" style="white-space:nowrap;">Download URL</button>
+                        <input type="text" id="custom-url-input" placeholder="magnet:?xt=urn:btih:... or https://..." style="flex:1; padding: 0.4rem; font-size: 0.85rem;">
+                        <button class="secondary" id="custom-url-download-btn" style="white-space:nowrap;">Download URL</button>
                     </div>
-                </div>` : '';
+                </div>`;
                 const resultsHtml = (!results || results.length === 0) ? '<p>No results found from indexers.</p>' : `<div style="max-height: 400px; overflow-y: auto;">
                     ${results.map(r => `<div class="manual-search-result"><span class="manual-search-title" title="${r.Title}">${r.Title}</span><span>${(r.Size/(1024*1024)).toFixed(2)} MB</span><span style="color:var(--success-color);">▲ ${r.Seeders}</span><span style="color:var(--error-color);">▼ ${r.Leechers}</span><span>${r.Score}</span><button class="secondary" data-result='${JSON.stringify(r).replace(/'/g, "\\'")}'>Download</button></div>`).join('')}</div>`;
                 content.innerHTML = `<h4>Manual Search Results</h4>${customUrlHtml}${resultsHtml}`;
                 content.querySelectorAll('.manual-search-result button').forEach(b => b.addEventListener('click', () => downloadCallback(JSON.parse(b.dataset.result))));
-                if (isEpisode) {
-                    document.getElementById('custom-episode-download-btn').addEventListener('click', () => {
-                        const url = document.getElementById('custom-episode-url').value.trim();
-                        if (!url) { showToast('Please paste a URL', 'error'); return; }
-                        manualEpisodeDownload(mediaId, seasonNumber, episodeNumber, { Title: 'Custom URL', DownloadURL: url, Size: 0, Seeders: 0, Leechers: 0 });
-                    });
-                }
+                document.getElementById('custom-url-download-btn').addEventListener('click', () => {
+                    const url = document.getElementById('custom-url-input').value.trim();
+                    if (!url) { showToast('Please paste a URL', 'error'); return; }
+                    const result = { Title: 'Custom URL', DownloadURL: url, Size: 0, Seeders: 0, Leechers: 0 };
+                    if (isEpisode) {
+                        manualEpisodeDownload(mediaId, seasonNumber, episodeNumber, result);
+                    } else {
+                        manualDownload(mediaId, result);
+                    }
+                });
             }
 
             window.manualDownload = async function(mediaId, result) {
                 showLoading(true, 'Sending to client...');
                 try {
                     const response = await fetchWithAuth(`/api/v1/media/${mediaId}/download`, { method: 'POST', body: result });
-                    if (!response.ok) throw new Error('Failed to send to client');
+                    if (!response.ok) {
+                        const errBody = await response.text();
+                        throw new Error(errBody || `HTTP ${response.status}`);
+                    }
                     showToast('Torrent sent to download client!');
                     document.getElementById('manual-search-modal').style.display = 'none';
                     loadMedia();

@@ -246,6 +246,10 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 		torrentClient = torrent.NewQBittorrentClient(cfg.TorrentClient.Host, cfg.TorrentClient.Username, cfg.TorrentClient.Password, m.logger)
 	case "aria2":
 		torrentClient = torrent.NewAria2Client(cfg.TorrentClient.Host, cfg.TorrentClient.Secret)
+	case "rain":
+		torrentClient = torrent.NewRainClient(cfg.TorrentClient.Host, cfg.TorrentClient.DownloadPath)
+	case "storm":
+		torrentClient = torrent.NewStormClient(cfg.TorrentClient.Host)
 	case "deluge":
 		client, err := torrent.NewDelugeClient(cfg.TorrentClient.Host, cfg.TorrentClient.Password)
 		if err != nil {

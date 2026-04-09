@@ -290,7 +290,7 @@ func (h *APIHandler) ManualDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	respondJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "Torrent sent to download client"})
 }
 
 func (h *APIHandler) GetTVShowDetails(w http.ResponseWriter, r *http.Request) {
@@ -535,7 +535,73 @@ func (h *APIHandler) StreamEbook(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filePath)
 }
 
-// GetMangaPages returns the ordered list of image filenames inside a CBZ chapter.
+// imageExtensions lists recognized image file extensions for manga pages.
+var imageExtensions = map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".webp": true, ".gif": true}
+
+// isImageFile checks if a filename has an image extension.
+func isImageFile(name string) bool {
+	return imageExtensions[strings.ToLower(filepath.Ext(name))]
+}
+
+// contentTypeForExt returns the MIME type for an image file extension.
+func contentTypeForExt(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".png":
+		return "image/png"
+	case ".webp":
+		return "image/webp"
+	case ".gif":
+		return "image/gif"
+	default:
+		return "image/jpeg"
+	}
+}
+
+// extractCBRToTemp extracts a CBR file to a temp directory using unrar.
+// Returns the temp dir path. Caller is NOT responsible for cleanup -- the dir
+// is cached for the lifetime of the process to avoid re-extracting on every page.
+var cbrCache = make(map[string]string)
+
+func extractCBRToTemp(cbrPath string) (string, error) {
+	if dir, ok := cbrCache[cbrPath]; ok {
+		if _, err := os.Stat(dir); err == nil {
+			return dir, nil
+		}
+		delete(cbrCache, cbrPath)
+	}
+
+	tmpDir, err := os.MkdirTemp("", "reel-cbr-*")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp dir: %w", err)
+	}
+
+	cmd := exec.Command("unrar", "x", "-o+", "-inul", cbrPath, tmpDir+"/")
+	if err := cmd.Run(); err != nil {
+		os.RemoveAll(tmpDir)
+		return "", fmt.Errorf("unrar failed: %w", err)
+	}
+
+	cbrCache[cbrPath] = tmpDir
+	return tmpDir, nil
+}
+
+// listImagesInDir returns sorted image file paths from a directory tree.
+func listImagesInDir(dir string) ([]string, error) {
+	var images []string
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+		if isImageFile(path) {
+			images = append(images, path)
+		}
+		return nil
+	})
+	sort.Strings(images)
+	return images, err
+}
+
+// GetMangaPages returns the ordered list of image filenames inside a CBZ/CBR chapter.
 func (h *APIHandler) GetMangaPages(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	mediaID, err := strconv.Atoi(vars["id"])
@@ -546,36 +612,50 @@ func (h *APIHandler) GetMangaPages(w http.ResponseWriter, r *http.Request) {
 	seasonNumber, _ := strconv.Atoi(r.URL.Query().Get("season"))
 	episodeNumber, _ := strconv.Atoi(r.URL.Query().Get("episode"))
 
-	cbzPath, err := h.manager.GetMediaFilePath(mediaID, seasonNumber, episodeNumber)
+	archivePath, err := h.manager.GetMediaFilePath(mediaID, seasonNumber, episodeNumber)
 	if err != nil {
 		respondError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
-	rc, err := zip.OpenReader(cbzPath)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Could not open CBZ: "+err.Error())
-		return
-	}
-	defer rc.Close()
-
-	imageExts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".webp": true, ".gif": true}
 	var pages []string
-	for _, f := range rc.File {
-		if !f.FileInfo().IsDir() {
-			ext := strings.ToLower(filepath.Ext(f.Name))
-			if imageExts[ext] {
+
+	if strings.ToLower(filepath.Ext(archivePath)) == ".cbr" {
+		dir, err := extractCBRToTemp(archivePath)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "Could not extract CBR: "+err.Error())
+			return
+		}
+		images, err := listImagesInDir(dir)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "Could not list CBR pages: "+err.Error())
+			return
+		}
+		for _, img := range images {
+			rel, _ := filepath.Rel(dir, img)
+			pages = append(pages, rel)
+		}
+	} else {
+		rc, err := zip.OpenReader(archivePath)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "Could not open CBZ: "+err.Error())
+			return
+		}
+		defer rc.Close()
+
+		for _, f := range rc.File {
+			if !f.FileInfo().IsDir() && isImageFile(f.Name) {
 				pages = append(pages, f.Name)
 			}
 		}
+		sort.Strings(pages)
 	}
-	sort.Strings(pages)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"pages": pages, "count": len(pages)})
 }
 
-// ServeMangaPage extracts and serves a single image page from a CBZ chapter.
+// ServeMangaPage extracts and serves a single image page from a CBZ/CBR chapter.
 func (h *APIHandler) ServeMangaPage(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	mediaID, err := strconv.Atoi(vars["id"])
@@ -591,27 +671,41 @@ func (h *APIHandler) ServeMangaPage(w http.ResponseWriter, r *http.Request) {
 	seasonNumber, _ := strconv.Atoi(r.URL.Query().Get("season"))
 	episodeNumber, _ := strconv.Atoi(r.URL.Query().Get("episode"))
 
-	cbzPath, err := h.manager.GetMediaFilePath(mediaID, seasonNumber, episodeNumber)
+	archivePath, err := h.manager.GetMediaFilePath(mediaID, seasonNumber, episodeNumber)
 	if err != nil {
 		respondError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
-	rc, err := zip.OpenReader(cbzPath)
+	if strings.ToLower(filepath.Ext(archivePath)) == ".cbr" {
+		dir, err := extractCBRToTemp(archivePath)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "Could not extract CBR")
+			return
+		}
+		images, err := listImagesInDir(dir)
+		if err != nil || pageIndex < 0 || pageIndex >= len(images) {
+			respondError(w, http.StatusNotFound, fmt.Sprintf("Page %d out of range", pageIndex))
+			return
+		}
+		w.Header().Set("Content-Type", contentTypeForExt(images[pageIndex]))
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		http.ServeFile(w, r, images[pageIndex])
+		return
+	}
+
+	// CBZ path
+	rc, err := zip.OpenReader(archivePath)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Could not open CBZ")
 		return
 	}
 	defer rc.Close()
 
-	imageExts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".webp": true, ".gif": true}
 	var pages []*zip.File
 	for _, f := range rc.File {
-		if !f.FileInfo().IsDir() {
-			ext := strings.ToLower(filepath.Ext(f.Name))
-			if imageExts[ext] {
-				pages = append(pages, f)
-			}
+		if !f.FileInfo().IsDir() && isImageFile(f.Name) {
+			pages = append(pages, f)
 		}
 	}
 	sort.Slice(pages, func(i, j int) bool { return pages[i].Name < pages[j].Name })
@@ -629,18 +723,7 @@ func (h *APIHandler) ServeMangaPage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer fr.Close()
 
-	ext := strings.ToLower(filepath.Ext(f.Name))
-	contentType := "image/jpeg"
-	switch ext {
-	case ".png":
-		contentType = "image/png"
-	case ".webp":
-		contentType = "image/webp"
-	case ".gif":
-		contentType = "image/gif"
-	}
-
-	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Type", contentTypeForExt(f.Name))
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	io.Copy(w, fr)
 }
