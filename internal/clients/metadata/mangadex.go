@@ -258,9 +258,9 @@ func (c *MangaDexClient) fetchChaptersForLanguage(mangaID, lang string) ([]mdCha
 		if err != nil {
 			return nil, err
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
 			return nil, fmt.Errorf("MangaDex feed error: %s", resp.Status)
 		}
 
@@ -268,8 +268,10 @@ func (c *MangaDexClient) fetchChaptersForLanguage(mangaID, lang string) ([]mdCha
 			Data  []mdChapter `json:"data"`
 			Total int         `json:"total"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-			return nil, err
+		decodeErr := json.NewDecoder(resp.Body).Decode(&apiResp)
+		resp.Body.Close()
+		if decodeErr != nil {
+			return nil, decodeErr
 		}
 
 		all = append(all, apiResp.Data...)

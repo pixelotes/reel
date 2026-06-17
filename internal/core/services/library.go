@@ -208,7 +208,10 @@ func (l *LibraryService) AddMedia(mediaType models.MediaType, id string, title s
 			for _, ep := range episodes {
 				status := models.StatusPending
 				if ep.AirDate != "" {
-					airDate, _ := time.Parse("2006-01-02", ep.AirDate)
+					airDate, err := time.Parse(time.RFC3339, ep.AirDate)
+					if err != nil {
+						airDate, _ = time.Parse("2006-01-02", ep.AirDate)
+					}
 					if airDate.After(time.Now()) {
 						status = models.StatusTBA
 					}
@@ -282,17 +285,68 @@ func (l *LibraryService) CheckForNewEpisodes() {
 
 func (l *LibraryService) updateShowMetadata(media *models.Media, provider metadata.Client) {
 	l.logger.Info("Updating metadata for show:", media.Title)
-	remoteShowSlice, err := provider.SearchTVShow(media.Title)
-	if err != nil {
-		l.logger.Error("Failed to fetch remote show data for", media.Title, ":", err)
-		return
-	}
 
-	if len(remoteShowSlice) == 0 {
-		l.logger.Error("No remote show data found for", media.Title)
-		return
+	var remoteShow *metadata.TVShowResult
+
+	if media.Type == models.MediaTypeManga {
+		mangaClient, ok := provider.(metadata.MangaClient)
+		if !ok {
+			l.logger.Error("Provider does not support manga for", media.Title)
+			return
+		}
+		mangas, err := mangaClient.SearchManga(media.Title)
+		if err != nil || len(mangas) == 0 {
+			l.logger.Error("Failed to fetch manga metadata for", media.Title, ":", err)
+			return
+		}
+		manga := mangas[0]
+		langs := l.config.Manga.Languages
+		if len(langs) == 0 {
+			langs = []string{l.config.Metadata.Language}
+		}
+		chapters, err := mangaClient.GetMangaChapters(manga.ID, langs)
+		if err != nil {
+			l.logger.Error("Failed to fetch manga chapters for", media.Title, ":", err)
+			return
+		}
+		remoteShow = &metadata.TVShowResult{
+			ID:      manga.ID,
+			Title:   manga.Title,
+			Year:    manga.Year,
+			Status:  manga.Status,
+			Seasons: make(map[int][]metadata.Episode),
+		}
+		for _, ch := range chapters {
+			vol := 1
+			if ch.Volume != "" {
+				fmt.Sscanf(ch.Volume, "%d", &vol)
+				if vol == 0 {
+					vol = 1
+				}
+			}
+			var epNum int
+			fmt.Sscanf(ch.Chapter, "%d", &epNum)
+			if epNum == 0 {
+				continue
+			}
+			remoteShow.Seasons[vol] = append(remoteShow.Seasons[vol], metadata.Episode{
+				EpisodeNumber: epNum,
+				Title:         ch.Title,
+				AirDate:       ch.CreatedAt,
+			})
+		}
+	} else {
+		remoteShowSlice, err := provider.SearchTVShow(media.Title)
+		if err != nil {
+			l.logger.Error("Failed to fetch remote show data for", media.Title, ":", err)
+			return
+		}
+		if len(remoteShowSlice) == 0 {
+			l.logger.Error("No remote show data found for", media.Title)
+			return
+		}
+		remoteShow = remoteShowSlice[0]
 	}
-	remoteShow := remoteShowSlice[0]
 
 	localShow, err := l.mediaRepo.GetTVShowByMediaID(media.ID)
 	if err != nil {
@@ -331,7 +385,10 @@ func (l *LibraryService) updateShowMetadata(media *models.Media, provider metada
 				// New episode
 				status := models.StatusPending
 				if remoteEpisode.AirDate != "" {
-					airDate, _ := time.Parse("2006-01-02", remoteEpisode.AirDate)
+					airDate, err := time.Parse(time.RFC3339, remoteEpisode.AirDate)
+					if err != nil {
+						airDate, _ = time.Parse("2006-01-02", remoteEpisode.AirDate)
+					}
 					if airDate.After(time.Now()) {
 						status = models.StatusTBA
 					}
@@ -349,7 +406,10 @@ func (l *LibraryService) updateShowMetadata(media *models.Media, provider metada
 					l.mediaRepo.UpdateStatus(media.ID, models.StatusPending)
 				}
 			} else if localEpisode.Status == models.StatusTBA && remoteEpisode.AirDate != "" {
-				airDate, _ := time.Parse("2006-01-02", remoteEpisode.AirDate)
+				airDate, err := time.Parse(time.RFC3339, remoteEpisode.AirDate)
+				if err != nil {
+					airDate, _ = time.Parse("2006-01-02", remoteEpisode.AirDate)
+				}
 				downloadDelay := time.Duration(l.config.Automation.EpisodeDownloadDelayHours) * time.Hour
 				if airDate.Add(downloadDelay).Before(time.Now()) {
 					l.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, seasonNum, localEpisode.EpisodeNumber, models.StatusPending, nil, nil)
