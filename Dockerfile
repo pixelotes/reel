@@ -9,8 +9,9 @@ RUN apk add --update gcc git build-base
 # Copy all source code and assets into the builder
 COPY . .
 
-# Build a static binary
+# Build static binaries
 RUN CGO_ENABLED=0 go build -ldflags="-w -s" -o reel .
+RUN CGO_ENABLED=0 go build -ldflags="-w -s" -o magnet2torrent ./cmd/magnet2torrent/
 
 
 # --- Final Stage ---
@@ -30,8 +31,9 @@ WORKDIR /app
 RUN addgroup -g ${GUID} -S appgroup && \
     adduser -u ${PUID} -S appuser -G appgroup
 
-# Copy the application binary from the builder stage
+# Copy the application binaries from the builder stage
 COPY --from=builder /app/reel .
+COPY --from=builder /app/magnet2torrent .
 
 # Copy web, data and config dirs from builder image
 COPY --from=builder --chown=appuser:appgroup /app/web ./web
@@ -39,7 +41,7 @@ COPY --from=builder --chown=appuser:appgroup /app/data ./data
 COPY --from=builder --chown=appuser:appgroup /app/config ./config
 
 # Ensure the binary is executable and owned by the correct user
-RUN chown appuser:appgroup /app/reel && chmod +x /app/reel
+RUN chown appuser:appgroup /app/reel /app/magnet2torrent && chmod +x /app/reel /app/magnet2torrent
 
 # Switch to the non-root user
 USER appuser

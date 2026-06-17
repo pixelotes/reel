@@ -13,6 +13,8 @@ const (
 	MediaTypeMovie  MediaType = "movie"
 	MediaTypeTVShow MediaType = "tvshow"
 	MediaTypeAnime  MediaType = "anime"
+	MediaTypeEbook  MediaType = "ebook"
+	MediaTypeManga  MediaType = "manga"
 )
 
 type MediaStatus string
@@ -376,17 +378,21 @@ func (r *MediaRepository) GetTVShowByMediaID(mediaID int) (*TVShow, error) {
 		}
 
 		// Get episodes for this season
-		episodeRows, err := r.db.Query("SELECT id, episode_number, title, air_date, status FROM episodes WHERE season_id = ? ORDER BY episode_number", season.ID)
+		episodeRows, err := r.db.Query("SELECT id, episode_number, title, air_date, status, torrent_name FROM episodes WHERE season_id = ? ORDER BY episode_number", season.ID)
 		if err != nil {
 			return nil, err
 		}
 
 		for episodeRows.Next() {
 			var e Episode
+			var torrentName sql.NullString
 			e.SeasonID = season.ID
-			if err := episodeRows.Scan(&e.ID, &e.EpisodeNumber, &e.Title, &e.AirDate, &e.Status); err != nil {
+			if err := episodeRows.Scan(&e.ID, &e.EpisodeNumber, &e.Title, &e.AirDate, &e.Status, &torrentName); err != nil {
 				episodeRows.Close()
 				return nil, err
+			}
+			if torrentName.Valid {
+				e.TorrentName = &torrentName.String
 			}
 			season.Episodes = append(season.Episodes, e)
 		}
@@ -552,6 +558,35 @@ func (r *MediaRepository) GetDownloadingEpisodesForShow(tvShowID int) ([]Episode
 		episodes = append(episodes, ep)
 	}
 	return episodes, nil
+}
+
+// GetSeriesWithPendingEpisodes finds all series that contain at least one pending episode.
+func (r *MediaRepository) GetSeriesWithPendingEpisodes() ([]Media, error) {
+	query := `
+		SELECT DISTINCT m.id, m.type, m.imdb_id, m.tmdb_id, m.title, m.year, m.language, m.min_quality, m.max_quality,
+			m.status, m.torrent_hash, m.torrent_name, m.download_path, m.progress, m.added_at, m.completed_at,
+			m.overview, m.poster_url, m.rating, m.auto_download, m.tv_show_id
+		FROM media m
+		JOIN tv_shows ts ON m.tv_show_id = ts.id
+		JOIN seasons s ON ts.id = s.show_id
+		JOIN episodes e ON s.id = e.season_id
+		WHERE e.status = ?
+	`
+	rows, err := r.db.Query(query, StatusPending)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var mediaList []Media
+	for rows.Next() {
+		media, err := scanMedia(rows)
+		if err != nil {
+			return nil, err
+		}
+		mediaList = append(mediaList, *media)
+	}
+	return mediaList, nil
 }
 
 // GetSeriesWithFailedEpisodes finds all series that contain at least one failed episode.

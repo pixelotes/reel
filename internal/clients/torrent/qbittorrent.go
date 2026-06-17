@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -193,7 +193,7 @@ func (q *qBittorrentClient) AddTorrentFile(fileContent []byte, downloadPath stri
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := ioutil.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("failed to add torrent file with status: %s, body: %s", resp.Status, string(bodyBytes))
 	}
 
@@ -211,7 +211,7 @@ func (q *qBittorrentClient) AddTorrentFile(fileContent []byte, downloadPath stri
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, err := ioutil.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
@@ -276,7 +276,7 @@ func (q *qBittorrentClient) GetTorrentStatus(hash string) (TorrentStatus, error)
 		return TorrentStatus{}, fmt.Errorf("failed to get torrent properties with status: %s", resp.Status)
 	}
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return TorrentStatus{}, err
 	}
@@ -304,7 +304,7 @@ func (q *qBittorrentClient) GetTorrentStatus(hash string) (TorrentStatus, error)
 		return TorrentStatus{}, fmt.Errorf("failed to get torrent files with status: %s", resp.Status)
 	}
 
-	body, err = ioutil.ReadAll(resp.Body)
+	body, err = io.ReadAll(resp.Body)
 	if err != nil {
 		return TorrentStatus{}, err
 	}

@@ -59,6 +59,8 @@ nav:
     - Movies: media/movies.md
     - TV Shows: media/tv-shows.md
     - Anime: media/anime.md
+    - Ebooks: media/ebooks.md
+    - Manga: media/manga.md
   - Providers:
     - Indexers: providers/indexers.md
     - Torrent Clients: providers/torrent-clients.md
@@ -71,6 +73,7 @@ nav:
     - Conditions: pipeline/conditions.md
     - Recovery: pipeline/recovery.md
   - Advanced:
+    - Architecture: advanced/architecture.md
     - File Renaming: advanced/file-renaming.md
     - Automation: advanced/automation.md
     - Quality Filtering: advanced/quality-filtering.md

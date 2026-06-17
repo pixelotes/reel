@@ -64,16 +64,7 @@ func (t *TransmissionClient) AddTorrent(magnetLink string, downloadPath string) 
 		return "", err
 	}
 
-	// Extract torrent hash from response
-	if arguments, ok := response["arguments"].(map[string]interface{}); ok {
-		if torrentAdded, ok := arguments["torrent-added"].(map[string]interface{}); ok {
-			if hashString, ok := torrentAdded["hashString"].(string); ok {
-				return hashString, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("could not extract torrent hash from response")
+	return t.extractHashFromAddResponse(response)
 }
 
 func (t *TransmissionClient) AddTorrentFile(fileContent []byte, downloadPath string) (string, error) {
@@ -90,13 +81,28 @@ func (t *TransmissionClient) AddTorrentFile(fileContent []byte, downloadPath str
 		return "", err
 	}
 
-	// Extract torrent hash from response
-	if arguments, ok := response["arguments"].(map[string]interface{}); ok {
-		if torrentAdded, ok := arguments["torrent-added"].(map[string]interface{}); ok {
-			if hashString, ok := torrentAdded["hashString"].(string); ok {
-				return hashString, nil
-			}
+	return t.extractHashFromAddResponse(response)
+}
+
+// extractHashFromAddResponse handles both "torrent-added" and "torrent-duplicate" responses.
+func (t *TransmissionClient) extractHashFromAddResponse(response map[string]interface{}) (string, error) {
+	arguments, ok := response["arguments"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("could not extract torrent hash from response")
+	}
+
+	// Normal case: new torrent added
+	if torrent, ok := arguments["torrent-added"].(map[string]interface{}); ok {
+		if hash, ok := torrent["hashString"].(string); ok {
+			return hash, nil
 		}
+	}
+
+	// Duplicate case: torrent already exists in client
+	if torrent, ok := arguments["torrent-duplicate"].(map[string]interface{}); ok {
+		hash, _ := torrent["hashString"].(string)
+		name, _ := torrent["name"].(string)
+		return hash, fmt.Errorf("torrent already exists in client: %s (hash: %s)", name, hash)
 	}
 
 	return "", fmt.Errorf("could not extract torrent hash from response")

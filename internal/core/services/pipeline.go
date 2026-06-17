@@ -179,7 +179,7 @@ func (p *Pipeline) performRollback(stages []Stage, ctx *ProcessingContext, state
 	}
 
 	if rollbackCount > 0 {
-		p.logger.Info(fmt.Sprintf("Pipeline: Rollback complete (%d successful, %d errors)", rollbackCount, rollbackErrors))
+		p.logger.Warn(fmt.Sprintf("Pipeline: Rollback complete (%d successful, %d errors)", rollbackCount, rollbackErrors))
 	}
 
 	// Update state with rollback info
@@ -247,6 +247,8 @@ func (sf *StageFactory) CreateStage(name string) (Stage, error) {
 		return NewHealthCheckStage(sf.cfg, sf.logger), nil
 	case "enrich_metadata":
 		return NewMetadataEnrichmentStage(sf.cfg, sf.logger), nil
+	case "save_metadata":
+		return NewSaveMetadataStage(sf.cfg, sf.logger), nil
 	case "duplicate_check":
 		return NewDuplicateCheckStage(sf.cfg, sf.logger), nil
 	case "permission_check":
@@ -322,6 +324,7 @@ func DefaultPipelineFactory(
 		NewCreateFoldersStage(cfg, logger),
 		NewMoveFilesStage(cfg, logger),
 		NewRenameStage(cfg, logger),
+		NewSaveMetadataStage(cfg, logger),
 		NewSubtitlesStage(cfg, logger, subtitleClient),
 		NewNotifyStage(logger, notifiers),
 	}
