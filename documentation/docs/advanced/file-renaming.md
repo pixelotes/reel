@@ -63,3 +63,6 @@ If no template is configured, Reel falls back to these defaults:
 
 !!! warning
     Subtitle files (`.srt`, `.sub`, `.ass`) are **not** renamed by this stage. They are moved alongside the media file but retain their original filenames.
+
+!!! note
+    File renaming templates assume files follow standard naming conventions (e.g., `SxxExx` for TV shows). Files with nonstandard packing, custom numbering, or other unusual structures may not be correctly recognized or renamed. See the [Troubleshooting Guide](../pipeline/troubleshooting.md) for help with these scenarios.

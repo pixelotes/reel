@@ -42,8 +42,13 @@ func respondJSON(w http.ResponseWriter, status int, payload interface{}) {
 	}
 }
 
-// A helper function to respond with a JSON error
-func respondError(w http.ResponseWriter, code int, message string) {
+// respondError logs the error and responds with a JSON error.
+func (h *APIHandler) respondError(w http.ResponseWriter, code int, message string, err error) {
+	if err != nil {
+		h.logger.Error(message, ":", err)
+	} else {
+		h.logger.Error(message)
+	}
 	respondJSON(w, code, map[string]string{"error": message})
 }
 
@@ -58,12 +63,12 @@ func (h *APIHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid request")
+		h.respondError(w, http.StatusBadRequest, "Invalid request", nil)
 		return
 	}
 
 	if req.Password != h.config.App.UIPassword {
-		respondError(w, http.StatusUnauthorized, "Incorrect password")
+		h.respondError(w, http.StatusUnauthorized, "Incorrect password", nil)
 		return
 	}
 
@@ -80,7 +85,7 @@ func (h *APIHandler) GetMedia(w http.ResponseWriter, r *http.Request) {
 	media, err := h.manager.GetAllMedia()
 	if err != nil {
 		h.logger.Error("CRITICAL: Failed to fetch media from manager:", err)
-		respondError(w, http.StatusInternalServerError, "Failed to fetch media")
+		h.respondError(w, http.StatusInternalServerError, "Failed to fetch media", err)
 		return
 	}
 
@@ -112,7 +117,7 @@ func (h *APIHandler) AddMedia(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.Error("Failed to decode add media request:", err)
-		respondError(w, http.StatusBadRequest, "Invalid request body")
+		h.respondError(w, http.StatusBadRequest, "Invalid request body", nil)
 		return
 	}
 
@@ -122,7 +127,7 @@ func (h *APIHandler) AddMedia(w http.ResponseWriter, r *http.Request) {
 	// Validate required fields
 	if req.Type == "" || req.Title == "" {
 		h.logger.Error("Missing required fields - Type:", req.Type, "Title:", req.Title)
-		respondError(w, http.StatusBadRequest, "Type and Title are required")
+		h.respondError(w, http.StatusBadRequest, "Type and Title are required", nil)
 		return
 	}
 
@@ -141,11 +146,11 @@ func (h *APIHandler) AddMedia(w http.ResponseWriter, r *http.Request) {
 		// Check if it's a database constraint error
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") ||
 			strings.Contains(err.Error(), "unique constraint") {
-			respondError(w, http.StatusConflict, "Media already exists in library")
+			h.respondError(w, http.StatusConflict, "Media already exists in library", nil)
 			return
 		}
 
-		respondError(w, http.StatusBadRequest, err.Error())
+		h.respondError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 
@@ -158,12 +163,12 @@ func (h *APIHandler) DeleteMedia(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		h.respondError(w, http.StatusBadRequest, "Invalid media ID", nil)
 		return
 	}
 
 	if err := h.manager.DeleteMedia(id); err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to delete media")
+		h.respondError(w, http.StatusInternalServerError, "Failed to delete media", nil)
 		return
 	}
 
@@ -175,12 +180,12 @@ func (h *APIHandler) RetryMedia(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		h.respondError(w, http.StatusBadRequest, "Invalid media ID", nil)
 		return
 	}
 
 	if err := h.manager.RetryMedia(id); err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to retry media")
+		h.respondError(w, http.StatusInternalServerError, "Failed to retry media", nil)
 		return
 	}
 
@@ -193,14 +198,14 @@ func (h *APIHandler) SearchMetadata(w http.ResponseWriter, r *http.Request) {
 	mediaType := r.URL.Query().Get("type")
 
 	if query == "" {
-		respondError(w, http.StatusBadRequest, "Query parameter 'q' is required")
+		h.respondError(w, http.StatusBadRequest, "Query parameter 'q' is required", nil)
 		return
 	}
 
 	results, err := h.manager.SearchMetadata(query, mediaType)
 	if err != nil {
 		h.logger.Error("Metadata search failed:", err)
-		respondError(w, http.StatusInternalServerError, err.Error())
+		h.respondError(w, http.StatusInternalServerError, err.Error(), nil)
 		return
 	}
 
@@ -211,7 +216,7 @@ func (h *APIHandler) SearchMetadata(w http.ResponseWriter, r *http.Request) {
 func (h *APIHandler) GetSystemStatus(w http.ResponseWriter, r *http.Request) {
 	status, err := h.manager.GetSystemStatus()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to get system status")
+		h.respondError(w, http.StatusInternalServerError, "Failed to get system status", nil)
 		return
 	}
 	respondJSON(w, http.StatusOK, status)
@@ -221,7 +226,7 @@ func (h *APIHandler) GetSystemStatus(w http.ResponseWriter, r *http.Request) {
 func (h *APIHandler) TestIndexer(w http.ResponseWriter, r *http.Request) {
 	indexerKey := r.URL.Query().Get("indexer")
 	if indexerKey == "" {
-		respondError(w, http.StatusBadRequest, "indexer parameter is required")
+		h.respondError(w, http.StatusBadRequest, "indexer parameter is required", nil)
 		return
 	}
 
@@ -248,7 +253,7 @@ func (h *APIHandler) TestTorrent(w http.ResponseWriter, r *http.Request) {
 // Clear failed media
 func (h *APIHandler) ClearFailed(w http.ResponseWriter, r *http.Request) {
 	if err := h.manager.ClearFailedMedia(); err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to clear failed media")
+		h.respondError(w, http.StatusInternalServerError, "Failed to clear failed media", nil)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -258,13 +263,13 @@ func (h *APIHandler) ManualSearch(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		h.respondError(w, http.StatusBadRequest, "Invalid media ID", nil)
 		return
 	}
 
 	results, err := h.manager.PerformSearch(id)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		h.respondError(w, http.StatusInternalServerError, err.Error(), nil)
 		return
 	}
 
@@ -275,18 +280,18 @@ func (h *APIHandler) ManualDownload(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		h.respondError(w, http.StatusBadRequest, "Invalid media ID", nil)
 		return
 	}
 
 	var req indexers.IndexerResult
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid request body")
+		h.respondError(w, http.StatusBadRequest, "Invalid request body", nil)
 		return
 	}
 
 	if err := h.manager.StartDownload(id, req); err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		h.respondError(w, http.StatusInternalServerError, err.Error(), nil)
 		return
 	}
 
@@ -297,13 +302,13 @@ func (h *APIHandler) GetTVShowDetails(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		h.respondError(w, http.StatusBadRequest, "Invalid media ID", nil)
 		return
 	}
 
 	show, err := h.manager.GetTVShowDetails(id)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		h.respondError(w, http.StatusInternalServerError, err.Error(), nil)
 		return
 	}
 
@@ -319,7 +324,7 @@ func (h *APIHandler) EpisodeSearch(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	mediaID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		h.respondError(w, http.StatusBadRequest, "Invalid media ID", nil)
 		return
 	}
 
@@ -328,13 +333,13 @@ func (h *APIHandler) EpisodeSearch(w http.ResponseWriter, r *http.Request) {
 
 	season, err := strconv.Atoi(seasonStr)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid season number")
+		h.respondError(w, http.StatusBadRequest, "Invalid season number", nil)
 		return
 	}
 
 	episode, err := strconv.Atoi(episodeStr)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid episode number")
+		h.respondError(w, http.StatusBadRequest, "Invalid episode number", nil)
 		return
 	}
 
@@ -343,7 +348,7 @@ func (h *APIHandler) EpisodeSearch(w http.ResponseWriter, r *http.Request) {
 	results, err := h.manager.PerformEpisodeSearch(mediaID, season, episode)
 	if err != nil {
 		h.logger.Error("Episode search failed:", err)
-		respondError(w, http.StatusInternalServerError, err.Error())
+		h.respondError(w, http.StatusInternalServerError, err.Error(), nil)
 		return
 	}
 
@@ -356,7 +361,7 @@ func (h *APIHandler) EpisodeDownload(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	mediaID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		h.respondError(w, http.StatusBadRequest, "Invalid media ID", nil)
 		return
 	}
 
@@ -365,19 +370,19 @@ func (h *APIHandler) EpisodeDownload(w http.ResponseWriter, r *http.Request) {
 
 	season, err := strconv.Atoi(seasonStr)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid season number")
+		h.respondError(w, http.StatusBadRequest, "Invalid season number", nil)
 		return
 	}
 
 	episode, err := strconv.Atoi(episodeStr)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid episode number")
+		h.respondError(w, http.StatusBadRequest, "Invalid episode number", nil)
 		return
 	}
 
 	var req indexers.IndexerResult
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid request body")
+		h.respondError(w, http.StatusBadRequest, "Invalid request body", nil)
 		return
 	}
 
@@ -386,7 +391,7 @@ func (h *APIHandler) EpisodeDownload(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.manager.StartEpisodeDownload(mediaID, season, episode, req); err != nil {
 		h.logger.Error("Episode download failed:", err)
-		respondError(w, http.StatusInternalServerError, err.Error())
+		h.respondError(w, http.StatusInternalServerError, err.Error(), nil)
 		return
 	}
 
@@ -399,7 +404,7 @@ func (h *APIHandler) GetEpisodeDetails(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	mediaID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		h.respondError(w, http.StatusBadRequest, "Invalid media ID", nil)
 		return
 	}
 
@@ -408,13 +413,13 @@ func (h *APIHandler) GetEpisodeDetails(w http.ResponseWriter, r *http.Request) {
 
 	season, err := strconv.Atoi(seasonStr)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid season number")
+		h.respondError(w, http.StatusBadRequest, "Invalid season number", nil)
 		return
 	}
 
 	episode, err := strconv.Atoi(episodeStr)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid episode number")
+		h.respondError(w, http.StatusBadRequest, "Invalid episode number", nil)
 		return
 	}
 
@@ -422,12 +427,12 @@ func (h *APIHandler) GetEpisodeDetails(w http.ResponseWriter, r *http.Request) {
 	// For now, we'll just return the episode info from the TV show details
 	show, err := h.manager.GetTVShowDetails(mediaID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		h.respondError(w, http.StatusInternalServerError, err.Error(), nil)
 		return
 	}
 
 	if show == nil {
-		respondError(w, http.StatusNotFound, "TV show not found")
+		h.respondError(w, http.StatusNotFound, "TV show not found", nil)
 		return
 	}
 
@@ -443,7 +448,7 @@ func (h *APIHandler) GetEpisodeDetails(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	respondError(w, http.StatusNotFound, "Episode not found")
+	h.respondError(w, http.StatusNotFound, "Episode not found", nil)
 }
 
 // StreamVideo handles serving the video file for playback.
@@ -451,7 +456,7 @@ func (h *APIHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	mediaID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		h.respondError(w, http.StatusBadRequest, "Invalid media ID", nil)
 		return
 	}
 
@@ -461,7 +466,7 @@ func (h *APIHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 	filePath, err := h.manager.GetMediaFilePath(mediaID, seasonNumber, episodeNumber)
 	if err != nil {
 		h.logger.Error("Could not get media file path:", err)
-		respondError(w, http.StatusNotFound, err.Error())
+		h.respondError(w, http.StatusNotFound, err.Error(), nil)
 		return
 	}
 
@@ -521,14 +526,14 @@ func (h *APIHandler) StreamEbook(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	mediaID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		h.respondError(w, http.StatusBadRequest, "Invalid media ID", nil)
 		return
 	}
 
 	filePath, err := h.manager.GetMediaFilePath(mediaID, 0, 0)
 	if err != nil {
 		h.logger.Error("Could not get ebook file path:", err)
-		respondError(w, http.StatusNotFound, err.Error())
+		h.respondError(w, http.StatusNotFound, err.Error(), nil)
 		return
 	}
 
@@ -606,7 +611,7 @@ func (h *APIHandler) GetMangaPages(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	mediaID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		h.respondError(w, http.StatusBadRequest, "Invalid media ID", nil)
 		return
 	}
 	seasonNumber, _ := strconv.Atoi(r.URL.Query().Get("season"))
@@ -614,7 +619,7 @@ func (h *APIHandler) GetMangaPages(w http.ResponseWriter, r *http.Request) {
 
 	archivePath, err := h.manager.GetMediaFilePath(mediaID, seasonNumber, episodeNumber)
 	if err != nil {
-		respondError(w, http.StatusNotFound, err.Error())
+		h.respondError(w, http.StatusNotFound, err.Error(), nil)
 		return
 	}
 
@@ -623,12 +628,12 @@ func (h *APIHandler) GetMangaPages(w http.ResponseWriter, r *http.Request) {
 	if strings.ToLower(filepath.Ext(archivePath)) == ".cbr" {
 		dir, err := extractCBRToTemp(archivePath)
 		if err != nil {
-			respondError(w, http.StatusInternalServerError, "Could not extract CBR: "+err.Error())
+			h.respondError(w, http.StatusInternalServerError, "Could not extract CBR: "+err.Error(), nil)
 			return
 		}
 		images, err := listImagesInDir(dir)
 		if err != nil {
-			respondError(w, http.StatusInternalServerError, "Could not list CBR pages: "+err.Error())
+			h.respondError(w, http.StatusInternalServerError, "Could not list CBR pages: "+err.Error(), nil)
 			return
 		}
 		for _, img := range images {
@@ -638,7 +643,7 @@ func (h *APIHandler) GetMangaPages(w http.ResponseWriter, r *http.Request) {
 	} else {
 		rc, err := zip.OpenReader(archivePath)
 		if err != nil {
-			respondError(w, http.StatusInternalServerError, "Could not open CBZ: "+err.Error())
+			h.respondError(w, http.StatusInternalServerError, "Could not open CBZ: "+err.Error(), nil)
 			return
 		}
 		defer rc.Close()
@@ -660,12 +665,12 @@ func (h *APIHandler) ServeMangaPage(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	mediaID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		h.respondError(w, http.StatusBadRequest, "Invalid media ID", nil)
 		return
 	}
 	pageIndex, err := strconv.Atoi(vars["page"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid page number")
+		h.respondError(w, http.StatusBadRequest, "Invalid page number", nil)
 		return
 	}
 	seasonNumber, _ := strconv.Atoi(r.URL.Query().Get("season"))
@@ -673,19 +678,19 @@ func (h *APIHandler) ServeMangaPage(w http.ResponseWriter, r *http.Request) {
 
 	archivePath, err := h.manager.GetMediaFilePath(mediaID, seasonNumber, episodeNumber)
 	if err != nil {
-		respondError(w, http.StatusNotFound, err.Error())
+		h.respondError(w, http.StatusNotFound, err.Error(), nil)
 		return
 	}
 
 	if strings.ToLower(filepath.Ext(archivePath)) == ".cbr" {
 		dir, err := extractCBRToTemp(archivePath)
 		if err != nil {
-			respondError(w, http.StatusInternalServerError, "Could not extract CBR")
+			h.respondError(w, http.StatusInternalServerError, "Could not extract CBR", nil)
 			return
 		}
 		images, err := listImagesInDir(dir)
 		if err != nil || pageIndex < 0 || pageIndex >= len(images) {
-			respondError(w, http.StatusNotFound, fmt.Sprintf("Page %d out of range", pageIndex))
+			h.respondError(w, http.StatusNotFound, fmt.Sprintf("Page %d out of range", pageIndex), nil)
 			return
 		}
 		w.Header().Set("Content-Type", contentTypeForExt(images[pageIndex]))
@@ -697,7 +702,7 @@ func (h *APIHandler) ServeMangaPage(w http.ResponseWriter, r *http.Request) {
 	// CBZ path
 	rc, err := zip.OpenReader(archivePath)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Could not open CBZ")
+		h.respondError(w, http.StatusInternalServerError, "Could not open CBZ", nil)
 		return
 	}
 	defer rc.Close()
@@ -711,14 +716,14 @@ func (h *APIHandler) ServeMangaPage(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(pages, func(i, j int) bool { return pages[i].Name < pages[j].Name })
 
 	if pageIndex < 0 || pageIndex >= len(pages) {
-		respondError(w, http.StatusNotFound, fmt.Sprintf("Page %d out of range (total: %d)", pageIndex, len(pages)))
+		h.respondError(w, http.StatusNotFound, fmt.Sprintf("Page %d out of range (total: %d)", pageIndex, len(pages)), nil)
 		return
 	}
 
 	f := pages[pageIndex]
 	fr, err := f.Open()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Could not read page")
+		h.respondError(w, http.StatusInternalServerError, "Could not read page", nil)
 		return
 	}
 	defer fr.Close()
@@ -733,7 +738,7 @@ func (h *APIHandler) GetSubtitles(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	mediaID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		h.respondError(w, http.StatusBadRequest, "Invalid media ID", nil)
 		return
 	}
 
@@ -748,12 +753,12 @@ func (h *APIHandler) GetSubtitles(w http.ResponseWriter, r *http.Request) {
 	subtitles, err := h.manager.GetAllSubtitleFiles(mediaID, seasonNumber, episodeNumber)
 	if err != nil {
 		h.logger.Debug("No subtitle files found:", err)
-		respondError(w, http.StatusNotFound, "No subtitle files found")
+		h.respondError(w, http.StatusNotFound, "No subtitle files found", nil)
 		return
 	}
 
 	if len(subtitles) == 0 {
-		respondError(w, http.StatusNotFound, "No subtitle files found")
+		h.respondError(w, http.StatusNotFound, "No subtitle files found", nil)
 		return
 	}
 
@@ -776,7 +781,7 @@ func (h *APIHandler) GetSubtitles(w http.ResponseWriter, r *http.Request) {
 	vttContent, err := utils.ConvertSRTToVTT(selectedSubtitle.FilePath)
 	if err != nil {
 		h.logger.Error("Failed to convert SRT to VTT:", err)
-		respondError(w, http.StatusInternalServerError, "Failed to process subtitles")
+		h.respondError(w, http.StatusInternalServerError, "Failed to process subtitles", nil)
 		return
 	}
 
@@ -794,7 +799,7 @@ func (h *APIHandler) GetAvailableSubtitles(w http.ResponseWriter, r *http.Reques
 	vars := mux.Vars(r)
 	mediaID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		h.respondError(w, http.StatusBadRequest, "Invalid media ID", nil)
 		return
 	}
 
@@ -819,7 +824,7 @@ func (h *APIHandler) UpdateMediaSettings(w http.ResponseWriter, r *http.Request)
 	vars := mux.Vars(r)
 	id, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		h.respondError(w, http.StatusBadRequest, "Invalid media ID", nil)
 		return
 	}
 
@@ -830,12 +835,12 @@ func (h *APIHandler) UpdateMediaSettings(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid request body")
+		h.respondError(w, http.StatusBadRequest, "Invalid request body", nil)
 		return
 	}
 
 	if err := h.manager.UpdateMediaSettings(id, req.MinQuality, req.MaxQuality, req.AutoDownload); err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to update settings")
+		h.respondError(w, http.StatusInternalServerError, "Failed to update settings", nil)
 		return
 	}
 
@@ -846,13 +851,13 @@ func (h *APIHandler) UpdateMediaSettings(w http.ResponseWriter, r *http.Request)
 func (h *APIHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	configContent, err := h.manager.GetConfig()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to read config file")
+		h.respondError(w, http.StatusInternalServerError, "Failed to read config file", nil)
 		return
 	}
 
 	data, err := yaml.Marshal(configContent)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to marshal config")
+		h.respondError(w, http.StatusInternalServerError, "Failed to marshal config", nil)
 		return
 	}
 
@@ -864,13 +869,13 @@ func (h *APIHandler) GetAnimeSearchTerms(w http.ResponseWriter, r *http.Request)
 	vars := mux.Vars(r)
 	id, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		h.respondError(w, http.StatusBadRequest, "Invalid media ID", nil)
 		return
 	}
 
 	terms, err := h.manager.GetAnimeSearchTerms(id)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to get search terms")
+		h.respondError(w, http.StatusInternalServerError, "Failed to get search terms", nil)
 		return
 	}
 	if terms == nil {
@@ -885,7 +890,7 @@ func (h *APIHandler) AddAnimeSearchTerm(w http.ResponseWriter, r *http.Request) 
 	vars := mux.Vars(r)
 	id, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid media ID")
+		h.respondError(w, http.StatusBadRequest, "Invalid media ID", nil)
 		return
 	}
 
@@ -894,14 +899,14 @@ func (h *APIHandler) AddAnimeSearchTerm(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid request body")
+		h.respondError(w, http.StatusBadRequest, "Invalid request body", nil)
 		return
 	}
 
 	term, err := h.manager.AddAnimeSearchTerm(id, req.Term)
 	if err != nil {
 		h.logger.Error("Failed to add search term:", err)
-		respondError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to add search term: %v", err))
+		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to add search term: %v", err), nil)
 		return
 	}
 
@@ -912,12 +917,12 @@ func (h *APIHandler) DeleteAnimeSearchTerm(w http.ResponseWriter, r *http.Reques
 	vars := mux.Vars(r)
 	termID, err := strconv.Atoi(vars["term_id"])
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid term ID")
+		h.respondError(w, http.StatusBadRequest, "Invalid term ID", nil)
 		return
 	}
 
 	if err := h.manager.DeleteAnimeSearchTerm(termID); err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to delete search term")
+		h.respondError(w, http.StatusInternalServerError, "Failed to delete search term", nil)
 		return
 	}
 
@@ -927,7 +932,7 @@ func (h *APIHandler) DeleteAnimeSearchTerm(w http.ResponseWriter, r *http.Reques
 func (h *APIHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 	events, err := h.manager.GetCalendarEvents()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to get calendar events")
+		h.respondError(w, http.StatusInternalServerError, "Failed to get calendar events", nil)
 		return
 	}
 	respondJSON(w, http.StatusOK, events)
@@ -936,12 +941,12 @@ func (h *APIHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 func (h *APIHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "Could not read request body")
+		h.respondError(w, http.StatusBadRequest, "Could not read request body", nil)
 		return
 	}
 
 	if err := h.manager.SaveAndReloadConfig(string(body)); err != nil {
-		respondError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save and reload config: %v", err))
+		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save and reload config: %v", err), nil)
 		return
 	}
 

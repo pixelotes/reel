@@ -36,7 +36,8 @@ Reel automates the full lifecycle of media management:
 
 ## Quick links
 
-- [Installation](getting-started/installation.md) - Get Reel running in minutes
-- [Quick Start](getting-started/quick-start.md) - Minimal configuration to get started
-- [Configuration Reference](configuration/reference.md) - Every config option documented
-- [Examples](configuration/examples.md) - Complete configs for common setups
+[Installation](getting-started/installation.md) - Get Reel running in minutes
+[Quick Start](getting-started/quick-start.md) - Minimal configuration to get started
+[Configuration Reference](configuration/reference.md) - Every config option documented
+[Examples](configuration/examples.md) - Complete configs for common setups
+[Troubleshooting](pipeline/troubleshooting.md) - Fix common media processing issues
