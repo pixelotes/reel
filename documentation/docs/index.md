@@ -20,7 +20,6 @@ Reel automates the full lifecycle of media management:
 - **TV Shows** - Track series, auto-download new episodes
 - **Anime** - Dedicated anime support with AniList/AniDB integration
 - **Ebooks** - Search and download from Gutendex, with Google Books and Open Library metadata
-- **Manga** - Search and download from MangaDex
 
 ## Key features
 

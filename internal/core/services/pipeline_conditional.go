@@ -67,8 +67,6 @@ func (cs *ConditionalStage) evaluateCondition(ctx *ProcessingContext) bool {
 		return ctx.Media.Type == "anime"
 	case "is_ebook":
 		return ctx.Media.Type == "ebook"
-	case "is_manga":
-		return ctx.Media.Type == "manga"
 	}
 
 	// Check for file count conditions: "files > 1", "files = 1", "files < 5"

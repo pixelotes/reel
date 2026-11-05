@@ -123,7 +123,7 @@ func (ts *TorrentSelector) FilterAndScoreTorrents(media *models.Media, results [
 	}
 
 	// Step 3: Filter by quality (resolution) — skip for non-video media
-	if media.Type != models.MediaTypeEbook && media.Type != models.MediaTypeManga {
+	if media.Type != models.MediaTypeEbook {
 		results = ts.filterByQuality(results, media.MinQuality, media.MaxQuality, stats)
 	}
 

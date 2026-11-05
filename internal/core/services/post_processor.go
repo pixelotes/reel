@@ -144,8 +144,6 @@ func (pp *PostProcessor) createDestinationFolder(media *models.Media, seasonNumb
 		baseDestPath = pp.config.Anime.DestinationFolder
 	case models.MediaTypeEbook:
 		baseDestPath = pp.config.Ebooks.DestinationFolder
-	case models.MediaTypeManga:
-		baseDestPath = pp.config.Manga.DestinationFolder
 	default:
 		pp.logger.Error("Unknown media type for destination path:", media.Type)
 		return ""
@@ -175,7 +173,6 @@ func (pp *PostProcessor) identifyMediaFiles(downloadPath string, torrentFiles []
 	validExtensions := map[string]bool{
 		".mkv": true, ".mp4": true, ".avi": true, ".mov": true,
 		".srt": true, ".sub": true, ".ass": true,
-		".cbz": true, ".cbr": true,
 		".epub": true, ".pdf": true, ".mobi": true, ".azw3": true, ".fb2": true,
 	}
 
@@ -202,8 +199,6 @@ func (pp *PostProcessor) processFilesWithFallback(media *models.Media, files []s
 		moveMethods = pp.config.Anime.MoveMethod
 	case models.MediaTypeEbook:
 		moveMethods = pp.config.Ebooks.MoveMethod
-	case models.MediaTypeManga:
-		moveMethods = pp.config.Manga.MoveMethod
 	}
 
 	if len(moveMethods) == 0 {
@@ -232,36 +227,36 @@ func (pp *PostProcessor) processFilesWithFallback(media *models.Media, files []s
 				pp.logger.Info(fmt.Sprintf("Retry attempt %d/%d for file: %s", attempt+1, retries, file))
 			}
 
-		for _, method := range moveMethods {
-			newPath := filepath.Join(destination, filepath.Base(file))
-			pp.logger.Info(fmt.Sprintf("Attempting to '%s' file: %s", method, file))
+			for _, method := range moveMethods {
+				newPath := filepath.Join(destination, filepath.Base(file))
+				pp.logger.Info(fmt.Sprintf("Attempting to '%s' file: %s", method, file))
 
-			var err error
-			switch method {
-			case "hardlink":
-				err = os.Link(file, newPath)
-			case "symlink":
-				err = os.Symlink(file, newPath)
-			case "move":
-				err = os.Rename(file, newPath)
-			case "copy":
-				err = pp.copyFileAndRemoveOriginal(file, newPath)
-			default:
-				err = fmt.Errorf("unknown move_method: %s", method)
+				var err error
+				switch method {
+				case "hardlink":
+					err = os.Link(file, newPath)
+				case "symlink":
+					err = os.Symlink(file, newPath)
+				case "move":
+					err = os.Rename(file, newPath)
+				case "copy":
+					err = pp.copyFileAndRemoveOriginal(file, newPath)
+				default:
+					err = fmt.Errorf("unknown move_method: %s", method)
+				}
+
+				if err == nil {
+					pp.logger.Info(fmt.Sprintf("Successfully processed file with method: '%s'", method))
+					success = true
+					break // Success, move to the next method
+				}
+				lastErr = err
+				pp.logger.Warn(fmt.Sprintf("Method '%s' failed for file '%s': %v. Trying next method.", method, file, err))
 			}
 
-			if err == nil {
-				pp.logger.Info(fmt.Sprintf("Successfully processed file with method: '%s'", method))
-				success = true
-				break // Success, move to the next method
+			if success {
+				break // Success, move to the next file
 			}
-			lastErr = err
-			pp.logger.Warn(fmt.Sprintf("Method '%s' failed for file '%s': %v. Trying next method.", method, file, err))
-		}
-
-		if success {
-			break // Success, move to the next file
-		}
 		}
 
 		if !success {
@@ -361,8 +356,6 @@ func (pp *PostProcessor) renameFiles(media *models.Media, destination string, se
 			template = pp.config.FileRenaming.AnimeTemplate
 		case models.MediaTypeEbook:
 			template = pp.config.FileRenaming.EbookTemplate
-		case models.MediaTypeManga:
-			template = pp.config.FileRenaming.MangaTemplate
 		}
 
 		if template == "" {

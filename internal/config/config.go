@@ -20,19 +20,18 @@ type FileRenamingConfig struct {
 	SeriesTemplate string `yaml:"series_template"`
 	AnimeTemplate  string `yaml:"anime_template"`
 	EbookTemplate  string `yaml:"ebook_template"`
-	MangaTemplate  string `yaml:"manga_template"`
 }
 
 type PostProcessingConfig struct {
-	Enabled                 bool             `yaml:"enabled"`
-	ValidateFiles           bool             `yaml:"validate_files"`
-	MinFileSizeMB           int              `yaml:"min_file_size_mb"`
-	WaitForFileTimeout      int              `yaml:"wait_for_file_timeout"`       // seconds
-	RetryAttempts           int              `yaml:"retry_attempts"`
-	RetryDelay              int              `yaml:"retry_delay"`                 // seconds
-	CleanupOnFailure        bool             `yaml:"cleanup_on_failure"`
-	KeepFailedDownloadsDays int              `yaml:"keep_failed_downloads_days"`
-	Pipeline                PipelineConfig   `yaml:"pipeline"`
+	Enabled                 bool           `yaml:"enabled"`
+	ValidateFiles           bool           `yaml:"validate_files"`
+	MinFileSizeMB           int            `yaml:"min_file_size_mb"`
+	WaitForFileTimeout      int            `yaml:"wait_for_file_timeout"` // seconds
+	RetryAttempts           int            `yaml:"retry_attempts"`
+	RetryDelay              int            `yaml:"retry_delay"` // seconds
+	CleanupOnFailure        bool           `yaml:"cleanup_on_failure"`
+	KeepFailedDownloadsDays int            `yaml:"keep_failed_downloads_days"`
+	Pipeline                PipelineConfig `yaml:"pipeline"`
 }
 
 type PipelineConfig struct {
@@ -132,14 +131,6 @@ type Config struct {
 		MoveMethod        []string       `yaml:"move_method"`
 	} `yaml:"ebooks"`
 
-	Manga struct {
-		Providers         []string `yaml:"providers"`
-		DownloadFolder    string   `yaml:"download_folder"`
-		DestinationFolder string   `yaml:"destination_folder"`
-		MoveMethod        []string `yaml:"move_method"`
-		Languages         []string `yaml:"languages"` // Priority order: ["en", "es"] - tries en first, falls back to es
-	} `yaml:"manga"`
-
 	Database struct {
 		Path string `yaml:"path"`
 	} `yaml:"database"`
@@ -175,7 +166,7 @@ type Config struct {
 	RejectCommon      []string `yaml:"reject-common"`
 	ExtraTrackersList []string `yaml:"extra_trackers_list"`
 
-	FileRenaming FileRenamingConfig `yaml:"file_renaming"`
+	FileRenaming   FileRenamingConfig   `yaml:"file_renaming"`
 	PostProcessing PostProcessingConfig `yaml:"postprocessing"`
 }
 
@@ -315,12 +306,6 @@ func (c *Config) Validate() error {
 	}
 	if err := c.validateMediaType("anime", c.Anime.DownloadFolder, c.Anime.DestinationFolder, c.Anime.MoveMethod); err != nil {
 		return err
-	}
-	// Manga is optional - only validate if configured
-	if len(c.Manga.Providers) > 0 {
-		if err := c.validateMediaType("manga", c.Manga.DownloadFolder, c.Manga.DestinationFolder, c.Manga.MoveMethod); err != nil {
-			return err
-		}
 	}
 	// Ebooks are optional - only validate if configured
 	if len(c.Ebooks.Sources) > 0 || len(c.Ebooks.Providers) > 0 {

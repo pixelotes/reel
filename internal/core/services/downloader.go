@@ -39,7 +39,7 @@ func NewDownloaderService(cfg *config.Config, logger *utils.Logger, torrentClien
 
 // clientFor returns the direct download client for ebooks, torrent client for everything else.
 func (d *DownloaderService) clientFor(mediaType models.MediaType) torrent.TorrentClient {
-	if mediaType == models.MediaTypeEbook || mediaType == models.MediaTypeManga {
+	if mediaType == models.MediaTypeEbook {
 		return d.directClient
 	}
 	return d.torrentClient
@@ -163,8 +163,8 @@ func (d *DownloaderService) StartEpisodeDownload(mediaID int, seasonNumber int, 
 		return fmt.Errorf("media not found")
 	}
 
-	if media.Type != models.MediaTypeTVShow && media.Type != models.MediaTypeAnime && media.Type != models.MediaTypeManga {
-		return fmt.Errorf("media is not a TV show, anime, or manga")
+	if media.Type != models.MediaTypeTVShow && media.Type != models.MediaTypeAnime {
+		return fmt.Errorf("media is not a TV show or anime")
 	}
 
 	var downloadPath string
@@ -173,8 +173,6 @@ func (d *DownloaderService) StartEpisodeDownload(mediaID int, seasonNumber int, 
 		downloadPath = d.config.TVShows.DownloadFolder
 	case models.MediaTypeAnime:
 		downloadPath = d.config.Anime.DownloadFolder
-	case models.MediaTypeManga:
-		downloadPath = d.config.Manga.DownloadFolder
 	default:
 		downloadPath = d.config.TorrentClient.DownloadPath // Fallback
 	}
@@ -199,8 +197,8 @@ func (d *DownloaderService) StartEpisodeDownload(mediaID int, seasonNumber int, 
 	client := d.clientFor(media.Type)
 	var hash string
 
-	isMangaOrEbook := media.Type == models.MediaTypeManga || media.Type == models.MediaTypeEbook
-	if !isMangaOrEbook && d.config.App.MagnetToTorrentEnabled && strings.HasPrefix(t.DownloadURL, "magnet:") {
+	isEbook := media.Type == models.MediaTypeEbook
+	if !isEbook && d.config.App.MagnetToTorrentEnabled && strings.HasPrefix(t.DownloadURL, "magnet:") {
 		timeout := time.Duration(d.config.App.MagnetToTorrentTimeout) * time.Second
 		if timeout <= 0 {
 			timeout = 60 * time.Second // Default to 60 seconds
@@ -227,7 +225,7 @@ func (d *DownloaderService) StartEpisodeDownload(mediaID int, seasonNumber int, 
 		}
 	}
 
-	if !isMangaOrEbook {
+	if !isEbook {
 		d.addExtraTrackers(hash)
 	}
 
@@ -290,7 +288,7 @@ func (d *DownloaderService) UpdateDownloadStatus() {
 		}
 
 		// --- New Per-Episode Logic for TV Shows & Anime ---
-		if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime || media.Type == models.MediaTypeManga {
+		if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
 			if media.TVShowID == nil {
 				continue
 			}

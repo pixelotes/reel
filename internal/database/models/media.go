@@ -14,7 +14,6 @@ const (
 	MediaTypeTVShow MediaType = "tvshow"
 	MediaTypeAnime  MediaType = "anime"
 	MediaTypeEbook  MediaType = "ebook"
-	MediaTypeManga  MediaType = "manga"
 )
 
 type MediaStatus string

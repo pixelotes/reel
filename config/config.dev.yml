@@ -39,17 +39,6 @@ ebooks:
   destination_folder: "/app/data/media/ebooks"
   move_method: ["copy"]
 
-# Manga
-manga:
-  providers:
-    - mangadex
-  languages:
-    - es
-    - en
-  download_folder: "/app/data/downloads/manga"
-  destination_folder: "/app/data/media/manga"
-  move_method: ["copy"]
-
 automation:
   search_interval: "@every 30m"
   download_status_interval: "@every 10s"

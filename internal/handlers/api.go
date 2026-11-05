@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"archive/zip"
 	"bufio"
 	"encoding/json"
 	"fmt"
@@ -10,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -533,116 +531,6 @@ func (h *APIHandler) StreamEbook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.ServeFile(w, r, filePath)
-}
-
-// GetMangaPages returns the ordered list of image filenames inside a CBZ chapter.
-func (h *APIHandler) GetMangaPages(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	mediaID, err := strconv.Atoi(vars["id"])
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid media ID")
-		return
-	}
-	seasonNumber, _ := strconv.Atoi(r.URL.Query().Get("season"))
-	episodeNumber, _ := strconv.Atoi(r.URL.Query().Get("episode"))
-
-	cbzPath, err := h.manager.GetMediaFilePath(mediaID, seasonNumber, episodeNumber)
-	if err != nil {
-		respondError(w, http.StatusNotFound, err.Error())
-		return
-	}
-
-	rc, err := zip.OpenReader(cbzPath)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Could not open CBZ: "+err.Error())
-		return
-	}
-	defer rc.Close()
-
-	imageExts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".webp": true, ".gif": true}
-	var pages []string
-	for _, f := range rc.File {
-		if !f.FileInfo().IsDir() {
-			ext := strings.ToLower(filepath.Ext(f.Name))
-			if imageExts[ext] {
-				pages = append(pages, f.Name)
-			}
-		}
-	}
-	sort.Strings(pages)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"pages": pages, "count": len(pages)})
-}
-
-// ServeMangaPage extracts and serves a single image page from a CBZ chapter.
-func (h *APIHandler) ServeMangaPage(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	mediaID, err := strconv.Atoi(vars["id"])
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid media ID")
-		return
-	}
-	pageIndex, err := strconv.Atoi(vars["page"])
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid page number")
-		return
-	}
-	seasonNumber, _ := strconv.Atoi(r.URL.Query().Get("season"))
-	episodeNumber, _ := strconv.Atoi(r.URL.Query().Get("episode"))
-
-	cbzPath, err := h.manager.GetMediaFilePath(mediaID, seasonNumber, episodeNumber)
-	if err != nil {
-		respondError(w, http.StatusNotFound, err.Error())
-		return
-	}
-
-	rc, err := zip.OpenReader(cbzPath)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Could not open CBZ")
-		return
-	}
-	defer rc.Close()
-
-	imageExts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".webp": true, ".gif": true}
-	var pages []*zip.File
-	for _, f := range rc.File {
-		if !f.FileInfo().IsDir() {
-			ext := strings.ToLower(filepath.Ext(f.Name))
-			if imageExts[ext] {
-				pages = append(pages, f)
-			}
-		}
-	}
-	sort.Slice(pages, func(i, j int) bool { return pages[i].Name < pages[j].Name })
-
-	if pageIndex < 0 || pageIndex >= len(pages) {
-		respondError(w, http.StatusNotFound, fmt.Sprintf("Page %d out of range (total: %d)", pageIndex, len(pages)))
-		return
-	}
-
-	f := pages[pageIndex]
-	fr, err := f.Open()
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Could not read page")
-		return
-	}
-	defer fr.Close()
-
-	ext := strings.ToLower(filepath.Ext(f.Name))
-	contentType := "image/jpeg"
-	switch ext {
-	case ".png":
-		contentType = "image/png"
-	case ".webp":
-		contentType = "image/webp"
-	case ".gif":
-		contentType = "image/gif"
-	}
-
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Cache-Control", "public, max-age=3600")
-	io.Copy(w, fr)
 }
 
 // GetSubtitles handles finding, converting, and serving the subtitle file.

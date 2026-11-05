@@ -125,8 +125,6 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 			return metadata.NewOpenLibraryClient(metadataTimeout)
 		case "gutendex":
 			return metadata.NewGutendexClient(metadataTimeout)
-		case "mangadex":
-			return metadata.NewMangaDexClient(metadataTimeout, cfg.Metadata.Language)
 		}
 		return nil
 	}
@@ -154,12 +152,6 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 	for _, providerName := range cfg.Ebooks.Providers {
 		if client := initMetadataProvider(providerName); client != nil {
 			metadataClients[models.MediaTypeEbook] = append(metadataClients[models.MediaTypeEbook], client)
-		}
-	}
-	// Manga
-	for _, providerName := range cfg.Manga.Providers {
-		if client := initMetadataProvider(providerName); client != nil {
-			metadataClients[models.MediaTypeManga] = append(metadataClients[models.MediaTypeManga], client)
 		}
 	}
 
@@ -224,19 +216,6 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 		}
 	}
 
-	// Manga - MangaDex is both metadata and indexer, register automatically
-	if len(cfg.Manga.Providers) > 0 {
-		langs := cfg.Manga.Languages
-		if len(langs) == 0 {
-			langs = []string{cfg.Metadata.Language}
-		}
-		mangadexIndexer := indexers.NewMangaDexIndexer(searchTimeout, langs, cfg.Metadata.Language)
-		indexerClients[models.MediaTypeManga] = append(indexerClients[models.MediaTypeManga], services.IndexerClientWithMode{
-			Client: mangadexIndexer,
-			Source: config.SourceConfig{Type: "mangadex"},
-		})
-	}
-
 	// --- Initialize Torrent Client ---
 	var torrentClient torrent.TorrentClient
 	switch cfg.TorrentClient.Type {
@@ -296,7 +275,7 @@ func (m *Manager) startSearchQueueWorker() {
 		switch media.Type {
 		case models.MediaTypeMovie, models.MediaTypeEbook:
 			m.searchAndDownloadMovie(&media)
-		case models.MediaTypeTVShow, models.MediaTypeAnime, models.MediaTypeManga:
+		case models.MediaTypeTVShow, models.MediaTypeAnime:
 			m.searchAndDownloadNextEpisode(&media)
 		}
 		time.Sleep(30 * time.Second)

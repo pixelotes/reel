@@ -77,62 +77,6 @@ func (l *LibraryService) AddMedia(mediaType models.MediaType, id string, title s
 			} else {
 				l.logger.Warn("No movie metadata found")
 			}
-		case models.MediaTypeManga:
-			l.logger.Info("Processing manga metadata...")
-			if mangaClient, ok := client.(metadata.MangaClient); ok {
-				mangas, err := mangaClient.SearchManga(title)
-				if err != nil {
-					l.logger.Error("Manga metadata search failed:", err)
-				} else if len(mangas) > 0 {
-					manga := mangas[0]
-					l.logger.Info("Manga metadata found - Title:", manga.Title)
-					overview = &manga.Description
-					posterURL = &manga.CoverURL
-					if title == "" {
-						title = manga.Title
-					}
-					if year == 0 {
-						year = manga.Year
-					}
-
-					// Get chapters and build TVShow structure
-					langs := l.config.Manga.Languages
-					if len(langs) == 0 {
-						langs = []string{l.config.Metadata.Language}
-					}
-					chapters, chErr := mangaClient.GetMangaChapters(manga.ID, langs)
-					if chErr == nil && len(chapters) > 0 {
-						// Build seasons from volumes, chapters as episodes
-						tvShowData = &metadata.TVShowResult{
-							ID:      manga.ID,
-							Title:   manga.Title,
-							Year:    manga.Year,
-							Status:  manga.Status,
-							Seasons: make(map[int][]metadata.Episode),
-						}
-						for _, ch := range chapters {
-							vol := 1
-							if ch.Volume != "" {
-								fmt.Sscanf(ch.Volume, "%d", &vol)
-								if vol == 0 {
-									vol = 1
-								}
-							}
-							var epNum int
-							fmt.Sscanf(ch.Chapter, "%d", &epNum)
-							if epNum == 0 {
-								continue
-							}
-							tvShowData.Seasons[vol] = append(tvShowData.Seasons[vol], metadata.Episode{
-								EpisodeNumber: epNum,
-								Title:         ch.Title,
-								AirDate:       ch.CreatedAt,
-							})
-						}
-					}
-					l.logger.Info("Manga data processed successfully")
-				}
-			}
 		case models.MediaTypeEbook:
 			l.logger.Info("Processing ebook metadata...")
 			if bookClient, ok := client.(metadata.BookClient); ok {
@@ -180,7 +124,7 @@ func (l *LibraryService) AddMedia(mediaType models.MediaType, id string, title s
 	}
 
 	var tvShowID *int
-	if (mediaType == models.MediaTypeTVShow || mediaType == models.MediaTypeAnime || mediaType == models.MediaTypeManga) && tvShowData != nil {
+	if (mediaType == models.MediaTypeTVShow || mediaType == models.MediaTypeAnime) && tvShowData != nil {
 		l.logger.Info("Creating TV show/anime database entries...")
 		show := &models.TVShow{
 			Status:   tvShowData.Status,
@@ -271,7 +215,7 @@ func (l *LibraryService) CheckForNewEpisodes() {
 	}
 
 	for _, item := range media {
-		if item.Type == models.MediaTypeTVShow || item.Type == models.MediaTypeAnime || item.Type == models.MediaTypeManga {
+		if item.Type == models.MediaTypeTVShow || item.Type == models.MediaTypeAnime {
 			if item.Status == models.StatusMonitoring || item.Status == models.StatusPending {
 				provider := l.metadataClients[item.Type][0] // Assuming first provider
 				l.updateShowMetadata(&item, provider)
@@ -504,18 +448,6 @@ func (l *LibraryService) SearchMetadata(query string, mediaType string) ([]inter
 					results = append(results, r)
 				}
 			}
-		case string(models.MediaTypeManga):
-			if mangaClient, ok := client.(metadata.MangaClient); ok {
-				var res []*metadata.MangaResult
-				res, err = mangaClient.SearchManga(query)
-				if err == nil {
-					for _, r := range res {
-						results = append(results, r)
-					}
-				}
-			} else {
-				continue
-			}
 		case string(models.MediaTypeEbook):
 			if bookClient, ok := client.(metadata.BookClient); ok {
 				var res []*metadata.BookResult
@@ -563,8 +495,6 @@ func (l *LibraryService) GetMediaFilePath(mediaID int, seasonNumber int, episode
 		baseDestPath = l.config.Anime.DestinationFolder
 	case models.MediaTypeEbook:
 		baseDestPath = l.config.Ebooks.DestinationFolder
-	case models.MediaTypeManga:
-		baseDestPath = l.config.Manga.DestinationFolder
 	default:
 		return "", fmt.Errorf("unknown media type: %s", media.Type)
 	}
@@ -573,7 +503,7 @@ func (l *LibraryService) GetMediaFilePath(mediaID int, seasonNumber int, episode
 	mediaFolderName := fmt.Sprintf("%s (%d)", safeTitle, media.Year)
 	fullPath := filepath.Join(baseDestPath, mediaFolderName)
 
-	isSeries := media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime || media.Type == models.MediaTypeManga
+	isSeries := media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime
 	isSeasonFoldered := media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime
 	if isSeasonFoldered {
 		if seasonNumber <= 0 {
@@ -589,7 +519,6 @@ func (l *LibraryService) GetMediaFilePath(mediaID int, seasonNumber int, episode
 
 	videoExtensions := map[string]bool{".mkv": true, ".mp4": true, ".avi": true, ".mov": true}
 	ebookExtensions := map[string]bool{".epub": true, ".pdf": true, ".mobi": true, ".azw3": true, ".fb2": true}
-	mangaExtensions := map[string]bool{".cbz": true, ".cbr": true}
 
 	for _, file := range files {
 		if file.IsDir() {
@@ -600,29 +529,6 @@ func (l *LibraryService) GetMediaFilePath(mediaID int, seasonNumber int, episode
 		case models.MediaTypeEbook:
 			if ebookExtensions[ext] {
 				return filepath.Join(fullPath, file.Name()), nil
-			}
-		case models.MediaTypeManga:
-			if mangaExtensions[ext] {
-				if episodeNumber <= 0 {
-					return filepath.Join(fullPath, file.Name()), nil
-				}
-				upperName := strings.ToUpper(file.Name())
-				// Match renamed files: S01E01, S001E001, etc.
-				episodePatterns := []string{
-					fmt.Sprintf("S%02dE%02d", seasonNumber, episodeNumber),
-					fmt.Sprintf("S%03dE%03d", seasonNumber, episodeNumber),
-					fmt.Sprintf("S%dE%d", seasonNumber, episodeNumber),
-				}
-				for _, p := range episodePatterns {
-					if strings.Contains(upperName, p) {
-						return filepath.Join(fullPath, file.Name()), nil
-					}
-				}
-				// Also match "Chapter XX" format (pre-rename or custom templates)
-				chapterPattern := fmt.Sprintf("Chapter %02d", episodeNumber)
-				if strings.Contains(file.Name(), chapterPattern) {
-					return filepath.Join(fullPath, file.Name()), nil
-				}
 			}
 		default:
 			if videoExtensions[ext] {
@@ -932,7 +838,7 @@ func (l *LibraryService) ScanMissingSubtitles() {
 	l.logger.Info(fmt.Sprintf("Subtitle scan: checking %d media items for missing subtitles", len(downloaded)))
 
 	for _, media := range downloaded {
-		if media.Type == models.MediaTypeEbook || media.Type == models.MediaTypeManga {
+		if media.Type == models.MediaTypeEbook {
 			continue
 		}
 

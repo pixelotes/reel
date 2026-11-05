@@ -67,7 +67,7 @@ func (s *SearcherService) performSearch(media *models.Media, season, episode int
 			var err error
 
 			query := searchTerm
-			if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime || media.Type == models.MediaTypeManga {
+			if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
 				if searchMode == "search" && season > 0 && episode > 0 {
 					query = fmt.Sprintf("%s S%02dE%02d", searchTerm, season, episode)
 				}
@@ -134,8 +134,8 @@ func (s *SearcherService) PerformEpisodeSearch(mediaID int, seasonNumber int, ep
 		return nil, fmt.Errorf("media not found")
 	}
 
-	if media.Type != models.MediaTypeTVShow && media.Type != models.MediaTypeAnime && media.Type != models.MediaTypeManga {
-		return nil, fmt.Errorf("media is not a TV show, anime, or manga")
+	if media.Type != models.MediaTypeTVShow && media.Type != models.MediaTypeAnime {
+		return nil, fmt.Errorf("media is not a TV show or anime")
 	}
 
 	// Perform search with specific season/episode

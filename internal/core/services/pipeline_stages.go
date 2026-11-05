@@ -39,9 +39,7 @@ func (s *ValidateStage) Execute(ctx *ProcessingContext) error {
 
 	var validExtensions map[string]bool
 	if ctx.Media.Type == models.MediaTypeEbook {
-		validExtensions = map[string]bool{".epub": true, ".pdf": true, ".mobi": true, ".azw3": true, ".fb2": true, ".cbr": true, ".cbz": true}
-	} else if ctx.Media.Type == models.MediaTypeManga {
-		validExtensions = map[string]bool{".cbz": true, ".cbr": true, ".pdf": true}
+		validExtensions = map[string]bool{".epub": true, ".pdf": true, ".mobi": true, ".azw3": true, ".fb2": true}
 	} else {
 		validExtensions = map[string]bool{".mkv": true, ".mp4": true, ".avi": true, ".mov": true}
 	}
@@ -110,8 +108,6 @@ func (s *CreateFoldersStage) Execute(ctx *ProcessingContext) error {
 		baseDestPath = s.config.Anime.DestinationFolder
 	case models.MediaTypeEbook:
 		baseDestPath = s.config.Ebooks.DestinationFolder
-	case models.MediaTypeManga:
-		baseDestPath = s.config.Manga.DestinationFolder
 	default:
 		return fmt.Errorf("unknown media type: %s", ctx.Media.Type)
 	}
@@ -164,8 +160,6 @@ func (s *MoveFilesStage) Execute(ctx *ProcessingContext) error {
 		moveMethods = s.config.Anime.MoveMethod
 	case models.MediaTypeEbook:
 		moveMethods = s.config.Ebooks.MoveMethod
-	case models.MediaTypeManga:
-		moveMethods = s.config.Manga.MoveMethod
 	}
 
 	if len(moveMethods) == 0 {
@@ -353,14 +347,10 @@ func (s *RenameStage) Execute(ctx *ProcessingContext) error {
 			template = s.config.FileRenaming.AnimeTemplate
 		case models.MediaTypeEbook:
 			template = s.config.FileRenaming.EbookTemplate
-		case models.MediaTypeManga:
-			template = s.config.FileRenaming.MangaTemplate
 		}
 
 		if template == "" {
-			if ctx.Media.Type == models.MediaTypeManga {
-				newName = fmt.Sprintf("%s - Chapter %02d%s", ctx.Media.Title, ctx.EpisodeNumber, ext)
-			} else if ctx.Media.Type == models.MediaTypeEbook {
+			if ctx.Media.Type == models.MediaTypeEbook {
 				newName = fmt.Sprintf("%s (%d)%s", ctx.Media.Title, ctx.Media.Year, ext)
 			} else if ctx.Media.Type == models.MediaTypeMovie {
 				newName = fmt.Sprintf("%s (%d) [%s]%s", ctx.Media.Title, ctx.Media.Year, quality, ext)

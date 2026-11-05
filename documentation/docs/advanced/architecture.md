@@ -1,6 +1,6 @@
 # Architecture
 
-Reel is designed from the ground up to run on a **Raspberry Pi 3B with 1 GB of RAM**. Every architectural decision prioritizes low memory usage, small binary size, and minimal CPU overhead — while keeping the system flexible enough to handle movies, TV shows, anime, ebooks, and manga.
+Reel is designed from the ground up to run on a **Raspberry Pi 3B with 1 GB of RAM**. Every architectural decision prioritizes low memory usage, small binary size, and minimal CPU overhead — while keeping the system flexible enough to handle movies, TV shows, anime, and ebooks.
 
 Think of it as a personal, stripped-down Flexget that does exactly what you need and nothing more.
 

@@ -11,12 +11,6 @@
     <!-- codemirror 5.65.20 -->
     <link rel="stylesheet" href="./css/codemirror.min.css">
     <link rel="stylesheet" href="./css/material-darker.min.css">
-    <!-- manga-viewer -->
-    <link rel="stylesheet" href="./css/manga-viewer.min.css">
-    <script type="module">
-        import MangaViewer from './js/manga-viewer.min.js';
-        window.MangaViewer = MangaViewer;
-    </script>
     <!-- epub.js 0.3.93 -->
     <script src="./js/epub.min.js"></script>
     
@@ -278,7 +272,6 @@
                     <option value="tvshow">TV Shows</option>
                     <option value="anime">Anime</option>
                     <option value="ebook">Ebooks</option>
-                    <option value="manga">Manga</option>
                 </select>
                 <input type="search" id="search-filter" placeholder="Search titles...">
                 <button id="refresh-btn">🔄</button>
@@ -361,8 +354,6 @@
         </div>
     </div>
 
-    <!-- Manga viewer fullscreen container (hidden by default) -->
-    <div id="manga-viewer-container" style="display:none; position:fixed; inset:0; z-index:2000;"></div>
     <div id="epub-viewer-container" style="display:none; position:fixed; inset:0; z-index:2000; background:#fff;">
         <div id="epub-header" style="display:flex; align-items:center; justify-content:space-between; padding:8px 16px; background:#1a1a2e; color:#fff; height:48px; box-sizing:border-box;">
             <button id="epub-close-btn" style="background:none; border:none; color:#fff; font-size:20px; cursor:pointer;">✕</button>
@@ -389,7 +380,6 @@
                         <option value="tvshow">TV Show</option>
                         <option value="anime">Anime</option>
                         <option value="ebook">Ebook</option>
-                        <option value="manga">Manga</option>
                     </select>
                 </div>
     
@@ -526,8 +516,8 @@
             // --- New UI Functions ---
             function updateTVShowOptionsVisibility(typeSelector, optionsContainer) {
                 const selectedType = typeSelector.value;
-                const hideQuality = selectedType === 'ebook' || selectedType === 'manga';
-                const showEpisodes = selectedType === 'tvshow' || selectedType === 'anime' || selectedType === 'manga';
+                const hideQuality = selectedType === 'ebook';
+                const showEpisodes = selectedType === 'tvshow' || selectedType === 'anime';
                 optionsContainer.style.display = showEpisodes ? 'block' : 'none';
                 const qualityOpts = document.getElementById('modal-quality-options');
                 if (qualityOpts) qualityOpts.style.display = hideQuality ? 'none' : 'flex';
@@ -925,7 +915,7 @@ async function refreshData() {
                         language: formData.get('language'), min_quality: minQuality, max_quality: maxQuality,
                         auto_download: document.getElementById('auto-download-checkbox').checked,
                     };
-                    if (body.type === 'tvshow' || body.type === 'anime' || body.type === 'manga') {
+                    if (body.type === 'tvshow' || body.type === 'anime') {
                         body.start_season = parseInt(formData.get('start_season'));
                         body.start_episode = parseInt(formData.get('start_episode'));
                     }
@@ -965,7 +955,7 @@ async function refreshData() {
                         max_quality: maxQuality,
                         auto_download: form.querySelector('#modal-auto-download-checkbox').checked,
                     };
-                    if (body.type === 'tvshow' || body.type === 'anime' || body.type === 'manga') {
+                    if (body.type === 'tvshow' || body.type === 'anime') {
                         body.start_season = parseInt(form.querySelector('#modal-start-season-select').value);
                         body.start_episode = parseInt(form.querySelector('#modal-start-episode-select').value);
                     }
@@ -1054,7 +1044,7 @@ async function refreshData() {
                 document.getElementById(`${prefix}metadata-results`).innerHTML = '';
 
                 const currentMediaType = document.getElementById(`${prefix}media-type`).value;
-                if (currentMediaType === 'tvshow' || currentMediaType === 'anime' || currentMediaType === 'manga') {
+                if (currentMediaType === 'tvshow' || currentMediaType === 'anime') {
                     populateTVEpisodeSelectors(item.seasons, target);
                 }
             };
@@ -1133,19 +1123,14 @@ async function refreshData() {
                 }
 
                 let tvShowDetailsHtml = '';
-                if (media.type === 'tvshow' || media.type === 'anime' || media.type === 'manga') {
+                if (media.type === 'tvshow' || media.type === 'anime') {
                     try {
                         const response = await fetchWithAuth(`/api/v1/media/${mediaId}/tv-details`);
                         if (response.ok) {
                             const show = await response.json();
-                            const totalEpisodes = show.seasons ? show.seasons.reduce((sum, s) => sum + (s.episodes ? s.episodes.length : 0), 0) : 0;
-                            if (media.type === 'manga' && totalEpisodes === 0) {
-                                tvShowDetailsHtml = `<h4>Chapters</h4><p style="color: var(--warning-color, #e2a308); margin: 1rem 0;">No chapters found in your configured language. The manga may only be available in other languages on MangaDex.</p>`;
-                            } else {
-                                tvShowDetailsHtml = `<h4>${media.type === 'manga' ? 'Chapters' : 'Seasons'}</h4><div style="max-height: 250px; overflow-y: auto; border: 1px solid var(--border-color); padding: 1rem; border-radius: 4px;">
-                                ${show.seasons.map(season => `<details class="season-details" data-season-number="${season.season_number}"><summary>${media.type === 'manga' ? 'Volume' : 'Season'} ${season.season_number}</summary><div class="episode-list">
-                                ${season.episodes.map(ep => `<div class="episode-item" data-season-number="${season.season_number}" data-episode-number="${ep.episode_number}"><span>${ep.episode_number}. ${ep.title} <em style="color:#aaa; font-size: 0.8rem;">(${ep.air_date})</em>${ep.torrent_name ? `<br><small style="color:#888; font-size: 0.7rem;" title="${ep.torrent_name}">📦 ${ep.torrent_name}</small>` : ''}</span><span class="media-status status-${ep.status}">${ep.status}</span><button class="secondary" onclick="manualEpisodeSearch(${media.id}, ${season.season_number}, ${ep.episode_number})">🔍</button>${media.type === 'manga' ? `<button class="secondary" ${ep.status === 'downloaded' ? '' : 'disabled style="opacity: 0.4;"'} onclick="openMangaViewer(${media.id}, ${season.season_number}, ${ep.episode_number}, '${ep.title.replace(/'/g,"\\'")}')">📖</button>` : `<button class="secondary" ${ep.status === 'downloaded' ? '' : 'disabled style="opacity: 0.4;"'} onclick="playVideo(${media.id}, ${season.season_number}, ${ep.episode_number})">▶️</button>`}</div>`).join('')}</div></details>`).join('')}</div>`;
-                            }
+                            tvShowDetailsHtml = `<h4>Seasons</h4><div style="max-height: 250px; overflow-y: auto; border: 1px solid var(--border-color); padding: 1rem; border-radius: 4px;">
+                            ${show.seasons.map(season => `<details class="season-details" data-season-number="${season.season_number}"><summary>Season ${season.season_number}</summary><div class="episode-list">
+                            ${season.episodes.map(ep => `<div class="episode-item" data-season-number="${season.season_number}" data-episode-number="${ep.episode_number}"><span>${ep.episode_number}. ${ep.title} <em style="color:#aaa; font-size: 0.8rem;">(${ep.air_date})</em>${ep.torrent_name ? `<br><small style="color:#888; font-size: 0.7rem;" title="${ep.torrent_name}">📦 ${ep.torrent_name}</small>` : ''}</span><span class="media-status status-${ep.status}">${ep.status}</span><button class="secondary" onclick="manualEpisodeSearch(${media.id}, ${season.season_number}, ${ep.episode_number})">🔍</button><button class="secondary" ${ep.status === 'downloaded' ? '' : 'disabled style="opacity: 0.4;"'} onclick="playVideo(${media.id}, ${season.season_number}, ${ep.episode_number})">▶️</button></div>`).join('')}</div></details>`).join('')}</div>`;
                         }
                     } catch (e) { tvShowDetailsHtml = '<p style="color:var(--error-color)">Could not load season details.</p>'; }
                 }
@@ -1173,7 +1158,6 @@ async function refreshData() {
                     ${animeSearchTermsHtml}
                     <div style="display: flex; gap: 1rem; margin-top: 2rem; border-top: 1px solid var(--border-color); padding-top: 1rem;">
                         ${(media.type === 'movie' || media.type === 'ebook') && media.status !== 'downloading' && media.status !== 'downloaded' ? `<button onclick="manualMovieSearch(${media.id})">🔍 Manual Search</button>` : ''}
-                        ${media.type === 'manga' && media.status !== 'downloading' && media.status !== 'downloaded' ? `<button onclick="retryMedia(${media.id})">🔍 Search Chapters</button>` : ''}
                         ${media.status === 'failed' || media.status === 'pending' ? `<button onclick="retryMedia(${media.id})">🔄 Retry</button>` : ''}
                         <button onclick="showMediaSettingsModal(${media.id})">⚙️ Config</button>
                         <button onclick="deleteMedia(${media.id})" class="danger">🗑️ Delete</button>
@@ -1196,71 +1180,6 @@ async function refreshData() {
                 document.getElementById('settings-modal').style.display = 'flex';
             };
             
-            function closeMangaViewer() {
-                const container = document.getElementById('manga-viewer-container');
-                if (container.style.display === 'none') return;
-                container.style.display = 'none';
-                container.innerHTML = '';
-                document.removeEventListener('keydown', closeMangaViewer._handler);
-                window.removeEventListener('popstate', closeMangaViewer._popHandler);
-            }
-
-            window.openMangaViewer = async function(mediaId, seasonNumber, episodeNumber, title) {
-                if (!window.MangaViewer) {
-                    showToast('Manga viewer not loaded yet, please try again', 'error');
-                    return;
-                }
-
-                const container = document.getElementById('manga-viewer-container');
-                container.innerHTML = '';
-                container.style.display = 'block';
-
-                let pagesResp;
-                try {
-                    pagesResp = await fetchWithAuth(`/api/v1/stream/manga/${mediaId}/pages?season=${seasonNumber}&episode=${episodeNumber}`);
-                } catch (e) {
-                    container.style.display = 'none';
-                    showToast('Could not load chapter pages: ' + e.message, 'error');
-                    return;
-                }
-
-                const { count } = await pagesResp.json();
-                const pages = Array.from({ length: count }, (_, i) =>
-                    `/api/v1/stream/manga/${mediaId}/page/${i}?season=${seasonNumber}&episode=${episodeNumber}`
-                );
-
-                const innerDiv = document.createElement('div');
-                innerDiv.id = 'mv-inner';
-                innerDiv.style.cssText = 'position:absolute;inset:0;';
-                container.appendChild(innerDiv);
-
-                new window.MangaViewer({
-                    container: '#mv-inner',
-                    pages,
-                    title,
-                    direction: 'rtl',
-                    showHeader: true,
-                    showFooter: true,
-                    storageKey: `manga_${mediaId}_s${seasonNumber}e${episodeNumber}`,
-                    backUrl: '#close-manga',
-                });
-
-                // Intercept the native back button click to close the viewer
-                container.addEventListener('click', (e) => {
-                    const link = e.target.closest('a.mv-header-btn');
-                    if (link) { e.preventDefault(); closeMangaViewer(); }
-                });
-
-                // Escape key to close
-                closeMangaViewer._handler = (e) => { if (e.key === 'Escape') closeMangaViewer(); };
-                document.addEventListener('keydown', closeMangaViewer._handler);
-
-                // Browser back button: push a state so back closes the viewer instead of navigating away
-                history.pushState({ mangaViewer: true }, '');
-                closeMangaViewer._popHandler = () => closeMangaViewer();
-                window.addEventListener('popstate', closeMangaViewer._popHandler);
-            };
-
             // --- EPUB Viewer ---
             let epubInstance = null;
             let epubRendition = null;
