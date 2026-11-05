@@ -196,10 +196,19 @@ func (t *TransmissionClient) GetTorrentStatus(hash string) (TorrentStatus, error
 }
 
 func (t *TransmissionClient) RemoveTorrent(hash string) error {
+	return t.remove(hash, true)
+}
+
+// RemoveTorrentKeepData removes the torrent from the client but leaves files on disk.
+func (t *TransmissionClient) RemoveTorrentKeepData(hash string) error {
+	return t.remove(hash, false)
+}
+
+func (t *TransmissionClient) remove(hash string, deleteData bool) error {
 	method := "torrent-remove"
 	args := map[string]interface{}{
 		"ids":               []string{hash},
-		"delete-local-data": true,
+		"delete-local-data": deleteData,
 	}
 
 	_, err := t.sendRequest(method, args)

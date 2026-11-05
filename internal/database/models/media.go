@@ -377,21 +377,24 @@ func (r *MediaRepository) GetTVShowByMediaID(mediaID int) (*TVShow, error) {
 		}
 
 		// Get episodes for this season
-		episodeRows, err := r.db.Query("SELECT id, episode_number, title, air_date, status, torrent_name FROM episodes WHERE season_id = ? ORDER BY episode_number", season.ID)
+		episodeRows, err := r.db.Query("SELECT id, episode_number, title, air_date, status, torrent_name, torrent_hash FROM episodes WHERE season_id = ? ORDER BY episode_number", season.ID)
 		if err != nil {
 			return nil, err
 		}
 
 		for episodeRows.Next() {
 			var e Episode
-			var torrentName sql.NullString
+			var torrentName, torrentHash sql.NullString
 			e.SeasonID = season.ID
-			if err := episodeRows.Scan(&e.ID, &e.EpisodeNumber, &e.Title, &e.AirDate, &e.Status, &torrentName); err != nil {
+			if err := episodeRows.Scan(&e.ID, &e.EpisodeNumber, &e.Title, &e.AirDate, &e.Status, &torrentName, &torrentHash); err != nil {
 				episodeRows.Close()
 				return nil, err
 			}
 			if torrentName.Valid {
 				e.TorrentName = &torrentName.String
+			}
+			if torrentHash.Valid {
+				e.TorrentHash = &torrentHash.String
 			}
 			season.Episodes = append(season.Episodes, e)
 		}

@@ -327,12 +327,21 @@ func (s *RenameStage) Execute(ctx *ProcessingContext) error {
 	}
 
 	renamedFiles := make([]string, 0, len(ctx.ProcessedFiles))
+	mainVideo := largestVideo(ctx.ProcessedFiles)
 
 	for _, oldPath := range ctx.ProcessedFiles {
 		ext := filepath.Ext(oldPath)
 
 		// Skip subtitle files, they're handled by subtitle stage
 		if ext == ".srt" || ext == ".sub" || ext == ".ass" {
+			continue
+		}
+
+		// With several videos (samples, extras) only the main one gets the target
+		// name; the rest are left untouched so they cannot collide on rename.
+		if isVideoExt(ext) && oldPath != mainVideo {
+			s.logger.Info("Rename: leaving extra video untouched:", filepath.Base(oldPath))
+			renamedFiles = append(renamedFiles, oldPath)
 			continue
 		}
 
@@ -396,6 +405,33 @@ func (s *RenameStage) Execute(ctx *ProcessingContext) error {
 	// Update ProcessedFiles with new names
 	ctx.ProcessedFiles = renamedFiles
 	return nil
+}
+
+func isVideoExt(ext string) bool {
+	switch strings.ToLower(ext) {
+	case ".mkv", ".mp4", ".avi", ".mov":
+		return true
+	}
+	return false
+}
+
+// largestVideo returns the biggest video file in files ("" if there is none).
+func largestVideo(files []string) string {
+	var best string
+	var bestSize int64 = -1
+	for _, f := range files {
+		if !isVideoExt(filepath.Ext(f)) {
+			continue
+		}
+		var size int64
+		if st, err := os.Stat(f); err == nil {
+			size = st.Size()
+		}
+		if size > bestSize {
+			best, bestSize = f, size
+		}
+	}
+	return best
 }
 
 func (s *RenameStage) Rollback(ctx *ProcessingContext) error {

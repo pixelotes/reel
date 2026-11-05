@@ -47,6 +47,56 @@ func (d *DownloaderService) clientFor(mediaType models.MediaType) torrent.Torren
 	return d.torrentClient
 }
 
+// RemoveMediaFromClient removes the media's torrent(s) (and, for TV/anime, every
+// episode torrent) from the download client without deleting downloaded data.
+// Failures are logged and never returned, so they cannot block deleting the media.
+func (d *DownloaderService) RemoveMediaFromClient(media *models.Media) {
+	if media == nil {
+		return
+	}
+	client := d.clientFor(media.Type)
+	if client == nil {
+		return
+	}
+
+	seen := make(map[string]bool)
+	var hashes []string
+	add := func(h *string) {
+		if h != nil && *h != "" && !seen[*h] {
+			seen[*h] = true
+			hashes = append(hashes, *h)
+		}
+	}
+	add(media.TorrentHash)
+
+	if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+		show, err := d.mediaRepo.GetTVShowByMediaID(media.ID)
+		if err != nil {
+			d.logger.Warn("Could not load episodes to remove torrents for", media.Title, ":", err)
+		} else if show != nil {
+			for _, s := range show.Seasons {
+				for _, e := range s.Episodes {
+					add(e.TorrentHash)
+				}
+			}
+		}
+	}
+
+	for _, h := range hashes {
+		var err error
+		if kd, ok := client.(torrent.KeepDataRemover); ok {
+			err = kd.RemoveTorrentKeepData(h)
+		} else {
+			err = client.RemoveTorrent(h)
+		}
+		if err != nil {
+			d.logger.Warn("Failed to remove torrent", h, "from client for", media.Title, ":", err)
+		} else {
+			d.logger.Info("Removed torrent", h, "from client for deleted media:", media.Title)
+		}
+	}
+}
+
 func (d *DownloaderService) checkDiskSpace(downloadPath string, size int64, mediaID int, title string) error {
 	const securityBuffer int64 = 500 * 1024 * 1024 // 500MB
 	requiredSpace := uint64(size + securityBuffer)
@@ -286,13 +336,17 @@ func (d *DownloaderService) UpdateDownloadStatus() {
 			if status.IsCompleted {
 				now := time.Now()
 				// Mark as downloaded BEFORE launching post-processing to prevent duplicate runs
-				d.mediaRepo.UpdateProgress(media.ID, models.StatusDownloaded, 1.0, &now)
-				go func() {
+				if err := d.mediaRepo.UpdateProgress(media.ID, models.StatusDownloaded, 1.0, &now); err != nil {
+					// Without the status change the next tick would trigger processing again.
+					d.logger.Error("Failed to mark", media.Title, "as downloaded, skipping post-processing:", err)
+					continue
+				}
+				go func(media models.Media) {
 					if err := d.postProcessor.ProcessDownload(media, status, 0, 0, status.DownloadDir); err != nil {
 						d.logger.Error("Post-processing failed for", media.Title, ":", err)
 						d.mediaRepo.UpdateStatus(media.ID, models.StatusFailed)
 					}
-				}()
+				}(media)
 			} else {
 				d.mediaRepo.UpdateProgress(media.ID, models.StatusDownloading, status.Progress, nil)
 			}
@@ -341,7 +395,10 @@ func (d *DownloaderService) UpdateDownloadStatus() {
 				if status.IsCompleted {
 					d.logger.Info("Episode download completed:", media.Title, fmt.Sprintf("S%02dE%02d", seasonMap[episode.SeasonID], episode.EpisodeNumber))
 					// Mark as downloaded BEFORE launching post-processing to prevent duplicate runs
-					d.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, seasonMap[episode.SeasonID], episode.EpisodeNumber, models.StatusDownloaded, nil, nil)
+					if err := d.mediaRepo.UpdateEpisodeDownloadInfo(media.ID, seasonMap[episode.SeasonID], episode.EpisodeNumber, models.StatusDownloaded, nil, nil); err != nil {
+						d.logger.Error("Failed to mark episode as downloaded, skipping post-processing:", err)
+						continue
+					}
 					go func(m models.Media, s torrent.TorrentStatus, sn, en int) {
 						if err := d.postProcessor.ProcessDownload(m, s, sn, en, s.DownloadDir); err != nil {
 							d.logger.Error(fmt.Sprintf("Post-processing failed for %s S%02dE%02d: %v", m.Title, sn, en, err))
