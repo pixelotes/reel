@@ -1,5 +1,5 @@
 # --- Builder Stage ---
-FROM golang:1.25-alpine AS builder
+FROM golang:1.27-alpine AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -14,7 +14,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-w -s" -o reel .
 
 
 # --- Final Stage ---
-FROM alpine:latest
+FROM alpine:3.24
 
 # Arguments for user and group IDs, passed from docker-compose
 ARG PUID=1000
