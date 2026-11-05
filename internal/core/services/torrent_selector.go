@@ -297,10 +297,33 @@ func (ts *TorrentSelector) filterByEpisodeNumber(results []indexers.IndexerResul
 	return filtered
 }
 
+// qualityRankBounds maps min/max quality strings to inclusive rank bounds.
+// An empty (or unrecognised) bound is unrestricted: no min accepts everything
+// from unknown (rank -1) upwards, no max accepts everything up to the highest.
+func qualityRankBounds(minQuality, maxQuality string) (int, int) {
+	minRank, maxRank := -1, maxResolutionRank()
+	if r, ok := RESOLUTION_RANK[minQuality]; ok {
+		minRank = r
+	}
+	if r, ok := RESOLUTION_RANK[maxQuality]; ok {
+		maxRank = r
+	}
+	return minRank, maxRank
+}
+
+func maxResolutionRank() int {
+	m := 0
+	for _, r := range RESOLUTION_RANK {
+		if r > m {
+			m = r
+		}
+	}
+	return m
+}
+
 // filterByQuality filters torrents by resolution quality
 func (ts *TorrentSelector) filterByQuality(results []indexers.IndexerResult, minQuality, maxQuality string, stats *FilterStats) []indexers.IndexerResult {
-	minRank := RESOLUTION_RANK[minQuality]
-	maxRank := RESOLUTION_RANK[maxQuality]
+	minRank, maxRank := qualityRankBounds(minQuality, maxQuality)
 	filtered := make([]indexers.IndexerResult, 0, len(results))
 
 	for _, r := range results {

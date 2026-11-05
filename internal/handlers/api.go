@@ -457,8 +457,21 @@ func (h *APIHandler) GetEpisodeDetails(w http.ResponseWriter, r *http.Request) {
 	respondError(w, http.StatusNotFound, "Episode not found")
 }
 
+// clearWriteDeadline removes the server-wide WriteTimeout for this response so
+// long-lived streams (playback, range requests) are not cut mid-body.
+func (h *APIHandler) clearWriteDeadline(w http.ResponseWriter) {
+	clearWriteDeadline(w, h.logger)
+}
+
+func clearWriteDeadline(w http.ResponseWriter, logger *utils.Logger) {
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil && logger != nil {
+		logger.Warn("Could not clear write deadline for stream:", err)
+	}
+}
+
 // StreamVideo handles serving the video file for playback.
 func (h *APIHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
+	h.clearWriteDeadline(w)
 	vars := mux.Vars(r)
 	mediaID, err := strconv.Atoi(vars["id"])
 	if err != nil {
@@ -529,6 +542,7 @@ func (h *APIHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 
 // StreamEbook serves an ebook file (EPUB, PDF, etc.) for the given media ID.
 func (h *APIHandler) StreamEbook(w http.ResponseWriter, r *http.Request) {
+	h.clearWriteDeadline(w)
 	vars := mux.Vars(r)
 	mediaID, err := strconv.Atoi(vars["id"])
 	if err != nil {
@@ -548,6 +562,7 @@ func (h *APIHandler) StreamEbook(w http.ResponseWriter, r *http.Request) {
 
 // GetSubtitles handles finding, converting, and serving the subtitle file.
 func (h *APIHandler) GetSubtitles(w http.ResponseWriter, r *http.Request) {
+	h.clearWriteDeadline(w)
 	vars := mux.Vars(r)
 	mediaID, err := strconv.Atoi(vars["id"])
 	if err != nil {

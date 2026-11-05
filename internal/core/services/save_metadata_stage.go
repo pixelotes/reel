@@ -128,6 +128,11 @@ type nfoID struct {
 }
 
 func (s *SaveMetadataStage) generateNFO(ctx *ProcessingContext) {
+	// Nothing reads Kodi NFOs for ebooks.
+	if ctx.Media.Type == models.MediaTypeEbook {
+		return
+	}
+
 	// For episodes, generate show-level NFO in parent dir; skip if already exists
 	nfoDir := ctx.DestinationDir
 	nfoName := "movie.nfo"
