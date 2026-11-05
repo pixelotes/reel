@@ -62,7 +62,7 @@ func (g *GutendexIndexer) search(query string) ([]IndexerResult, error) {
 	if g.language != "" {
 		params.Set("languages", g.language)
 	}
-	reqURL := fmt.Sprintf("%s/books?%s", g.baseURL, params.Encode())
+	reqURL := fmt.Sprintf("%s/books/?%s", g.baseURL, params.Encode())
 
 	resp, err := g.httpClient.Get(reqURL)
 	if err != nil {
@@ -122,7 +122,7 @@ func (g *GutendexIndexer) search(query string) ([]IndexerResult, error) {
 }
 
 func (g *GutendexIndexer) HealthCheck() (bool, error) {
-	resp, err := g.httpClient.Get(g.baseURL + "/books?search=test")
+	resp, err := g.httpClient.Get(g.baseURL + "/books/?search=test")
 	if err != nil {
 		return false, err
 	}

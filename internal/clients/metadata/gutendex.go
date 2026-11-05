@@ -46,7 +46,7 @@ func (c *GutendexClient) SearchBook(title string, author string) ([]*BookResult,
 	}
 	params.Set("search", query)
 
-	reqURL := fmt.Sprintf("%s/books?%s", c.baseURL, params.Encode())
+	reqURL := fmt.Sprintf("%s/books/?%s", c.baseURL, params.Encode())
 
 	resp, err := c.httpClient.Get(reqURL)
 	if err != nil {

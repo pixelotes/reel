@@ -99,7 +99,7 @@ func newEmptyServer(t *testing.T) *httptest.Server {
 func newFakeGutendexServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/books", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/books/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{
 			"count": 1,
