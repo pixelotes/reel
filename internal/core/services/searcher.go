@@ -18,15 +18,31 @@ type SearcherService struct {
 	torrentSelector *TorrentSelector
 	mediaRepo       *models.MediaRepository
 	logger          *utils.Logger
+	// searchBudget caps a whole search (all terms, all indexers). When it runs
+	// out, the results already collected are returned instead of nothing.
+	searchBudget time.Duration
 }
 
-func NewSearcherService(clients map[models.MediaType][]IndexerClientWithMode, ts *TorrentSelector, repo *models.MediaRepository, logger *utils.Logger) *SearcherService {
+// termDelay spaces consecutive search terms (anime alternate titles) so
+// indexers aren't hammered. It is skipped after the last term.
+const termDelay = 5 * time.Second
+
+func NewSearcherService(clients map[models.MediaType][]IndexerClientWithMode, ts *TorrentSelector, repo *models.MediaRepository, logger *utils.Logger, searchBudget time.Duration) *SearcherService {
+	if searchBudget <= 0 {
+		searchBudget = 30 * time.Second
+	}
 	return &SearcherService{
 		indexerClients:  clients,
 		torrentSelector: ts,
 		mediaRepo:       repo,
 		logger:          logger,
+		searchBudget:    searchBudget,
 	}
+}
+
+// SearchBudget is how long a search may take before partial results are returned.
+func (s *SearcherService) SearchBudget() time.Duration {
+	return s.searchBudget
 }
 
 // getSearchTerms returns the media title plus any additional anime search terms.
@@ -58,48 +74,102 @@ func (s *SearcherService) performSearch(media *models.Media, season, episode int
 		tmdbIDStr = strconv.Itoa(*media.TMDBId)
 	}
 
-	for _, searchTerm := range searchTerms {
-		for _, clientWithMode := range clients {
-			client := clientWithMode.Client
-			searchMode := clientWithMode.Source.SearchMode
+	deadline := time.Now().Add(s.searchBudget)
+	timedOut := false
 
-			var results []indexers.IndexerResult
-			var err error
-
-			query := searchTerm
-			if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
-				if searchMode == "search" && season > 0 && episode > 0 {
-					query = fmt.Sprintf("%s S%02dE%02d", searchTerm, season, episode)
-				}
-				results, err = client.SearchTVShows(query, season, episode, searchMode)
-
-				// Fallback for "search" mode if no results are found
-				if len(results) == 0 && searchMode == "search" && season > 0 && episode > 0 {
-					query = fmt.Sprintf("%s %dx%02d", searchTerm, season, episode)
-					var fallbackResults []indexers.IndexerResult
-					fallbackResults, err = client.SearchTVShows(query, season, episode, searchMode)
-					if err == nil {
-						results = append(results, fallbackResults...)
-					}
-				}
-			} else { // Movie or Ebook
-				if media.Type == models.MediaTypeMovie && media.Year > 0 {
-					query = fmt.Sprintf("%s %d", searchTerm, media.Year)
-				}
-				results, err = client.SearchMovies(query, tmdbIDStr, searchMode)
-			}
-
-			if err != nil {
-				s.logger.Error("Search failed for indexer:", err)
-				continue
-			}
-			allResults = append(allResults, results...)
+	for i, searchTerm := range searchTerms {
+		results, pending := s.searchTerm(media, clients, searchTerm, tmdbIDStr, season, episode, deadline)
+		allResults = append(allResults, results...)
+		if pending > 0 {
+			timedOut = true
+			s.logger.Warn(fmt.Sprintf("Search for %q ran out of time (%s): %d indexer(s) still pending, returning %d result(s) collected so far",
+				searchTerm, s.searchBudget, pending, len(allResults)))
+			break
 		}
-		time.Sleep(5 * time.Second) // 5-second delay between search terms
+		if i < len(searchTerms)-1 {
+			if time.Until(deadline) <= termDelay {
+				timedOut = true
+				s.logger.Warn(fmt.Sprintf("Search time budget (%s) exhausted after %d of %d search terms", s.searchBudget, i+1, len(searchTerms)))
+				break
+			}
+			time.Sleep(termDelay)
+		}
 	}
 
-	s.logger.Info(fmt.Sprintf("Found %d total results for %s", len(allResults), media.Title))
+	if timedOut {
+		s.logger.Info(fmt.Sprintf("Found %d total results for %s (partial, search timed out)", len(allResults), media.Title))
+	} else {
+		s.logger.Info(fmt.Sprintf("Found %d total results for %s", len(allResults), media.Title))
+	}
 	return allResults, nil
+}
+
+// searchTerm queries every indexer for one term concurrently and returns what
+// arrives before deadline, plus how many indexers had not answered by then.
+// Indexers that answer late are abandoned; their results are discarded.
+func (s *SearcherService) searchTerm(media *models.Media, clients []IndexerClientWithMode, searchTerm, tmdbIDStr string, season, episode int, deadline time.Time) ([]indexers.IndexerResult, int) {
+	type answer struct {
+		results []indexers.IndexerResult
+		err     error
+	}
+	// Buffered so goroutines that finish after the deadline never block.
+	answers := make(chan answer, len(clients))
+
+	for _, clientWithMode := range clients {
+		go func(cwm IndexerClientWithMode) {
+			results, err := s.queryIndexer(media, cwm, searchTerm, tmdbIDStr, season, episode)
+			answers <- answer{results, err}
+		}(clientWithMode)
+	}
+
+	var collected []indexers.IndexerResult
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+
+	for received := 0; received < len(clients); received++ {
+		select {
+		case a := <-answers:
+			if a.err != nil {
+				s.logger.Error("Search failed for indexer:", a.err)
+				continue
+			}
+			collected = append(collected, a.results...)
+		case <-timer.C:
+			return collected, len(clients) - received
+		}
+	}
+	return collected, 0
+}
+
+// queryIndexer runs one indexer's search for a term, including the TV
+// "NxEE" fallback.
+func (s *SearcherService) queryIndexer(media *models.Media, clientWithMode IndexerClientWithMode, searchTerm, tmdbIDStr string, season, episode int) ([]indexers.IndexerResult, error) {
+	client := clientWithMode.Client
+	searchMode := clientWithMode.Source.SearchMode
+
+	query := searchTerm
+	if media.Type == models.MediaTypeTVShow || media.Type == models.MediaTypeAnime {
+		if searchMode == "search" && season > 0 && episode > 0 {
+			query = fmt.Sprintf("%s S%02dE%02d", searchTerm, season, episode)
+		}
+		results, err := client.SearchTVShows(query, season, episode, searchMode)
+
+		// Fallback for "search" mode if no results are found
+		if len(results) == 0 && searchMode == "search" && season > 0 && episode > 0 {
+			query = fmt.Sprintf("%s %dx%02d", searchTerm, season, episode)
+			fallbackResults, fbErr := client.SearchTVShows(query, season, episode, searchMode)
+			if fbErr == nil {
+				return append(results, fallbackResults...), nil
+			}
+		}
+		return results, err
+	}
+
+	// Movie or Ebook
+	if media.Type == models.MediaTypeMovie && media.Year > 0 {
+		query = fmt.Sprintf("%s %d", searchTerm, media.Year)
+	}
+	return client.SearchMovies(query, tmdbIDStr, searchMode)
 }
 
 func (s *SearcherService) PerformSearch(id int) ([]indexers.IndexerResult, error) {

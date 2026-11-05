@@ -252,6 +252,17 @@ func (h *APIHandler) ClearFailed(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// extendForSearch keeps this response writable for as long as a search may
+// take. The server's WriteTimeout (15s) is far shorter than search_timeout, so
+// without this a slow indexer made the server drop the connection even though
+// the search finished and had results.
+func (h *APIHandler) extendForSearch(w http.ResponseWriter) {
+	deadline := time.Now().Add(h.manager.SearchBudget() + 15*time.Second)
+	if err := http.NewResponseController(w).SetWriteDeadline(deadline); err != nil {
+		h.logger.Warn("Could not extend write deadline for search:", err)
+	}
+}
+
 func (h *APIHandler) ManualSearch(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id, err := strconv.Atoi(vars["id"])
@@ -260,6 +271,7 @@ func (h *APIHandler) ManualSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.extendForSearch(w)
 	results, err := h.manager.PerformSearch(id)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
@@ -338,6 +350,7 @@ func (h *APIHandler) EpisodeSearch(w http.ResponseWriter, r *http.Request) {
 
 	h.logger.Info(fmt.Sprintf("Manual episode search requested for media %d S%02dE%02d", mediaID, season, episode))
 
+	h.extendForSearch(w)
 	results, err := h.manager.PerformEpisodeSearch(mediaID, season, episode)
 	if err != nil {
 		h.logger.Error("Episode search failed:", err)

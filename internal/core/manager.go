@@ -249,7 +249,10 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 
 	m.libraryService = services.NewLibraryService(cfg, m.mediaRepo, metadataClients, m.subtitleClient, m.logger)
 	m.downloaderService = services.NewDownloaderService(cfg, m.logger, torrentClient, m.mediaRepo, m.postProcessor, notifiers)
-	m.searcherService = services.NewSearcherService(indexerClients, torrentSelector, m.mediaRepo, m.logger)
+	// Each indexer's HTTP client already times out after search_timeout; the
+	// small margin lets an indexer answering right at that limit still count.
+	searchBudget := time.Duration(cfg.App.SearchTimeout)*time.Second + 5*time.Second
+	m.searcherService = services.NewSearcherService(indexerClients, torrentSelector, m.mediaRepo, m.logger, searchBudget)
 	m.rssService = services.NewRSSService(cfg, m.mediaRepo, m.downloaderService, torrentSelector, matcherService, m.logger, m.httpClient)
 
 	// Scheduler needs the queue channel
@@ -415,6 +418,12 @@ func (m *Manager) ClearFailedMedia() error {
 }
 
 // Search & Download Facade
+
+// SearchBudget is the longest a search can take before it returns partial
+// results. HTTP handlers use it to keep the response open that long.
+func (m *Manager) SearchBudget() time.Duration {
+	return m.searcherService.SearchBudget()
+}
 
 func (m *Manager) PerformSearch(id int) ([]indexers.IndexerResult, error) {
 	return m.searcherService.PerformSearch(id)
