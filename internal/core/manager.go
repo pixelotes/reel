@@ -397,6 +397,14 @@ func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, 
 }
 
 func (m *Manager) DeleteMedia(id int) error {
+	// Best effort: drop the torrent(s) from the client first (data is kept).
+	if m.downloaderService != nil {
+		if media, err := m.mediaRepo.GetByID(id); err != nil {
+			m.logger.Warn("Could not load media", id, "to remove its torrent:", err)
+		} else if media != nil {
+			m.downloaderService.RemoveMediaFromClient(media)
+		}
+	}
 	return m.libraryService.DeleteMedia(id)
 }
 

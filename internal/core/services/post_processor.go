@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"reel/internal/clients/notifications"
@@ -17,6 +18,18 @@ import (
 	"reel/internal/database/models"
 	"reel/internal/utils"
 )
+
+// inFlightPostProcessing tracks the media/episodes currently being post-processed.
+// It is package-level so it also protects across config reloads, which replace the
+// PostProcessor and DownloaderService instances while old jobs may still be running.
+var inFlightPostProcessing sync.Map
+
+// claimPostProcessing returns false if the given media/episode is already being processed.
+func claimPostProcessing(mediaID, season, episode int) (key string, ok bool) {
+	key = fmt.Sprintf("%d:%d:%d", mediaID, season, episode)
+	_, loaded := inFlightPostProcessing.LoadOrStore(key, struct{}{})
+	return key, !loaded
+}
 
 // PostProcessor handles the tasks after a download is complete.
 type PostProcessor struct {
@@ -57,6 +70,14 @@ func NewPostProcessor(cfg *config.Config, logger *utils.Logger, mediaRepo *model
 
 // ProcessDownload is the main entry point for post-processing a completed download.
 func (pp *PostProcessor) ProcessDownload(media models.Media, torrentStatus torrent.TorrentStatus, seasonNumber int, episodeNumber int, downloadPath string) error {
+	// Single-flight: never run two post-processing jobs for the same media/episode.
+	key, ok := claimPostProcessing(media.ID, seasonNumber, episodeNumber)
+	if !ok {
+		pp.logger.Warn("Post-processing already in progress, skipping duplicate run for:", media.Title)
+		return nil
+	}
+	defer inFlightPostProcessing.Delete(key)
+
 	pp.logger.Info("Starting post-processing for:", media.Title)
 
 	// Use pipeline if enabled

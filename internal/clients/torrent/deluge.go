@@ -193,6 +193,12 @@ func (d *DelugeClient) RemoveTorrent(hash string) error {
 	return err
 }
 
+// RemoveTorrentKeepData removes the torrent from the client but leaves files on disk.
+func (d *DelugeClient) RemoveTorrentKeepData(hash string) error {
+	_, err := d.sendRequest("core.remove_torrent", []interface{}{hash, false})
+	return err
+}
+
 // AddTrackers adds new trackers to an existing torrent.
 func (d *DelugeClient) AddTrackers(hash string, trackers []string) error {
 	var trackerDicts []map[string]interface{}

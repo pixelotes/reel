@@ -9,6 +9,12 @@ type TorrentClient interface {
 	HealthCheck() (bool, error)
 }
 
+// KeepDataRemover is optionally implemented by clients whose RemoveTorrent also
+// deletes downloaded files. RemoveTorrentKeepData only drops the torrent.
+type KeepDataRemover interface {
+	RemoveTorrentKeepData(hash string) error
+}
+
 type TorrentStatus struct {
 	Hash         string   `json:"hash"`
 	Name         string   `json:"name"`

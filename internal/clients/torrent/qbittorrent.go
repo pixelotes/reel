@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"reel/internal/utils"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -332,6 +333,15 @@ func (q *qBittorrentClient) GetTorrentStatus(hash string) (TorrentStatus, error)
 }
 
 func (q *qBittorrentClient) RemoveTorrent(hash string) error {
+	return q.remove(hash, true)
+}
+
+// RemoveTorrentKeepData removes the torrent from the client but leaves files on disk.
+func (q *qBittorrentClient) RemoveTorrentKeepData(hash string) error {
+	return q.remove(hash, false)
+}
+
+func (q *qBittorrentClient) remove(hash string, deleteFiles bool) error {
 	cookie, err := q.login()
 	if err != nil {
 		return err
@@ -340,7 +350,7 @@ func (q *qBittorrentClient) RemoveTorrent(hash string) error {
 	removeURL := fmt.Sprintf("%s/api/v2/torrents/delete", q.host)
 	data := url.Values{}
 	data.Set("hashes", hash)
-	data.Set("deleteFiles", "true")
+	data.Set("deleteFiles", strconv.FormatBool(deleteFiles))
 
 	req, err := http.NewRequest("POST", removeURL, strings.NewReader(data.Encode()))
 	if err != nil {
