@@ -101,11 +101,42 @@ func (a *Aria2Client) AddTorrentFile(fileContent []byte, downloadPath string) (s
 	return result.(string), nil
 }
 
+// maxFollowHops bounds how far a followedBy chain is walked (magnet -> metadata
+// -> content is two hops in practice).
+const maxFollowHops = 5
+
+// resolveGID returns the GID that holds the actual content for gid. When aria2
+// fetches a magnet's metadata or a .torrent over HTTP, that first download
+// finishes quickly and aria2 starts a new one (with --follow-torrent), listed in
+// followedBy. Tracking the first GID would report the metadata or the .torrent
+// file as the finished download.
+func (a *Aria2Client) resolveGID(gid string) string {
+	for range maxFollowHops {
+		res, err := a.sendRequest("aria2.tellStatus", gid, []string{"followedBy"})
+		if err != nil {
+			return gid
+		}
+		data, _ := res.(map[string]interface{})
+		next, _ := data["followedBy"].([]interface{})
+		if len(next) == 0 {
+			return gid
+		}
+		nextGID, ok := next[0].(string)
+		if !ok || nextGID == "" {
+			return gid
+		}
+		gid = nextGID
+	}
+	return gid
+}
+
 func (a *Aria2Client) GetTorrentStatus(hash string) (TorrentStatus, error) {
+	hash = a.resolveGID(hash)
+
 	// Fields to request from the tellStatus method
 	statusFields := []string{
 		"gid", "infoHash", "status", "totalLength", "completedLength", "uploadLength",
-		"downloadSpeed", "uploadSpeed", "dir", "bittorrent",
+		"downloadSpeed", "uploadSpeed", "dir", "bittorrent", "seeder",
 	}
 	statusResult, err := a.sendRequest("aria2.tellStatus", hash, statusFields)
 	if err != nil {
@@ -166,11 +197,24 @@ func (a *Aria2Client) GetTorrentStatus(hash string) (TorrentStatus, error) {
 	}
 	// --- END OF MODIFIED SECTION ---
 
+	// Plain HTTP downloads carry no infoHash.
+	infoHash, _ := data["infoHash"].(string)
+
+	// aria2 keeps a finished torrent "active" while it seeds and only reports
+	// "complete" once seeding stops, which may never happen with a seed ratio.
+	// The content is ready as soon as every byte is in, so treat a seeding
+	// download as completed too.
+	status, _ := data["status"].(string)
+	seeder, _ := data["seeder"].(string)
+	isCompleted := status == "complete" ||
+		seeder == "true" ||
+		(totalLength > 0 && completedLength >= totalLength && status == "active")
+
 	return TorrentStatus{
-		Hash:         data["infoHash"].(string),
+		Hash:         infoHash,
 		Name:         name,
 		Progress:     progress,
-		IsCompleted:  data["status"].(string) == "complete",
+		IsCompleted:  isCompleted,
 		DownloadRate: int64(downloadSpeed),
 		UploadRate:   int64(uploadSpeed),
 		DownloadDir:  downloadDir,
@@ -181,6 +225,12 @@ func (a *Aria2Client) GetTorrentStatus(hash string) (TorrentStatus, error) {
 }
 
 func (a *Aria2Client) RemoveTorrent(hash string) error {
+	// Remove the content download too, not only the metadata/.torrent one.
+	if content := a.resolveGID(hash); content != hash {
+		if _, err := a.sendRequest("aria2.remove", content); err != nil {
+			return err
+		}
+	}
 	_, err := a.sendRequest("aria2.remove", hash)
 	return err
 }
