@@ -58,7 +58,10 @@ func (l *LibraryService) AddMedia(mediaType models.MediaType, id string, title s
 				l.logger.Error("Movie metadata search failed:", err)
 			} else if len(movieData) > 0 {
 				l.logger.Info("Movie metadata found - ID:", movieData[0].ID, "Title:", movieData[0].Title)
-				if tmdbID, parseErr := strconv.Atoi(movieData[0].ID); parseErr == nil {
+				if strings.HasPrefix(movieData[0].ID, "tt") {
+					// IMDb provider: not a TMDB ID, nothing to store there.
+					l.logger.Info("Movie metadata from IMDb:", movieData[0].ID)
+				} else if tmdbID, parseErr := strconv.Atoi(movieData[0].ID); parseErr == nil {
 					metadataID = &tmdbID
 					l.logger.Info("Parsed TMDB ID:", *metadataID)
 				} else {

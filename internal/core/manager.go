@@ -125,10 +125,8 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 			}
 			return tmdbClient
 		case "imdb":
-			// The IMDb client is a placeholder with no implementation; listing it
-			// only produced misleading "API key is missing" errors.
-			warnOnce(provider, "Ignoring metadata provider 'imdb': it is not implemented")
-			return nil
+			// Keyless: IMDb search suggestions + Cinemeta. Movies only.
+			return metadata.NewIMDBClient(cfg.Metadata.IMDB.APIKey, metadataTimeout, m.logger)
 		case "tvmaze":
 			return metadata.NewTVmazeClient(metadataTimeout)
 		case "anilist":
