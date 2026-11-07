@@ -422,11 +422,11 @@ func (l *LibraryService) GetPendingMediaForProcessing() []models.Media {
 func (l *LibraryService) SearchMetadata(query string, mediaType string) ([]interface{}, error) {
 	providers := l.metadataClients[models.MediaType(mediaType)]
 	if len(providers) == 0 {
-		return nil, fmt.Errorf("no metadata provider configured for '%s'", mediaType)
+		return nil, fmt.Errorf("no metadata provider configured for '%s' (a listed provider may be disabled, e.g. TMDB without metadata.tmdb.api_key; see the startup log)", mediaType)
 	}
 
 	// Try each provider in order, fall back to next on error
-	var lastErr error
+	var failures []string
 	for _, client := range providers {
 		var results []interface{}
 		var err error
@@ -466,14 +466,19 @@ func (l *LibraryService) SearchMetadata(query string, mediaType string) ([]inter
 
 		if err != nil {
 			l.logger.Warn("Metadata provider failed, trying next:", err)
-			lastErr = err
+			failures = append(failures, fmt.Sprintf("%s: %v", providerName(client), err))
 			continue
 		}
 
 		return results, nil
 	}
 
-	return nil, fmt.Errorf("all metadata providers failed, last error: %w", lastErr)
+	if len(failures) == 0 {
+		return nil, fmt.Errorf("no metadata provider for '%s' supports this search", mediaType)
+	}
+	// Report every provider's reason: only showing the last one hid e.g. a
+	// missing TMDB key behind a later provider's unrelated error.
+	return nil, fmt.Errorf("all metadata providers failed: %s", strings.Join(failures, "; "))
 }
 
 func (l *LibraryService) GetMediaFilePath(mediaID int, seasonNumber int, episodeNumber int) (string, error) {
@@ -921,4 +926,14 @@ func (l *LibraryService) scanSubtitlesForFile(media *models.Media, season, episo
 			}
 		}
 	}
+}
+
+// providerName gives a short, readable name for a metadata client in errors,
+// e.g. *metadata.TMDBClient -> "TMDB".
+func providerName(client interface{}) string {
+	name := fmt.Sprintf("%T", client)
+	if i := strings.LastIndex(name, "."); i >= 0 {
+		name = name[i+1:]
+	}
+	return strings.TrimSuffix(name, "Client")
 }

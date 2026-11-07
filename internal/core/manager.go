@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"reel/internal/clients/indexers"
@@ -107,12 +108,27 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 	m.postProcessor = services.NewPostProcessor(cfg, m.logger, m.mediaRepo, notifiers, m.subtitleClient)
 	// --- Initialize Metadata Clients ---
 	tmdbClient := metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language, metadataTimeout)
+	// Warn once per provider, not once per media type that lists it.
+	warned := map[string]bool{}
+	warnOnce := func(provider string, msg ...interface{}) {
+		if !warned[provider] {
+			warned[provider] = true
+			m.logger.Warn(msg...)
+		}
+	}
 	initMetadataProvider := func(provider string) metadata.Client {
 		switch provider {
 		case "tmdb":
+			if apiKeyMissing(cfg.Metadata.TMDB.APIKey) {
+				warnOnce(provider, "TMDB metadata disabled: metadata.tmdb.api_key is not set (get a free key at themoviedb.org)")
+				return nil
+			}
 			return tmdbClient
 		case "imdb":
-			return metadata.NewIMDBClient(cfg.Metadata.IMDB.APIKey, metadataTimeout, m.logger)
+			// The IMDb client is a placeholder with no implementation; listing it
+			// only produced misleading "API key is missing" errors.
+			warnOnce(provider, "Ignoring metadata provider 'imdb': it is not implemented")
+			return nil
 		case "tvmaze":
 			return metadata.NewTVmazeClient(metadataTimeout)
 		case "anilist":
@@ -541,4 +557,11 @@ func (m *Manager) ResetSystem() {
 	// Re-init?
 	// This usually just resets clients. ReloadConfig does that.
 	m.reloadConfig(m.config)
+}
+
+// apiKeyMissing reports whether an API key is unset or still the
+// REPLACE_WITH_... placeholder from the sample config.
+func apiKeyMissing(key string) bool {
+	key = strings.TrimSpace(key)
+	return key == "" || strings.HasPrefix(key, "REPLACE_WITH_")
 }
