@@ -145,5 +145,8 @@ notifications:
 
 subtitles:
   enabled: true
-  api_key: ""                    # OpenSubtitles; required when enabled, unless a scout service has it
+  api_key: ""                    # OpenSubtitles
+  subdl_api_key: ""              # SubDL (free key from your subdl.com profile)
+  flaresolverr_url: ""           # enables Subdivx (Spanish), e.g. http://parasol:8191
+  # providers: ["opensubtitles", "subdl", "subdivx"]   # default; each needs its key above
   languages: ["en", "es"]

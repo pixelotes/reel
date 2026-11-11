@@ -107,10 +107,15 @@ type Config struct {
 	} `yaml:"crawlers"`
 
 	Subtitles struct {
-		Enabled      bool     `yaml:"enabled"`
-		APIKey       string   `yaml:"api_key"`
-		Languages    []string `yaml:"languages"`
-		DownloadPath string   `yaml:"download_path"`
+		Enabled bool   `yaml:"enabled"`
+		APIKey  string `yaml:"api_key"` // OpenSubtitles
+		// Providers searched together, results merged. Default:
+		// opensubtitles, subdl, subdivx; each is skipped without its key.
+		Providers       []string `yaml:"providers"`
+		SubDLAPIKey     string   `yaml:"subdl_api_key"`
+		FlareSolverrURL string   `yaml:"flaresolverr_url"` // enables subdivx (Spanish)
+		Languages       []string `yaml:"languages"`
+		DownloadPath    string   `yaml:"download_path"`
 	} `yaml:"subtitles"`
 
 	Movies struct {
@@ -352,9 +357,9 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// Validate subtitles. With a scout service, the key lives there.
-	if c.Subtitles.Enabled && c.Subtitles.APIKey == "" && !usesService {
-		return fmt.Errorf("subtitles.api_key is required when subtitles are enabled (or use a scout service in crawlers.backends)")
+	// Validate subtitles. With a scout service, the keys live there.
+	if c.Subtitles.Enabled && !usesService && c.Subtitles.APIKey == "" && c.Subtitles.SubDLAPIKey == "" && c.Subtitles.FlareSolverrURL == "" {
+		return fmt.Errorf("subtitles are enabled but no provider is configured: set subtitles.api_key (OpenSubtitles), subtitles.subdl_api_key or subtitles.flaresolverr_url (Subdivx), or use a scout service in crawlers.backends")
 	}
 
 	// Validate postprocessing

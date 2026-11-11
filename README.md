@@ -34,7 +34,7 @@ Compared with Sonarr + Radarr (.NET, typically 100+ MB each), Reel covers the co
 - Extra trackers appended to every added torrent (`extra_trackers_list`).
 - Post-processing pipeline with configurable, conditional stages and rollback on failure. Default stages: `validate`, `create_folders`, `move_files`, `rename`, `save_metadata`, `subtitles`, `notify`. Extra stages available: `permission_check`, `space_check`, `extract`, `health_check`, `enrich_metadata`, `duplicate_check`.
 - File renaming templates per media type.
-- Subtitles from OpenSubtitles via Scout: search by file hash, then IMDb/TMDB ID, then title; the best candidate per language (hash match, trusted, most downloaded). Downloaded files are cached in `data/subtitle-cache`, and the periodic scan for missing subtitles stops once the daily quota is used up.
+- Subtitles via Scout from OpenSubtitles, SubDL and Subdivx (Spanish, through a FlareSolverr-compatible solver such as Parasol), searched together: OpenSubtitles by file hash, then IMDb/TMDB ID, then title; the best candidate per language (hash match, trusted, most downloaded). Downloaded files are cached in `data/subtitle-cache`, and the periodic scan for missing subtitles stops once the daily quota is used up.
 - TV: new-episode checks, per-episode search/download, configurable delay after air date, custom anime search terms.
 - Calendar of upcoming episode air dates.
 - Cleanup of completed torrents by age (`keep_torrents_for_days`) or seed ratio (`keep_torrents_seed_ratio`).
@@ -214,7 +214,10 @@ notifications:
 
 subtitles:
   enabled: true
-  api_key: ""                    # OpenSubtitles; required when enabled, unless a scout service has it
+  api_key: ""                    # OpenSubtitles
+  subdl_api_key: ""              # SubDL (free key from your subdl.com profile)
+  flaresolverr_url: ""           # enables Subdivx (Spanish), e.g. http://parasol:8191
+  # providers: ["opensubtitles", "subdl", "subdivx"]   # default; each needs its key above
   languages: ["en", "es"]
 ```
 

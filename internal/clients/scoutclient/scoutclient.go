@@ -59,6 +59,13 @@ func New(cfg *config.Config, logger *utils.Logger) (scout.Backend, error) {
 	if !KeyMissing(cfg.Subtitles.APIKey) {
 		sc.Local.OpenSubtitles.APIKey = cfg.Subtitles.APIKey
 	}
+	if !KeyMissing(cfg.Subtitles.SubDLAPIKey) {
+		sc.Local.SubDL.APIKey = cfg.Subtitles.SubDLAPIKey
+	}
+	sc.Local.Subdivx.FlareSolverrURL = cfg.Subtitles.FlareSolverrURL
+	if len(cfg.Subtitles.Providers) > 0 {
+		sc.Local.SubtitleProviders = cfg.Subtitles.Providers
+	}
 	sc.Local.SubtitleLanguages = cfg.Subtitles.Languages
 	sc.Local.Cache.MetadataTTL = 6 * time.Hour
 	if cfg.App.DataPath != "" {

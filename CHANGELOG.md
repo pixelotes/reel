@@ -9,6 +9,7 @@
 - **Adding a title uses the picked result** — The add dialog now sends the chosen provider and ID, and Reel looks that title up directly. Before, it searched the title again and took the first match, which could be a different show or film. Episode lists load when you pick a show, through the new `GET /api/v1/metadata-details`.
 - **Shows remember their provider** — Migration `009` adds `tv_shows.provider`. New-episode checks look the show up by its stored provider and ID; shows added earlier keep searching by title.
 - **IDs stored for shows too** — IMDb and TMDB IDs are now saved for TV and anime as well as movies, so subtitle searches can use them.
+- **More subtitle providers** — SubDL (`subtitles.subdl_api_key`) and Subdivx for Spanish (`subtitles.flaresolverr_url`, through Parasol or FlareSolverr), searched together with OpenSubtitles; `subtitles.providers` picks which. Season packs are opened to extract the right episode. A key for OpenSubtitles is no longer required if another provider is set.
 - **Better subtitle matching** — Search by hash, then IMDb/TMDB ID, then title; per language, download the best candidate (hash match, trusted uploader, most downloaded) instead of the first. The post-processor now fetches every configured language, not just one. Downloads are cached in `data/subtitle-cache`, and the missing-subtitle scan stops when the daily quota is used up instead of waiting 20 s between languages.
 
 ### Fixes

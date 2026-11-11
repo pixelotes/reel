@@ -12,6 +12,16 @@ Subtitles come through [Scout](https://github.com/pixelotes/scout), locally or f
 2. **IDs** -- the IMDb or TMDB ID (the show's ID plus season and episode for TV).
 3. **Title** -- the title (and year for movies), plus season and episode.
 
+Three providers are searched together and their results merged, so a language one lacks can come from another:
+
+| Provider | Needs | Notes |
+|----------|-------|-------|
+| OpenSubtitles | `subtitles.api_key` | The only one that matches by file hash. Daily download quota. |
+| SubDL | `subtitles.subdl_api_key` (free) | Searches by IMDb/TMDB ID or title. |
+| Subdivx | `subtitles.flaresolverr_url` | Spanish only. The site sits behind Cloudflare, so it goes through a FlareSolverr-compatible solver such as [Parasol](https://github.com/pixelotes/parasol). It is scraping, not an API, and can break when the site changes. |
+
+Season packs are opened and the right episode extracted, including anime packs numbered `Show - 05`. Subtitles are converted to UTF-8.
+
 For each configured language that has no subtitle yet, Reel downloads the best candidate: a hash match first, then trusted uploaders, then the most downloaded. Machine translations are only used when nothing else exists.
 
 Subtitle files are saved alongside the video file using the naming pattern:
