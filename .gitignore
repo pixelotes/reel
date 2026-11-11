@@ -7,3 +7,24 @@ data/*.log
 reel
 coverage.out
 coverage.html
+
+/magnet2torrent
+/reel
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*.log
+.env
+.env.*
+!.env.example
+
+# Go build output
+*.exe
+*.test
+*.out
+/dist/

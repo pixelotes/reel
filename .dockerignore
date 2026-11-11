@@ -11,3 +11,10 @@ media/
 coverage.out
 coverage.html
 documentation/
+.git
+.github
+reel
+magnet2torrent
+*.log
+.DS_Store
+.env

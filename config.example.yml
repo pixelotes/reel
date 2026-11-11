@@ -1,168 +1,138 @@
-# Reel Configuration Example
-# Complete configuration with all Phase 1-6 features
+# Reel example config. Copy to config.yml and fill in the empty keys.
+# Keys and defaults match internal/config/config.go.
 
-# Application Settings
 app:
-  port: 8080
+  port: 8081                     # default 8081
+  data_path: "./data"            # default ./data
+  ui_enabled: true
+  ui_password: "change-me"
+  jwt_secret: "long-random-string"   # openssl rand -hex 48
   debug: false
-  data_path: "./data"
+  search_timeout: 60             # seconds, default 30
+  filter_log_level: "detail"     # "none" or "detail"
+  magnet_to_torrent_enabled: false
+  magnet_to_torrent_timeout: 60
 
-# Database Configuration
+torrent_client:
+  type: "storm"                  # transmission, qbittorrent, aria2, rain, storm, deluge, direct, mock
+  host: "http://tango:7246"
+  username: ""
+  password: ""
+  secret: ""                     # aria2 RPC secret
+  download_path: "/storage/Downloads/complete"
+
 database:
   path: "./data/reel.db"
 
-# Plex Configuration
-plex:
-  url: "http://localhost:32400"
-  token: "your-plex-token"
-  update_on_new_media: true
+metadata:
+  language: "en"                 # default en
+  timeout: 10                    # seconds, default 10
+  tmdb:
+    api_key: ""
+  trakt:
+    client_id: ""
+  google_books:
+    api_key: ""
 
-# Torrent Client Configuration
-torrent:
-  type: "qbittorrent"  # qbittorrent, transmission, or mock
-  url: "http://localhost:8080"
-  username: "admin"
-  password: "adminpass"
-  download_path: "/downloads"
-  category: "reel"
+movies:
+  providers: ["tmdb", "imdb"]    # imdb is keyless and used when tmdb fails or finds nothing
+  download_folder: "/storage/Downloads/Movies"
+  destination_folder: "/storage/Completed/Movies"
+  move_method: ["hardlink", "symlink", "move", "copy"]
+  sources:
+    - type: "scarf"              # scarf, jackett, prowlarr, rss
+      url: "http://scarf:8080/torznab/all"
+      api_key: ""
+      search_mode: movie-search
 
-# Subtitles Configuration (Phase 4 enhancements)
-subtitles:
-  enabled: true
-  api_key: "your-opensubtitles-api-key"
-  languages:
-    - "en"
-    - "es"
-  # Phase 4: Rate limiting is automatic (5 req/min)
-  # Phase 4: Retry logic is automatic (3 attempts with exponential backoff)
+tv-shows:
+  providers: ["tvmaze"]
+  download_folder: "/storage/Downloads/Series"
+  destination_folder: "/storage/Completed/TV"
+  move_method: ["hardlink", "symlink", "move", "copy"]
+  sources:
+    - type: "rss"
+      url: "https://example.com/your-private-rss"
+    - type: "scarf"
+      url: "http://scarf:8080/torznab/all"
+      api_key: ""
+      search_mode: search
 
-# Media Library Configuration
-media:
-  movie_path: "/media/movies"
-  tv_path: "/media/shows"
-  anime_path: "/media/anime"
-  naming:
-    movie_template: "{title} ({year}) [{quality}]"
-    tv_template: "{title} - S{season:02d}E{episode:02d} [{quality}]"
+anime:
+  providers: ["anilist", "tvmaze"]
+  download_folder: "/storage/Downloads/Anime"
+  destination_folder: "/storage/Completed/Anime"
+  move_method: ["hardlink", "symlink", "move", "copy"]
+  sources:
+    - type: "scarf"
+      url: "http://scarf:8080/torznab/all"
+      api_key: ""
+      search_mode: tv-search
 
-# Postprocessing Configuration (Phase 1-6)
+# Optional
+ebooks:
+  providers: ["gutendex"]
+  download_folder: "/storage/Downloads/Ebooks"
+  destination_folder: "/storage/Completed/Ebooks"
+  move_method: ["move", "copy"]
+  sources:
+    - type: "gutendex"
+      url: "https://gutendex.com"
+
+file_renaming:
+  movie_template: "{title} ({year}) [{quality}]"
+  series_template: "{title} - S{season}E{episode} [{quality}]"
+  anime_template: "{title} - {season}x{episode} [{quality}]"
+  ebook_template: "{title} ({year})"
+
 postprocessing:
-  # Phase 1: Basic settings
   enabled: true
   validate_files: true
-  min_file_size_mb: 100
-  wait_for_file_timeout: 60
-  retry_attempts: 3
-  retry_delay: 10
+  min_file_size_mb: 1            # default 1
+  wait_for_file_timeout: 30      # seconds, default 30
+  retry_attempts: 3              # default 3
+  retry_delay: 5                 # seconds, default 5
   cleanup_on_failure: true
   keep_failed_downloads_days: 7
-
-  # Phase 2-6: Pipeline configuration
   pipeline:
-    enabled: true    # Phase 2: Enable pipeline architecture
-    rollback: true   # Phase 2: Auto-rollback on failure
-
-    # Phase 3: Configurable stages with conditions
-    stages:
-      # Phase 6: Pre-flight checks
-      - name: permission_check
-        enabled: true
-
-      - name: space_check
-        enabled: true
-
-      # Phase 6: Archive extraction
-      - name: extract
-        enabled: true
-
-      # Phase 6: File health verification
-      - name: health_check
-        enabled: true
-
-      # Phase 2: File validation
-      - name: validate
-        enabled: true
-
-      # Phase 6: Add metadata
-      - name: enrich_metadata
-        enabled: true
-
-      # Phase 6: Check for duplicates (movies only)
-      - name: duplicate_check
-        enabled: true
-        condition: "is_movie"
-
-      # Phase 2: Create directory structure
-      - name: create_folders
-        enabled: true
-
-      # Phase 2: Move/link files
-      - name: move_files
-        enabled: true
-
-      # Phase 2: Apply naming template
-      - name: rename
-        enabled: true
-
-      # Phase 2/4: Download subtitles (with rate limiting & retry)
-      - name: subtitles
-        enabled: true
-
-      # Phase 2: Send notifications
-      - name: notify
-        enabled: true
-
-# Scheduled Tasks Configuration
-scheduled_tasks:
-  # Check overseerr for new requests
-  check_overseerr:
     enabled: true
-    interval: "5m"
+    rollback: true
+    # stages: omit to use the defaults listed under Features
+    # - name: duplicate_check
+    #   enabled: true
+    #   condition: "is_movie"
 
-  # Search for approved torrents
-  search_torrents:
-    enabled: true
-    interval: "10m"
+automation:
+  # Cron specs (robfig/cron): "@every 30m", "0 */2 * * *", ...
+  search_interval: "@every 30m"            # default
+  new_episodes_check_interval: "@every 6h" # default
+  download_status_interval: "@every 10s"   # default
+  rss_processing_interval: "@every 1h"     # default
+  cleanup_interval: "@every 24h"           # default
+  retry_failed_interval: "@every 1h"       # default
+  subtitle_scan_interval: "@every 12h"     # default
+  max_concurrent_downloads: 3
+  quality_preferences: ["1080p", "720p"]
+  min_seeders: 5
+  keep_torrents_for_days: 7
+  keep_torrents_seed_ratio: 1.0
+  episode_download_delay_hours: 8
+  notifications: ["pushbullet"]  # pushbullet, telegram
+  reject-common:
+    - \bhdcam?\b
+    - \bscreener\b
 
-  # Check torrent completion
-  check_downloads:
-    enabled: true
-    interval: "1m"
+extra_trackers_list:
+  - udp://tracker.example.org:1337/announce
 
-  # Process completed downloads
-  process_completed:
-    enabled: true
-    interval: "2m"
-
-  # Clean up old failed downloads
-  cleanup_failed:
-    enabled: true
-    interval: "24h"
-
-  # Phase 5: Clean up old processing states
-  cleanup_states:
-    enabled: true
-    interval: "24h"
-    max_age_days: 7
-
-# Overseerr Configuration
-overseerr:
-  url: "http://localhost:5055"
-  api_key: "your-overseerr-api-key"
-
-# Notifications Configuration
 notifications:
   pushbullet:
-    enabled: false
-    api_key: "your-pushbullet-api-key"
+    api_key: ""
+  telegram:
+    bot_token: ""
+    chat_id: ""
 
-# Rejection Rules
-rejection:
-  min_seeders: 3
-  max_size_gb: 50
-  blocked_uploaders:
-    - "fake-uploader"
-  quality_preference:
-    - "1080p"
-    - "720p"
-    - "2160p"
+subtitles:
+  enabled: true
+  api_key: ""                    # OpenSubtitles; required when enabled
+  languages: ["en", "es"]
