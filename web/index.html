@@ -391,6 +391,7 @@
                 <div id="modal-metadata-results" class="search-results"></div>
     
                 <input type="hidden" name="id" id="modal-id-input">
+                <input type="hidden" name="provider" id="modal-provider-input">
     
                 <div class="form-row">
                     <input type="text" name="title" id="modal-title-input" placeholder="Title" required style="flex: 2;">
@@ -652,9 +653,9 @@
                 document.getElementById('refresh-status-btn').addEventListener('click', checkSystemStatus);
                 document.getElementById('save-config-btn').addEventListener('click', saveConfig);
                 
-                document.getElementById('test-torrent-btn').addEventListener('click', async () => { /* Implement test logic */ });
-                document.getElementById('test-indexer-btn').addEventListener('click', async () => { /* Implement test logic */ });
-                document.getElementById('clear-failed-btn').addEventListener('click', async () => {
+                // The settings page no longer has a clear-failed button; ?. keeps a
+                // missing button from aborting the rest of initializeApp.
+                document.getElementById('clear-failed-btn')?.addEventListener('click', async () => {
                     showToast('Clear all failed media? Click to confirm.', 'warning', 5000)
                     document.getElementById('toast-container').lastChild.onclick = async () => {
                         try {
@@ -951,6 +952,7 @@ async function refreshData() {
                         title: form.querySelector('#modal-title-input').value,
                         year: parseInt(form.querySelector('#modal-year-input').value),
                         id: form.querySelector('#modal-id-input').value,
+                        provider: form.querySelector('#modal-provider-input').value,
                         min_quality: minQuality,
                         max_quality: maxQuality,
                         auto_download: form.querySelector('#modal-auto-download-checkbox').checked,
@@ -966,6 +968,8 @@ async function refreshData() {
                         showToast('Media added successfully!');
                         document.getElementById('add-media-modal').style.display = 'none';
                         form.reset();
+                        document.getElementById('modal-id-input').value = '';
+                        document.getElementById('modal-provider-input').value = '';
                         document.getElementById('modal-metadata-results').innerHTML = '';
                         loadMedia(); // Refresh media grid
                     } else {
@@ -1000,6 +1004,10 @@ async function refreshData() {
             */
             
             async function searchMetadataInModal() {
+                // A new search drops any earlier pick, so a stale provider/ID
+                // never gets added under a different title.
+                document.getElementById('modal-id-input').value = '';
+                document.getElementById('modal-provider-input').value = '';
                 const query = document.getElementById('modal-search-query').value;
                 const type = document.getElementById('modal-media-type').value;
                 const resultsContainer = document.getElementById('modal-metadata-results');
@@ -1030,7 +1038,7 @@ async function refreshData() {
                         ${item.poster_url ? `<img src="${item.poster_url}" alt="${item.title}">` : '<div style="width:60px;height:90px;background:var(--border-color);border-radius:4px;"></div>'}
                         <div class="search-result-info">
                             <div class="search-result-title">${item.title}</div>
-                            <div class="search-result-meta">${item.year} • ${item.overview ? item.overview.substring(0, 100) + '...' : 'No description'}</div>
+                            <div class="search-result-meta">${item.year || '?'}${item.provider ? ' • ' + item.provider : ''} • ${item.overview ? item.overview.substring(0, 100) + '...' : 'No description'}</div>
                         </div>
                     </div>
                 `).join('');
@@ -1041,11 +1049,27 @@ async function refreshData() {
                 document.getElementById(`${prefix}title-input`).value = item.title;
                 document.getElementById(`${prefix}year-input`).value = item.year;
                 document.getElementById(`${prefix}id-input`).value = item.id;
+                const providerInput = document.getElementById(`${prefix}provider-input`);
+                if (providerInput) providerInput.value = item.provider || '';
                 document.getElementById(`${prefix}metadata-results`).innerHTML = '';
 
                 const currentMediaType = document.getElementById(`${prefix}media-type`).value;
                 if (currentMediaType === 'tvshow' || currentMediaType === 'anime') {
-                    populateTVEpisodeSelectors(item.seasons, target);
+                    if (item.seasons) {
+                        populateTVEpisodeSelectors(item.seasons, target);
+                        return;
+                    }
+                    // Search results carry no episode lists: fetch the show's details.
+                    const seasonSelect = document.getElementById(`${prefix}start-season-select`);
+                    seasonSelect.innerHTML = '<option>Loading episodes…</option>';
+                    const params = new URLSearchParams({ type: currentMediaType, provider: item.provider || '', id: item.id });
+                    fetchWithAuth(`/api/v1/metadata-details?${params}`)
+                        .then(r => r.ok ? r.json() : r.json().then(e => { throw new Error(e.error); }))
+                        .then(details => populateTVEpisodeSelectors(details.seasons || {}, target))
+                        .catch(err => {
+                            seasonSelect.innerHTML = '';
+                            showToast(`Could not load episodes: ${err.message}`, 'error');
+                        });
                 }
             };
             
@@ -1055,7 +1079,7 @@ async function refreshData() {
                 const episodeSelect = document.getElementById(`${prefix}start-episode-select`);
                 seasonSelect.innerHTML = '';
                 episodeSelect.innerHTML = '';
-                const seasonNumbers = Object.keys(seasons).map(Number).sort((a,b) => a - b);
+                const seasonNumbers = Object.keys(seasons || {}).map(Number).sort((a,b) => a - b);
                 for (const seasonNum of seasonNumbers) {
                     seasonSelect.innerHTML += `<option value="${seasonNum}">Season ${seasonNum}</option>`;
                 }
@@ -1064,7 +1088,8 @@ async function refreshData() {
                     episodeSelect.innerHTML = '';
                     if (seasons && seasons[selectedSeason]) {
                         seasons[selectedSeason].forEach(ep => {
-                            episodeSelect.innerHTML += `<option value="${ep.episode_number}">Episode ${ep.episode_number} - ${ep.title}</option>`;
+                            const num = ep.number ?? ep.episode_number;
+                            episodeSelect.innerHTML += `<option value="${num}">Episode ${num} - ${ep.title || ''}</option>`;
                         });
                     }
                 }
@@ -1126,13 +1151,19 @@ async function refreshData() {
                 if (media.type === 'tvshow' || media.type === 'anime') {
                     try {
                         const response = await fetchWithAuth(`/api/v1/media/${mediaId}/tv-details`);
-                        if (response.ok) {
-                            const show = await response.json();
-                            tvShowDetailsHtml = `<h4>Seasons</h4><div style="max-height: 250px; overflow-y: auto; border: 1px solid var(--border-color); padding: 1rem; border-radius: 4px;">
+                        if (!response.ok) {
+                            const body = await response.json().catch(() => ({}));
+                            throw new Error(body.error || `HTTP ${response.status}`);
+                        }
+                        const show = await response.json();
+                        tvShowDetailsHtml = `<h4>Seasons</h4><div style="max-height: 250px; overflow-y: auto; border: 1px solid var(--border-color); padding: 1rem; border-radius: 4px;">
                             ${show.seasons.map(season => `<details class="season-details" data-season-number="${season.season_number}"><summary>Season ${season.season_number}</summary><div class="episode-list">
                             ${season.episodes.map(ep => `<div class="episode-item" data-season-number="${season.season_number}" data-episode-number="${ep.episode_number}"><span>${ep.episode_number}. ${ep.title} <em style="color:#aaa; font-size: 0.8rem;">(${ep.air_date})</em>${ep.torrent_name ? `<br><small style="color:#888; font-size: 0.7rem;" title="${ep.torrent_name}">📦 ${ep.torrent_name}</small>` : ''}</span><span class="media-status status-${ep.status}">${ep.status}</span><button class="secondary" onclick="manualEpisodeSearch(${media.id}, ${season.season_number}, ${ep.episode_number})">🔍</button><button class="secondary" ${ep.status === 'downloaded' ? '' : 'disabled style="opacity: 0.4;"'} onclick="playVideo(${media.id}, ${season.season_number}, ${ep.episode_number})">▶️</button></div>`).join('')}</div></details>`).join('')}</div>`;
-                        }
-                    } catch (e) { tvShowDetailsHtml = '<p style="color:var(--error-color)">Could not load season details.</p>'; }
+                    } catch (e) {
+                        console.error('Season details:', e);
+                        const reason = String(e.message || e).replace(/[<>&]/g, '');
+                        tvShowDetailsHtml = `<p style="color:var(--error-color)">Could not load season details: ${reason}</p>`;
+                    }
                 }
                 
                 let animeSearchTermsHtml = '';

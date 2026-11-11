@@ -6,10 +6,13 @@ Reel can automatically download subtitles for your media using the [OpenSubtitle
 
 ## How It Works
 
-When subtitle downloading is enabled, Reel uses a two-step search strategy:
+Subtitles come through [Scout](https://github.com/pixelotes/scout), locally or from a Scout service (see `crawlers` in the [configuration reference](../configuration/reference.md)). Reel computes the file hash itself, so a Scout service never needs access to your media. The search stops at the first step that finds something:
 
-1. **File hash search** -- Computes a hash of the video file and searches OpenSubtitles for an exact match. This is the most accurate method.
-2. **Metadata search** -- If no hash match is found, Reel falls back to searching by title, year, TMDB ID, and season/episode number.
+1. **File hash** -- an exact match for this release. Only real hash matches count.
+2. **IDs** -- the IMDb or TMDB ID (the show's ID plus season and episode for TV).
+3. **Title** -- the title (and year for movies), plus season and episode.
+
+For each configured language that has no subtitle yet, Reel downloads the best candidate: a hash match first, then trusted uploaders, then the most downloaded. Machine translations are only used when nothing else exists.
 
 Subtitle files are saved alongside the video file using the naming pattern:
 
@@ -64,11 +67,11 @@ The OpenSubtitles free tier imposes strict rate limits:
 | Requests per minute | 5 |
 | Daily download quota | 20 subtitles |
 
-Reel handles rate limiting automatically with built-in retry logic:
+How Reel stays within them:
 
-- **3 retry attempts** per request
-- **Exponential backoff** between attempts
-- Respects the API's rate limit headers
+- Requests are spaced out automatically.
+- Downloaded files are cached in `data/subtitle-cache` (or on the Scout service) and never downloaded twice.
+- When the API reports the daily quota used up, Reel stops asking until it resets, and the periodic scan for missing subtitles stops early.
 
 !!! tip
     If you have a large library, the daily download quota may be a bottleneck. Consider processing new additions in batches or upgrading to a paid OpenSubtitles plan for higher limits.

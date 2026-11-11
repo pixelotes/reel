@@ -92,6 +92,20 @@ type Config struct {
 		} `yaml:"google_books"`
 	} `yaml:"metadata"`
 
+	// Crawlers chooses where metadata and subtitle lookups run: the scout
+	// providers inside Reel ("local"), a scout service ("service"), or both in
+	// order, the second used only when the first fails. Provider keys and
+	// order still come from metadata.*, subtitles.* and each media type's
+	// providers list.
+	Crawlers struct {
+		Backends []string `yaml:"backends"`
+		Service  struct {
+			URL     string `yaml:"url"`
+			Token   string `yaml:"token"`
+			Timeout int    `yaml:"timeout"` // seconds
+		} `yaml:"service"`
+	} `yaml:"crawlers"`
+
 	Subtitles struct {
 		Enabled      bool     `yaml:"enabled"`
 		APIKey       string   `yaml:"api_key"`
@@ -220,6 +234,14 @@ func (c *Config) setDefaults() {
 		c.App.SearchTimeout = 30
 	}
 
+	// Crawlers defaults
+	if len(c.Crawlers.Backends) == 0 {
+		c.Crawlers.Backends = []string{"local"}
+	}
+	if c.Crawlers.Service.Timeout == 0 {
+		c.Crawlers.Service.Timeout = 10
+	}
+
 	// Metadata defaults
 	if c.Metadata.Language == "" {
 		c.Metadata.Language = "en"
@@ -315,9 +337,24 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// Validate subtitles
-	if c.Subtitles.Enabled && c.Subtitles.APIKey == "" {
-		return fmt.Errorf("subtitles.api_key is required when subtitles are enabled")
+	// Validate crawlers
+	usesService := false
+	for _, b := range c.Crawlers.Backends {
+		switch b {
+		case "local":
+		case "service":
+			usesService = true
+			if c.Crawlers.Service.URL == "" {
+				return fmt.Errorf("crawlers.service.url is required when crawlers.backends includes service")
+			}
+		default:
+			return fmt.Errorf("crawlers.backends: unknown backend %q (use local, service or both)", b)
+		}
+	}
+
+	// Validate subtitles. With a scout service, the key lives there.
+	if c.Subtitles.Enabled && c.Subtitles.APIKey == "" && !usesService {
+		return fmt.Errorf("subtitles.api_key is required when subtitles are enabled (or use a scout service in crawlers.backends)")
 	}
 
 	// Validate postprocessing

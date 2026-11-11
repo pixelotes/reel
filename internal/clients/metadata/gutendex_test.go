@@ -37,13 +37,5 @@ func TestGutendex_SearchBook(t *testing.T) {
 }
 
 func TestGutendex_ImplementsInterfaces(t *testing.T) {
-	client := NewGutendexClient(5 * time.Second)
-
-	var _ BookClient = client
-	var _ Client = client
-
-	_, err := client.SearchMovie("test", 2024)
-	if err == nil {
-		t.Error("SearchMovie should return error")
-	}
+	var _ BookClient = NewGutendexClient(5 * time.Second)
 }

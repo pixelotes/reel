@@ -2,7 +2,9 @@
 
 Metadata providers supply information about your media: titles, years, posters, episode data, ratings, and more. Reel uses this data for search queries, file renaming, and library organization.
 
-Each media type specifies which providers to use in its `providers` list. Reel queries them in the order listed.
+Each media type specifies which providers to use in its `providers` list. Reel queries them in the order listed and uses the first that finds something.
+
+Movie, TV and anime lookups come from [Scout](https://github.com/pixelotes/scout), the metadata library shared with RMS. They run inside Reel or on a Scout service; see [Where lookups run](#where-lookups-run). Ebook providers are built into Reel.
 
 ---
 
@@ -10,11 +12,32 @@ Each media type specifies which providers to use in its `providers` list. Reel q
 
 | Provider | Movies | TV Shows | Anime | API Key Required |
 |----------|--------|----------|-------|------------------|
-| TMDB | Yes | No | No | Yes |
-| TVmaze | No | Yes | No | No |
-| AniList | No | No | Yes | No |
-| Trakt | No | Yes | No | Yes (`client_id`) |
-| IMDb | -- | -- | -- | N/A (not functional) |
+| `tmdb` | Yes | Yes | Yes | Yes |
+| `imdb` | Yes | No | No | No |
+| `tvmaze` | No | Yes | Yes | No |
+| `anilist` | Anime films | No | Yes | No |
+| `kitsu` | Anime films | No | Yes | No |
+| `trakt` | Yes | Yes | Yes | Yes (`client_id`) |
+| `googlebooks`, `openlibrary`, `gutendex` | Ebooks only | | | `googlebooks` optional |
+
+Every result carries the external IDs the provider knows (IMDb, TMDB, TVDB, TVmaze, AniList, Kitsu…). Reel stores the IMDb and TMDB IDs, which make subtitle searches more accurate, and remembers which provider and ID a show came from, so episode checks look it up directly instead of searching by title again.
+
+---
+
+## Where lookups run
+
+```yaml
+crawlers:
+  backends: ["service", "local"]
+  service:
+    url: "http://scout:8090"
+    token: ""
+    timeout: 10
+```
+
+- `local` (default): the providers run inside Reel, with the keys from `metadata.*` and `subtitles.api_key`.
+- `service`: Reel asks a [Scout](https://github.com/pixelotes/scout) server, which holds the keys, the cache and the OpenSubtitles quota for every app that uses it.
+- Both, in order: the second is only used when the first fails (connection refused, timeout, server error), never when it answers "not found" or "quota exceeded". After 3 failures in a row the service is skipped for 2 minutes.
 
 ---
 
@@ -66,15 +89,16 @@ tv-shows:
 
 - Returns both English and Romaji titles
 - Provides episode counts, ratings, and airing status
-- Results are sorted by popularity
+- Results are sorted by how well they match the search
 - Public GraphQL endpoint, no authentication needed
+- Each season of an anime is a separate entry, and episodes have no titles, so it works best as a fallback after `tvmaze`
 
 ```yaml
 metadata:
   anilist: {}  # no configuration needed
 
 anime:
-  providers: ["anilist"]
+  providers: ["tvmaze", "anilist"]
 ```
 
 ---
@@ -158,5 +182,5 @@ tv-shows:
   providers: ["tvmaze", "trakt"]
 
 anime:
-  providers: ["anilist"]
+  providers: ["tvmaze", "anilist"]
 ```

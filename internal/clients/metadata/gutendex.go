@@ -84,25 +84,12 @@ func (c *GutendexClient) SearchBook(title string, author string) ([]*BookResult,
 		}
 
 		results = append(results, &BookResult{
-			ID:      fmt.Sprintf("gutenberg-%d", item.ID),
-			Title:   item.Title,
-			Authors: authors,
+			ID:       fmt.Sprintf("gutenberg-%d", item.ID),
+			Title:    item.Title,
+			Authors:  authors,
 			Overview: overview,
 		})
 	}
 
 	return results, nil
-}
-
-// Implement metadata.Client interface (not supported for books provider)
-func (c *GutendexClient) SearchMovie(title string, year int) ([]*MovieResult, error) {
-	return nil, fmt.Errorf("Gutendex does not support movie search")
-}
-
-func (c *GutendexClient) SearchTVShow(title string) ([]*TVShowResult, error) {
-	return nil, fmt.Errorf("Gutendex does not support TV show search")
-}
-
-func (c *GutendexClient) GetTVShowDetailsByID(tmdbID int) (*TVShowResult, error) {
-	return nil, fmt.Errorf("Gutendex does not support TV show details")
 }

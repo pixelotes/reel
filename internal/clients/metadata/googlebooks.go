@@ -112,16 +112,3 @@ func (c *GoogleBooksClient) SearchBook(title string, author string) ([]*BookResu
 
 	return results, nil
 }
-
-// Implement metadata.Client interface (not supported for books provider)
-func (c *GoogleBooksClient) SearchMovie(title string, year int) ([]*MovieResult, error) {
-	return nil, fmt.Errorf("Google Books does not support movie search")
-}
-
-func (c *GoogleBooksClient) SearchTVShow(title string) ([]*TVShowResult, error) {
-	return nil, fmt.Errorf("Google Books does not support TV show search")
-}
-
-func (c *GoogleBooksClient) GetTVShowDetailsByID(tmdbID int) (*TVShowResult, error) {
-	return nil, fmt.Errorf("Google Books does not support TV show details")
-}

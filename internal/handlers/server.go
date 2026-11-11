@@ -53,6 +53,7 @@ func (s *Server) Start() error {
 	protected.HandleFunc("/media/{id}/settings", s.apiHandler.UpdateMediaSettings).Methods("POST") // <-- NEW ROUTE
 	protected.HandleFunc("/media/clear-failed", s.apiHandler.ClearFailed).Methods("POST")
 	protected.HandleFunc("/search-metadata", s.apiHandler.SearchMetadata).Methods("GET")
+	protected.HandleFunc("/metadata-details", s.apiHandler.GetMetadataDetails).Methods("GET")
 	protected.HandleFunc("/status", s.apiHandler.GetSystemStatus).Methods("GET")
 	protected.HandleFunc("/test/indexer", s.apiHandler.TestIndexer).Methods("GET")
 	protected.HandleFunc("/test/torrent", s.apiHandler.TestTorrent).Methods("GET")

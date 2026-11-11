@@ -44,13 +44,5 @@ func TestOpenLibrary_SearchBook(t *testing.T) {
 }
 
 func TestOpenLibrary_ImplementsInterfaces(t *testing.T) {
-	client := NewOpenLibraryClient(5 * time.Second)
-
-	var _ BookClient = client
-	var _ Client = client
-
-	_, err := client.SearchMovie("test", 2024)
-	if err == nil {
-		t.Error("SearchMovie should return error")
-	}
+	var _ BookClient = NewOpenLibraryClient(5 * time.Second)
 }

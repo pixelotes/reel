@@ -100,6 +100,7 @@ func (h *APIHandler) AddMedia(w http.ResponseWriter, r *http.Request) {
 		Title        string `json:"title"`
 		Year         int    `json:"year"`
 		ID           string `json:"id"`
+		Provider     string `json:"provider"`
 		Language     string `json:"language"`
 		MinQuality   string `json:"min_quality"`
 		MaxQuality   string `json:"max_quality"`
@@ -129,7 +130,7 @@ func (h *APIHandler) AddMedia(w http.ResponseWriter, r *http.Request) {
 	// Add detailed logging before the database operation
 	h.logger.Info("Creating media with type:", mediaType, "title:", req.Title)
 
-	media, err := h.manager.AddMedia(mediaType, req.ID, req.Title, req.Year,
+	media, err := h.manager.AddMedia(mediaType, req.Provider, req.ID, req.Title, req.Year,
 		req.Language, req.MinQuality, req.MaxQuality, req.AutoDownload, req.StartSeason, req.StartEpisode)
 
 	if err != nil {
@@ -203,6 +204,24 @@ func (h *APIHandler) SearchMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, results)
+}
+
+// GetMetadataDetails returns one title with its episode list, for the season
+// and episode pickers when adding a show.
+func (h *APIHandler) GetMetadataDetails(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	mediaType, provider, id := q.Get("type"), q.Get("provider"), q.Get("id")
+	if mediaType == "" || provider == "" || id == "" {
+		respondError(w, http.StatusBadRequest, "type, provider and id are required")
+		return
+	}
+	item, err := h.manager.GetMetadataDetails(mediaType, provider, id)
+	if err != nil {
+		h.logger.Error("Metadata details failed:", err)
+		respondError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, item)
 }
 
 // System status

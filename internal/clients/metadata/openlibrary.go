@@ -79,16 +79,3 @@ func (c *OpenLibraryClient) SearchBook(title string, author string) ([]*BookResu
 
 	return results, nil
 }
-
-// Implement metadata.Client interface (not supported for books provider)
-func (c *OpenLibraryClient) SearchMovie(title string, year int) ([]*MovieResult, error) {
-	return nil, fmt.Errorf("Open Library does not support movie search")
-}
-
-func (c *OpenLibraryClient) SearchTVShow(title string) ([]*TVShowResult, error) {
-	return nil, fmt.Errorf("Open Library does not support TV show search")
-}
-
-func (c *OpenLibraryClient) GetTVShowDetailsByID(tmdbID int) (*TVShowResult, error) {
-	return nil, fmt.Errorf("Open Library does not support TV show details")
-}

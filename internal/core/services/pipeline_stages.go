@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"github.com/pixelotes/scout"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,7 +12,7 @@ import (
 	"time"
 
 	"reel/internal/clients/notifications"
-	"reel/internal/clients/subtitles"
+	"reel/internal/clients/scoutclient"
 	"reel/internal/config"
 	"reel/internal/database/models"
 	"reel/internal/utils"
@@ -457,10 +458,10 @@ func (s *RenameStage) parseQualityFromTorrentName(torrentName string) string {
 type SubtitlesStage struct {
 	config         *config.Config
 	logger         *utils.Logger
-	subtitleClient *subtitles.Client
+	subtitleClient scout.Backend
 }
 
-func NewSubtitlesStage(cfg *config.Config, logger *utils.Logger, subClient *subtitles.Client) *SubtitlesStage {
+func NewSubtitlesStage(cfg *config.Config, logger *utils.Logger, subClient scout.Backend) *SubtitlesStage {
 	return &SubtitlesStage{
 		config:         cfg,
 		logger:         logger,
@@ -485,49 +486,17 @@ func (s *SubtitlesStage) Execute(ctx *ProcessingContext) error {
 		}
 
 		s.logger.Info(fmt.Sprintf("Searching subtitles for: %s", videoPath))
-
-		subs, err := s.subtitleClient.Search(videoPath, ctx.Media, ctx.SeasonNumber, ctx.EpisodeNumber)
+		sctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		n, err := scoutclient.FetchSubtitles(sctx, s.subtitleClient, ctx.Media, videoPath,
+			ctx.SeasonNumber, ctx.EpisodeNumber, s.config.Subtitles.Languages, s.logger)
+		cancel()
 		if err != nil {
-			s.logger.Error(fmt.Sprintf("Subtitle search failed: %v", err))
-			ctx.Errors = append(ctx.Errors, err)
+			// Subtitles are optional: log, never fail the pipeline.
+			s.logger.Warn(fmt.Sprintf("Subtitles for %s: %v", filepath.Base(videoPath), err))
 			continue
 		}
-
-		if len(subs) == 0 {
-			s.logger.Info("No subtitles found")
-			continue
-		}
-
-		// Download subtitles for all configured languages
-		downloaded := 0
-		for _, lang := range s.config.Subtitles.Languages {
-			var foundSub *subtitles.Subtitle
-			for i := range subs {
-				if subs[i].Language == lang {
-					foundSub = &subs[i]
-					break
-				}
-			}
-
-			if foundSub == nil {
-				s.logger.Info(fmt.Sprintf("No subtitle found for language: %s", lang))
-				continue
-			}
-
-			base := strings.TrimSuffix(videoPath, ext)
-			subPath := fmt.Sprintf("%s.%s.srt", base, lang)
-
-			if err := s.subtitleClient.Download(*foundSub, subPath); err != nil {
-				s.logger.Error(fmt.Sprintf("Failed to download %s subtitle: %v", lang, err))
-				ctx.Errors = append(ctx.Errors, err)
-			} else {
-				s.logger.Info(fmt.Sprintf("Downloaded %s subtitle to: %s", lang, subPath))
-				downloaded++
-			}
-		}
-
-		if downloaded > 0 {
-			s.logger.Info(fmt.Sprintf("Downloaded %d subtitle(s) for: %s", downloaded, filepath.Base(videoPath)))
+		if n > 0 {
+			s.logger.Info(fmt.Sprintf("Downloaded %d subtitle(s) for: %s", n, filepath.Base(videoPath)))
 		}
 	}
 

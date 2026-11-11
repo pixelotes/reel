@@ -58,7 +58,8 @@ type Media struct {
 type TVShow struct {
 	ID       int      `json:"id"`
 	Status   string   `json:"status"`
-	TVmazeID string   `json:"tvmaze_id"`
+	TVmazeID string   `json:"tvmaze_id"` // the provider's show ID, whatever the provider
+	Provider string   `json:"provider,omitempty"`
 	Seasons  []Season `json:"seasons"`
 }
 
@@ -294,7 +295,7 @@ func (r *MediaRepository) Delete(id int) error {
 // --- TV Show Specific Functions ---
 
 func (r *MediaRepository) CreateTVShow(show *TVShow) error {
-	res, err := r.db.Exec("INSERT INTO tv_shows (status, tvmaze_id) VALUES (?, ?)", show.Status, show.TVmazeID)
+	res, err := r.db.Exec("INSERT INTO tv_shows (status, tvmaze_id, provider) VALUES (?, ?, ?)", show.Status, show.TVmazeID, nullString(show.Provider))
 	if err != nil {
 		return err
 	}
@@ -341,10 +342,12 @@ func (r *MediaRepository) GetTVShowByMediaID(mediaID int) (*TVShow, error) {
 	}
 
 	// Now get the show details
-	err = r.db.QueryRow("SELECT id, status, tvmaze_id FROM tv_shows WHERE id = ?", tvShowID.Int64).Scan(&show.ID, &show.Status, &show.TVmazeID)
+	var provider sql.NullString
+	err = r.db.QueryRow("SELECT id, status, tvmaze_id, provider FROM tv_shows WHERE id = ?", tvShowID.Int64).Scan(&show.ID, &show.Status, &show.TVmazeID, &provider)
 	if err != nil {
 		return nil, err
 	}
+	show.Provider = provider.String
 
 	// Get all seasons first (collect into slice)
 	seasonRows, err := r.db.Query("SELECT id, season_number FROM seasons WHERE show_id = ? ORDER BY season_number", show.ID)
@@ -618,4 +621,8 @@ func (r *MediaRepository) GetSeriesWithFailedEpisodes() ([]Media, error) {
 		mediaList = append(mediaList, *media)
 	}
 	return mediaList, nil
+}
+
+func nullString(s string) sql.NullString {
+	return sql.NullString{String: s, Valid: s != ""}
 }

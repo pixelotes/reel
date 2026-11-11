@@ -4,7 +4,7 @@
 
 Reel supports anime with dedicated metadata providers, naming conventions, and indexer sources.
 
-1. **Add** -- Search from the UI. Metadata is fetched from AniList (GraphQL API, no API key needed).
+1. **Add** -- Search from the UI. Metadata comes from the providers in `anime.providers`, in order (TVmaze, then AniList, by default; no API keys needed).
 2. **Track** -- Monitors for new episodes as they air.
 3. **Search** -- Queries anime-specific indexer sources.
 4. **Download** -- The best match is sent to the torrent client in the configured `download_folder`.
@@ -25,7 +25,7 @@ Reel organizes anime into season subfolders:
 
 ```yaml
 anime:
-  providers: ["anilist"]
+  providers: ["tvmaze", "anilist"]
   download_folder: "/downloads/anime"
   destination_folder: "/media/anime"
   move_method: ["hardlink", "copy"]
@@ -47,13 +47,15 @@ anime:
 
 ## Metadata Providers
 
-| Provider | Description                                      | API Key Required |
-|----------|--------------------------------------------------|-----------------|
-| AniList  | GraphQL API, results sorted by popularity        | No              |
-| AniDB    | Comprehensive anime database                     | No              |
+| Provider | Description | API Key Required |
+|----------|-------------|-----------------|
+| `tvmaze` | One entry per show with every season, episode titles and air dates, plus IMDb and TVDB IDs | No |
+| `anilist` | One entry per season, numbered episodes without titles | No |
+| `kitsu` | One entry per season, with episode titles | No |
+| `tmdb` | Every season, episode titles, IMDb and TVDB IDs | Yes |
 
 !!! tip
-    AniList is recommended for most users. It is free, requires no API key, and returns results sorted by popularity which helps surface the most relevant matches.
+    Put `tvmaze` first. AniList and Kitsu list each season of an anime as a separate title, so tracking the show from AniList only gets its first season (for Frieren: season 1's 28 episodes, no season 2), with numbered episodes and no IMDb ID for subtitle searches. Keep `anilist` second as a fallback for titles TVmaze does not have.
 
 ## Anime Naming
 

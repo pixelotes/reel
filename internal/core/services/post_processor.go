@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"github.com/pixelotes/scout"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,7 +13,7 @@ import (
 	"time"
 
 	"reel/internal/clients/notifications"
-	"reel/internal/clients/subtitles"
+	"reel/internal/clients/scoutclient"
 	"reel/internal/clients/torrent"
 	"reel/internal/config"
 	"reel/internal/database/models"
@@ -37,12 +38,12 @@ type PostProcessor struct {
 	logger         *utils.Logger
 	mediaRepo      *models.MediaRepository
 	notifiers      []notifications.Notifier
-	subtitleClient *subtitles.Client
+	subtitleClient scout.Backend
 	pipeline       *Pipeline // New pipeline-based processor
 }
 
 // NewPostProcessor creates a new instance of the PostProcessor.
-func NewPostProcessor(cfg *config.Config, logger *utils.Logger, mediaRepo *models.MediaRepository, notifiers []notifications.Notifier, subClient *subtitles.Client) *PostProcessor {
+func NewPostProcessor(cfg *config.Config, logger *utils.Logger, mediaRepo *models.MediaRepository, notifiers []notifications.Notifier, subClient scout.Backend) *PostProcessor {
 	pp := &PostProcessor{
 		config:         cfg,
 		logger:         logger,
@@ -429,33 +430,9 @@ func (pp *PostProcessor) notifyPostProcessCompleted(media *models.Media, torrent
 
 func (pp *PostProcessor) downloadSubtitles(media *models.Media, videoPath string, season, episode int) {
 	pp.logger.Info(fmt.Sprintf("Attempting to download subtitles for: %s", videoPath))
-
-	subs, err := pp.subtitleClient.Search(videoPath, media, season, episode)
-	if err != nil {
-		pp.logger.Error("Failed to search subtitles:", err)
-		return
-	}
-
-	if len(subs) == 0 {
-		pp.logger.Info("No subtitles found.")
-		return
-	}
-
-	// Download the best one (first one usually has highest score)
-	bestSub := subs[0]
-	pp.logger.Info("Downloading best subtitle:", bestSub.FileName, "Lang:", bestSub.Language)
-
-	// Construct subtitle path: same as video but with .lang.srt
-	// videoPath: /path/to/Movie (2020).mkv
-	// subPath:   /path/to/Movie (2020).en.srt
-
-	ext := filepath.Ext(videoPath)
-	base := strings.TrimSuffix(videoPath, ext)
-	subPath := fmt.Sprintf("%s.%s.srt", base, bestSub.Language)
-
-	if err := pp.subtitleClient.Download(bestSub, subPath); err != nil {
-		pp.logger.Error("Failed to download subtitle:", err)
-	} else {
-		pp.logger.Info("Subtitle downloaded to:", subPath)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if _, err := scoutclient.FetchSubtitles(ctx, pp.subtitleClient, media, videoPath, season, episode, pp.config.Subtitles.Languages, pp.logger); err != nil {
+		pp.logger.Warn("Subtitles:", err)
 	}
 }

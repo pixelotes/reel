@@ -42,7 +42,7 @@ tv-shows:
       api_key: "your_scarf_api_key"
 
 anime:
-  providers: ["anilist"]
+  providers: ["tvmaze", "anilist"]
   download_folder: "/downloads/anime"
   destination_folder: "/media/anime"
   move_method: ["hardlink", "copy"]
