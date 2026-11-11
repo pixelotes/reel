@@ -3,14 +3,14 @@ package core
 import (
 	"database/sql"
 	"fmt"
+	"github.com/pixelotes/scout"
 	"net/http"
-	"strings"
 	"time"
 
 	"reel/internal/clients/indexers"
 	"reel/internal/clients/metadata"
 	"reel/internal/clients/notifications"
-	"reel/internal/clients/subtitles"
+	"reel/internal/clients/scoutclient"
 	"reel/internal/clients/torrent"
 	"reel/internal/config"
 	"reel/internal/core/services"
@@ -37,7 +37,7 @@ type Manager struct {
 	postProcessor     *services.PostProcessor // Kept for reload logic
 
 	// Clients
-	subtitleClient *subtitles.Client
+	scout scout.Backend
 
 	searchQueue chan models.Media
 	httpClient  *http.Client
@@ -102,70 +102,29 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 
 	m.mediaRepo = models.NewMediaRepository(m.db, m.logger)
 
-	// Initialize Subtitle Client
-	m.subtitleClient = subtitles.NewClient(cfg, m.logger)
-
-	m.postProcessor = services.NewPostProcessor(cfg, m.logger, m.mediaRepo, notifiers, m.subtitleClient)
-	// --- Initialize Metadata Clients ---
-	tmdbClient := metadata.NewTMDBClient(cfg.Metadata.TMDB.APIKey, cfg.Metadata.Language, metadataTimeout)
-	// Warn once per provider, not once per media type that lists it.
-	warned := map[string]bool{}
-	warnOnce := func(provider string, msg ...interface{}) {
-		if !warned[provider] {
-			warned[provider] = true
-			m.logger.Warn(msg...)
-		}
+	// Metadata (movies, shows, anime) and subtitles go through scout.
+	backend, err := scoutclient.New(cfg, m.logger)
+	if err != nil {
+		m.logger.Error("Metadata/subtitles disabled:", err)
 	}
-	initMetadataProvider := func(provider string) metadata.Client {
-		switch provider {
-		case "tmdb":
-			if apiKeyMissing(cfg.Metadata.TMDB.APIKey) {
-				warnOnce(provider, "TMDB metadata disabled: metadata.tmdb.api_key is not set (get a free key at themoviedb.org)")
-				return nil
-			}
-			return tmdbClient
-		case "imdb":
-			// Keyless: IMDb search suggestions + Cinemeta. Movies only.
-			return metadata.NewIMDBClient(cfg.Metadata.IMDB.APIKey, metadataTimeout, m.logger)
-		case "tvmaze":
-			return metadata.NewTVmazeClient(metadataTimeout)
-		case "anilist":
-			return metadata.NewAniListClient(metadataTimeout)
-		case "trakt":
-			return metadata.NewTraktClient(cfg.Metadata.Trakt.ClientID, tmdbClient, metadataTimeout, m.logger)
+	m.scout = backend
+	var subtitleBackend scout.Backend
+	if cfg.Subtitles.Enabled {
+		subtitleBackend = backend
+	}
+
+	m.postProcessor = services.NewPostProcessor(cfg, m.logger, m.mediaRepo, notifiers, subtitleBackend)
+
+	// Ebooks keep Reel's own book providers.
+	var bookClients []metadata.BookClient
+	for _, name := range cfg.Ebooks.Providers {
+		switch name {
 		case "googlebooks":
-			return metadata.NewGoogleBooksClient(cfg.Metadata.GoogleBooks.APIKey, metadataTimeout)
+			bookClients = append(bookClients, metadata.NewGoogleBooksClient(cfg.Metadata.GoogleBooks.APIKey, metadataTimeout))
 		case "openlibrary":
-			return metadata.NewOpenLibraryClient(metadataTimeout)
+			bookClients = append(bookClients, metadata.NewOpenLibraryClient(metadataTimeout))
 		case "gutendex":
-			return metadata.NewGutendexClient(metadataTimeout)
-		}
-		return nil
-	}
-
-	metadataClients := make(map[models.MediaType][]metadata.Client)
-	// Movies
-	for _, providerName := range cfg.Movies.Providers {
-		if client := initMetadataProvider(providerName); client != nil {
-			metadataClients[models.MediaTypeMovie] = append(metadataClients[models.MediaTypeMovie], client)
-		}
-	}
-	// TV Shows
-	for _, providerName := range cfg.TVShows.Providers {
-		if client := initMetadataProvider(providerName); client != nil {
-			metadataClients[models.MediaTypeTVShow] = append(metadataClients[models.MediaTypeTVShow], client)
-		}
-	}
-	// Anime
-	for _, providerName := range cfg.Anime.Providers {
-		if client := initMetadataProvider(providerName); client != nil {
-			metadataClients[models.MediaTypeAnime] = append(metadataClients[models.MediaTypeAnime], client)
-		}
-	}
-	// Ebooks
-	for _, providerName := range cfg.Ebooks.Providers {
-		if client := initMetadataProvider(providerName); client != nil {
-			metadataClients[models.MediaTypeEbook] = append(metadataClients[models.MediaTypeEbook], client)
+			bookClients = append(bookClients, metadata.NewGutendexClient(metadataTimeout))
 		}
 	}
 
@@ -261,7 +220,7 @@ func (m *Manager) reloadConfig(cfg *config.Config) {
 	matcherService := services.NewMatcherService(cfg, m.logger)
 	torrentSelector := services.NewTorrentSelector(cfg, matcherService, m.logger)
 
-	m.libraryService = services.NewLibraryService(cfg, m.mediaRepo, metadataClients, m.subtitleClient, m.logger)
+	m.libraryService = services.NewLibraryService(cfg, m.mediaRepo, backend, bookClients, m.logger)
 	m.downloaderService = services.NewDownloaderService(cfg, m.logger, torrentClient, m.mediaRepo, m.postProcessor, notifiers)
 	// Each indexer's HTTP client already times out after search_timeout; the
 	// small margin lets an indexer answering right at that limit still count.
@@ -399,8 +358,8 @@ func (m *Manager) GetMediaByID(id int) (*models.Media, error) {
 	return m.mediaRepo.GetByID(id)
 }
 
-func (m *Manager) AddMedia(mediaType models.MediaType, id string, title string, year int, language, minQuality, maxQuality string, autoDownload bool, startSeason, startEpisode int) (*models.Media, error) {
-	media, err := m.libraryService.AddMedia(mediaType, id, title, year, language, minQuality, maxQuality, autoDownload, startSeason, startEpisode)
+func (m *Manager) AddMedia(mediaType models.MediaType, provider, id string, title string, year int, language, minQuality, maxQuality string, autoDownload bool, startSeason, startEpisode int) (*models.Media, error) {
+	media, err := m.libraryService.AddMedia(mediaType, provider, id, title, year, language, minQuality, maxQuality, autoDownload, startSeason, startEpisode)
 	if err != nil {
 		return nil, err
 	}
@@ -471,6 +430,10 @@ func (m *Manager) GetTVShowDetails(mediaID int) (*models.TVShow, error) {
 
 func (m *Manager) SearchMetadata(query string, mediaType string) ([]interface{}, error) {
 	return m.libraryService.SearchMetadata(query, mediaType)
+}
+
+func (m *Manager) GetMetadataDetails(mediaType, provider, id string) (*scout.Item, error) {
+	return m.libraryService.GetMetadataDetails(mediaType, provider, id)
 }
 
 func (m *Manager) UpdateMediaSettings(id int, minQuality, maxQuality string, autoDownload bool) error {
@@ -555,11 +518,4 @@ func (m *Manager) ResetSystem() {
 	// Re-init?
 	// This usually just resets clients. ReloadConfig does that.
 	m.reloadConfig(m.config)
-}
-
-// apiKeyMissing reports whether an API key is unset or still the
-// REPLACE_WITH_... placeholder from the sample config.
-func apiKeyMissing(key string) bool {
-	key = strings.TrimSpace(key)
-	return key == "" || strings.HasPrefix(key, "REPLACE_WITH_")
 }

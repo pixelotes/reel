@@ -62,17 +62,5 @@ func TestGoogleBooks_SearchBookWithAuthor(t *testing.T) {
 }
 
 func TestGoogleBooks_ImplementsInterfaces(t *testing.T) {
-	client := NewGoogleBooksClient("key", 5*time.Second)
-
-	var _ BookClient = client
-	var _ Client = client
-
-	_, err := client.SearchMovie("test", 2024)
-	if err == nil {
-		t.Error("SearchMovie should return error")
-	}
-	_, err = client.SearchTVShow("test")
-	if err == nil {
-		t.Error("SearchTVShow should return error")
-	}
+	var _ BookClient = NewGoogleBooksClient("key", 5*time.Second)
 }

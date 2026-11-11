@@ -2,8 +2,8 @@ package services
 
 import (
 	"fmt"
+	"github.com/pixelotes/scout"
 	"reel/internal/clients/notifications"
-	"reel/internal/clients/subtitles"
 	"reel/internal/clients/torrent"
 	"reel/internal/config"
 	"reel/internal/database/models"
@@ -205,7 +205,7 @@ type StageFactory struct {
 	logger         *utils.Logger
 	mediaRepo      *models.MediaRepository
 	notifiers      []notifications.Notifier
-	subtitleClient *subtitles.Client
+	subtitleClient scout.Backend
 }
 
 // NewStageFactory creates a new stage factory
@@ -214,7 +214,7 @@ func NewStageFactory(
 	logger *utils.Logger,
 	mediaRepo *models.MediaRepository,
 	notifiers []notifications.Notifier,
-	subtitleClient *subtitles.Client,
+	subtitleClient scout.Backend,
 ) *StageFactory {
 	return &StageFactory{
 		cfg:            cfg,
@@ -266,7 +266,7 @@ func ConfigurablePipelineFactory(
 	logger *utils.Logger,
 	mediaRepo *models.MediaRepository,
 	notifiers []notifications.Notifier,
-	subtitleClient *subtitles.Client,
+	subtitleClient scout.Backend,
 ) (*Pipeline, error) {
 	factory := NewStageFactory(cfg, logger, mediaRepo, notifiers, subtitleClient)
 
@@ -317,7 +317,7 @@ func DefaultPipelineFactory(
 	logger *utils.Logger,
 	mediaRepo *models.MediaRepository,
 	notifiers []notifications.Notifier,
-	subtitleClient *subtitles.Client,
+	subtitleClient scout.Backend,
 ) *Pipeline {
 	stages := []Stage{
 		NewValidateStage(cfg, logger),

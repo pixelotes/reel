@@ -24,16 +24,17 @@ Compared with Sonarr + Radarr (.NET, typically 100+ MB each), Reel covers the co
   - `transmission`, `qbittorrent`, `aria2` (JSON-RPC with `secret`), `deluge`, `rain`.
   - `direct` (plain HTTP downloads, used for ebooks) and `mock` (testing).
 - Indexers (`sources[].type`): `scarf`, `jackett`, `prowlarr` (Torznab/Newznab), `rss` feeds, and `gutendex` for ebooks. `search_mode` selects the Torznab search type (`search`, `movie-search`, `tv-search`).
-- Metadata providers (per media type, tried in order):
+- Metadata providers (per media type, tried in order), from [Scout](https://github.com/pixelotes/scout):
   - `tmdb` (needs an API key)
   - `imdb` (keyless: IMDb suggestions + Cinemeta; good fallback for movies)
-  - `tvmaze`, `anilist` (keyless), `trakt` (needs `client_id`)
-  - `googlebooks`, `openlibrary`, `gutendex` for ebooks
+  - `tvmaze`, `anilist`, `kitsu` (keyless), `trakt` (needs `client_id`)
+  - `googlebooks`, `openlibrary`, `gutendex` for ebooks (built into Reel)
+- Lookups run inside Reel or against a shared Scout service (`crawlers.backends`), one as fallback for the other.
 - Torrent selection: quality preferences, minimum seeders, regex rejection list (`reject-common`), optional magnet-to-.torrent conversion (bundled `magnet2torrent` binary).
 - Extra trackers appended to every added torrent (`extra_trackers_list`).
 - Post-processing pipeline with configurable, conditional stages and rollback on failure. Default stages: `validate`, `create_folders`, `move_files`, `rename`, `save_metadata`, `subtitles`, `notify`. Extra stages available: `permission_check`, `space_check`, `extract`, `health_check`, `enrich_metadata`, `duplicate_check`.
 - File renaming templates per media type.
-- Subtitles from OpenSubtitles (API key required), rate-limited with retries, plus a periodic scan for missing subtitles.
+- Subtitles via Scout from OpenSubtitles, SubDL and Subdivx (Spanish, through a FlareSolverr-compatible solver such as Parasol), searched together: OpenSubtitles by file hash, then IMDb/TMDB ID, then title; the best candidate per language (hash match, trusted, most downloaded). Downloaded files are cached in `data/subtitle-cache`, and the periodic scan for missing subtitles stops once the daily quota is used up.
 - TV: new-episode checks, per-episode search/download, configurable delay after air date, custom anime search terms.
 - Calendar of upcoming episode air dates.
 - Cleanup of completed torrents by age (`keep_torrents_for_days`) or seed ratio (`keep_torrents_seed_ratio`).
@@ -92,6 +93,17 @@ torrent_client:
 database:
   path: "./data/reel.db"
 
+# Where metadata and subtitle lookups run, via scout
+# (https://github.com/pixelotes/scout). "local" runs the providers inside
+# Reel; "service" asks a scout server. With both, the second is only used
+# when the first fails (down, timeout), never when it answers "not found".
+crawlers:
+  backends: ["local"]            # default ["local"]; e.g. ["service", "local"]
+  service:
+    url: ""                      # e.g. http://scout:8090
+    token: ""                    # scout's server.token, if set
+    timeout: 10                  # seconds, default 10
+
 metadata:
   language: "en"                 # default en
   timeout: 10                    # seconds, default 10
@@ -127,7 +139,7 @@ tv-shows:
       search_mode: search
 
 anime:
-  providers: ["anilist", "tvmaze"]
+  providers: ["tvmaze", "anilist"]   # tvmaze: every season, episode titles, IMDb ID
   download_folder: "/storage/Downloads/Anime"
   destination_folder: "/storage/Completed/Anime"
   move_method: ["hardlink", "symlink", "move", "copy"]
@@ -202,7 +214,10 @@ notifications:
 
 subtitles:
   enabled: true
-  api_key: ""                    # OpenSubtitles; required when enabled
+  api_key: ""                    # OpenSubtitles
+  subdl_api_key: ""              # SubDL (free key from your subdl.com profile)
+  flaresolverr_url: ""           # enables Subdivx (Spanish), e.g. http://parasol:8191
+  # providers: ["opensubtitles", "subdl", "subdivx"]   # default; each needs its key above
   languages: ["en", "es"]
 ```
 
@@ -215,7 +230,7 @@ More detail (pipeline conditions, stages, recovery, providers) lives in `documen
   - `GET/POST /media`, `DELETE /media/{id}`, `POST /media/{id}/retry`
   - `GET /media/{id}/search`, `POST /media/{id}/download` (manual search and grab)
   - episode search/download under `/media/{id}/season/{s}/episode/{e}/...`
-  - `GET /search-metadata`, `GET /calendar`, `GET /status`
+  - `GET /search-metadata`, `GET /metadata-details` (episode list for one title), `GET /calendar`, `GET /status`
   - `GET /test/indexer`, `GET /test/torrent`
   - `GET/POST /config` (read, save and reload the YAML config)
   - `/stream/video/{id}`, `/stream/subtitles/{id}`, `/stream/ebook/{id}`

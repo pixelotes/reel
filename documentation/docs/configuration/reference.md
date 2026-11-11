@@ -44,6 +44,19 @@ Connection settings for the download client Reel manages.
 
 ---
 
+## Crawlers
+
+Where metadata and subtitle lookups run, via [Scout](https://github.com/pixelotes/scout). Provider keys and order still come from `metadata`, `subtitles` and each media type's `providers`.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `crawlers.backends` | []string | `["local"]` | `local` (providers inside Reel), `service` (a Scout server), or both in order; the second is only used when the first fails. |
+| `crawlers.service.url` | string | | Scout server URL, e.g. `http://scout:8090`. Required when `backends` includes `service`. |
+| `crawlers.service.token` | string | | Scout's `server.token`, if it has one. |
+| `crawlers.service.timeout` | int | `10` | Request timeout in seconds. |
+
+---
+
 ## Metadata
 
 Settings for metadata providers used to look up movie, TV show, and anime information.
@@ -90,7 +103,10 @@ Configure automatic subtitle downloading via OpenSubtitles.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `subtitles.enabled` | bool | `false` | Enable automatic subtitle downloads. |
-| `subtitles.api_key` | string | | OpenSubtitles API key. **Required if subtitles are enabled.** |
+| `subtitles.api_key` | string | | OpenSubtitles API key. |
+| `subtitles.subdl_api_key` | string | | SubDL API key (free, from your subdl.com profile). |
+| `subtitles.flaresolverr_url` | string | | FlareSolverr-compatible solver (e.g. Parasol at `http://parasol:8191`). Enables Subdivx, Spanish only. |
+| `subtitles.providers` | []string | `["opensubtitles", "subdl", "subdivx"]` | Providers searched together; each is skipped without its key or solver. With subtitles enabled and no Scout service, at least one must be configured. |
 | `subtitles.languages` | []string | | List of language codes to download subtitles for, e.g., `["en", "es"]`. |
 | `subtitles.download_path` | string | | Optional override path where subtitle files are saved. If empty, subtitles are saved alongside the media file. |
 

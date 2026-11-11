@@ -1,6 +1,8 @@
 package services
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,180 +11,168 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pixelotes/scout"
+
 	"reel/internal/clients/metadata"
-	"reel/internal/clients/subtitles"
+	"reel/internal/clients/scoutclient"
 	"reel/internal/config"
 	"reel/internal/database/models"
 	"reel/internal/utils"
 )
 
 type LibraryService struct {
-	config          *config.Config
-	mediaRepo       *models.MediaRepository
-	metadataClients map[models.MediaType][]metadata.Client
-	subtitleClient  *subtitles.Client
-	logger          *utils.Logger
+	config      *config.Config
+	mediaRepo   *models.MediaRepository
+	scout       scout.Backend
+	bookClients []metadata.BookClient
+	logger      *utils.Logger
 }
 
-func NewLibraryService(cfg *config.Config, repo *models.MediaRepository, clients map[models.MediaType][]metadata.Client, subClient *subtitles.Client, logger *utils.Logger) *LibraryService {
+// NewLibraryService wires the library. Movies, shows and anime go through
+// scout; ebooks keep Reel's own book providers.
+func NewLibraryService(cfg *config.Config, repo *models.MediaRepository, backend scout.Backend, bookClients []metadata.BookClient, logger *utils.Logger) *LibraryService {
 	return &LibraryService{
-		config:          cfg,
-		mediaRepo:       repo,
-		metadataClients: clients,
-		subtitleClient:  subClient,
-		logger:          logger,
+		config:      cfg,
+		mediaRepo:   repo,
+		scout:       backend,
+		bookClients: bookClients,
+		logger:      logger,
 	}
 }
 
-func (l *LibraryService) AddMedia(mediaType models.MediaType, id string, title string, year int, language, minQuality, maxQuality string, autoDownload bool, startSeason, startEpisode int) (*models.Media, error) {
-	l.logger.Info("Parameters - Type:", mediaType, "ID:", id, "Title:", title, "Year:", year, "StartSeason:", startSeason, "StartEpisode:", startEpisode)
+// metadataBudget bounds one metadata operation; a full TMDB show lookup makes
+// one call per season.
+const metadataBudget = 60 * time.Second
+
+// lookupItem resolves full details, episodes included: by provider and ID
+// when the UI sent them, otherwise by searching the title and taking the best
+// match.
+func (l *LibraryService) lookupItem(ctx context.Context, mediaType models.MediaType, provider, id, title string, year int) (*scout.Item, error) {
+	if l.scout == nil {
+		return nil, errors.New("metadata is unavailable (see the startup log)")
+	}
+	kind, ok := scoutclient.Kind(mediaType)
+	if !ok {
+		return nil, fmt.Errorf("no metadata kind for %s", mediaType)
+	}
+	var searchIDs scout.IDs
+	if provider == "" || id == "" {
+		items, err := l.scout.Search(ctx, scout.Query{
+			Kind: kind, Title: title, Year: year, Limit: 1,
+			Providers: scoutclient.Providers(l.config, mediaType),
+		})
+		if err != nil {
+			return nil, err
+		}
+		provider, id, searchIDs = items[0].Provider, items[0].ID, items[0].IDs
+	}
+	item, err := l.scout.Get(ctx, scout.Lookup{Kind: kind, Provider: provider, ID: id})
+	if err != nil {
+		return nil, err
+	}
+	// Keep IDs only the search result carried (e.g. Cinemeta's TMDB ID).
+	if item.IDs == nil {
+		item.IDs = scout.IDs{}
+	}
+	for k, v := range searchIDs {
+		if _, ok := item.IDs[k]; !ok {
+			item.IDs[k] = v
+		}
+	}
+	return item, nil
+}
+
+func (l *LibraryService) AddMedia(mediaType models.MediaType, provider, id string, title string, year int, language, minQuality, maxQuality string, autoDownload bool, startSeason, startEpisode int) (*models.Media, error) {
+	l.logger.Info("Adding media - Type:", mediaType, "Provider:", provider, "ID:", id, "Title:", title, "Year:", year, "StartSeason:", startSeason, "StartEpisode:", startEpisode)
 
 	var overview, posterURL *string
 	var rating *float64
-	var tvShowData *metadata.TVShowResult
-	var metadataID *int
+	var item *scout.Item
+	var tmdbID *int
+	var imdbID string
 
-	l.logger.Info("Looking for metadata providers for type:", mediaType)
-	providers := l.metadataClients[mediaType]
-	l.logger.Info("Found", len(providers), "metadata providers")
-
-	if len(providers) > 0 {
-		client := providers[0]
-		l.logger.Info("Using first metadata provider")
-
-		switch mediaType {
-		case models.MediaTypeMovie:
-			l.logger.Info("Processing movie metadata...")
-			movieData, err := client.SearchMovie(title, year)
-			if err != nil {
-				l.logger.Error("Movie metadata search failed:", err)
-			} else if len(movieData) > 0 {
-				l.logger.Info("Movie metadata found - ID:", movieData[0].ID, "Title:", movieData[0].Title)
-				if strings.HasPrefix(movieData[0].ID, "tt") {
-					// IMDb provider: not a TMDB ID, nothing to store there.
-					l.logger.Info("Movie metadata from IMDb:", movieData[0].ID)
-				} else if tmdbID, parseErr := strconv.Atoi(movieData[0].ID); parseErr == nil {
-					metadataID = &tmdbID
-					l.logger.Info("Parsed TMDB ID:", *metadataID)
-				} else {
-					l.logger.Error("Failed to parse TMDB ID:", movieData[0].ID, "Error:", parseErr)
-				}
-				overview = &movieData[0].Overview
-				posterURL = &movieData[0].PosterURL
-				rating = &movieData[0].Rating
-				if title == "" {
-					title = movieData[0].Title
-				}
-				if year == 0 {
-					year = movieData[0].Year
-				}
-				l.logger.Info("Movie data processed successfully")
-			} else {
-				l.logger.Warn("No movie metadata found")
+	if mediaType == models.MediaTypeEbook {
+		for _, bc := range l.bookClients {
+			books, err := bc.SearchBook(title, "")
+			if err != nil || len(books) == 0 {
+				continue
 			}
-		case models.MediaTypeEbook:
-			l.logger.Info("Processing ebook metadata...")
-			if bookClient, ok := client.(metadata.BookClient); ok {
-				bookData, err := bookClient.SearchBook(title, "")
-				if err != nil {
-					l.logger.Error("Ebook metadata search failed:", err)
-				} else if len(bookData) > 0 {
-					l.logger.Info("Ebook metadata found - Title:", bookData[0].Title)
-					overview = &bookData[0].Overview
-					posterURL = &bookData[0].PosterURL
-					rating = &bookData[0].Rating
-					if title == "" {
-						title = bookData[0].Title
-					}
-					if year == 0 {
-						year = bookData[0].Year
-					}
-					l.logger.Info("Ebook data processed successfully")
-				} else {
-					l.logger.Warn("No ebook metadata found")
-				}
+			b := books[0]
+			overview, posterURL, rating = &b.Overview, &b.PosterURL, &b.Rating
+			if year == 0 {
+				year = b.Year
 			}
-		case models.MediaTypeTVShow, models.MediaTypeAnime:
-			l.logger.Info("Processing TV show/anime metadata...")
-			tvShowDataSlice, err := client.SearchTVShow(title)
-			if err != nil {
-				l.logger.Error("TV show/anime metadata search failed:", err)
-			} else if len(tvShowDataSlice) > 0 {
-				tvShowData = tvShowDataSlice[0]
-				l.logger.Info("TV show/anime metadata found - ID:", tvShowData.ID, "Title:", tvShowData.Title)
-				overview = &tvShowData.Overview
-				posterURL = &tvShowData.PosterURL
-				rating = &tvShowData.Rating
-				if title == "" {
-					title = tvShowData.Title
-				}
-				if year == 0 {
-					year = tvShowData.Year
-				}
-				l.logger.Info("TV show/anime data processed successfully")
-			} else {
-				l.logger.Warn("No TV show/anime metadata found")
+			break
+		}
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), metadataBudget)
+		defer cancel()
+		var err error
+		item, err = l.lookupItem(ctx, mediaType, provider, id, title, year)
+		if err != nil {
+			l.logger.Warn("No metadata for", title, ":", err)
+			if mediaType != models.MediaTypeMovie {
+				// A show without episodes cannot be tracked.
+				return nil, fmt.Errorf("could not find %q: %w", title, err)
+			}
+		} else {
+			l.logger.Info("Metadata from", item.Provider, "- ID:", item.ID, "Title:", item.Title, "IDs:", item.IDs)
+			overview, posterURL, rating = &item.Overview, &item.PosterURL, &item.Rating
+			if title == "" {
+				title = item.Title
+			}
+			if year == 0 {
+				year = item.Year
+			}
+			imdbID = item.IDs["imdb"]
+			if n, err := strconv.Atoi(item.IDs["tmdb"]); err == nil {
+				tmdbID = &n
 			}
 		}
 	}
 
 	var tvShowID *int
-	if (mediaType == models.MediaTypeTVShow || mediaType == models.MediaTypeAnime) && tvShowData != nil {
-		l.logger.Info("Creating TV show/anime database entries...")
-		show := &models.TVShow{
-			Status:   tvShowData.Status,
-			TVmazeID: tvShowData.ID, // Using TVmazeID for both for now
-		}
-
-		l.logger.Info("Creating TV show/anime record...")
+	if (mediaType == models.MediaTypeTVShow || mediaType == models.MediaTypeAnime) && item != nil {
+		show := &models.TVShow{Status: item.Status, TVmazeID: item.ID, Provider: item.Provider}
 		if err := l.mediaRepo.CreateTVShow(show); err != nil {
-			l.logger.Error("CRITICAL: Failed to create TV show/anime:", err)
 			return nil, fmt.Errorf("failed to create tv show/anime: %w", err)
 		}
-		l.logger.Info("TV show/anime created with ID:", show.ID)
 		tvShowID = &show.ID
 
-		l.logger.Info("Creating", len(tvShowData.Seasons), "seasons...")
-		for seasonNum, episodes := range tvShowData.Seasons {
-			l.logger.Info("Creating season", seasonNum, "with", len(episodes), "episodes")
+		for _, seasonNum := range sortedSeasons(item.Seasons) {
 			season := &models.Season{ShowID: show.ID, SeasonNumber: seasonNum}
 			if err := l.mediaRepo.CreateSeason(season); err != nil {
-				l.logger.Error("CRITICAL: Failed to create season:", seasonNum, "Error:", err)
-				return nil, fmt.Errorf("failed to create season: %w", err)
+				return nil, fmt.Errorf("failed to create season %d: %w", seasonNum, err)
 			}
-			l.logger.Info("Season", seasonNum, "created with ID:", season.ID)
-
-			for _, ep := range episodes {
+			for _, ep := range item.Seasons[seasonNum] {
 				status := models.StatusPending
 				if ep.AirDate != "" {
-					airDate, _ := time.Parse("2006-01-02", ep.AirDate)
-					if airDate.After(time.Now()) {
+					if airDate, err := time.Parse("2006-01-02", ep.AirDate); err == nil && airDate.After(time.Now()) {
 						status = models.StatusTBA
 					}
 				}
-				if seasonNum < startSeason || (seasonNum == startSeason && ep.EpisodeNumber < startEpisode) {
+				if seasonNum < startSeason || (seasonNum == startSeason && ep.Number < startEpisode) {
 					status = models.StatusSkipped
 				}
 				episode := &models.Episode{
 					SeasonID:      season.ID,
-					EpisodeNumber: ep.EpisodeNumber,
+					EpisodeNumber: ep.Number,
 					Title:         ep.Title,
 					AirDate:       ep.AirDate,
 					Status:        status,
 				}
 				if err := l.mediaRepo.CreateEpisode(episode); err != nil {
-					l.logger.Error("CRITICAL: Failed to create episode:", ep.EpisodeNumber, "Error:", err)
-					return nil, fmt.Errorf("failed to create episode: %w", err)
+					return nil, fmt.Errorf("failed to create episode %d: %w", ep.Number, err)
 				}
 			}
 		}
-		l.logger.Info("All TV show/anime data created successfully")
+		l.logger.Info("Created show with", len(item.Seasons), "seasons")
 	}
 
-	l.logger.Info("Creating main media record...")
 	media := &models.Media{
 		Type:         mediaType,
-		TMDBId:       metadataID,
+		IMDBId:       imdbID,
+		TMDBId:       tmdbID,
 		TVShowID:     tvShowID,
 		Title:        title,
 		Year:         year,
@@ -195,18 +185,21 @@ func (l *LibraryService) AddMedia(mediaType models.MediaType, id string, title s
 		Rating:       rating,
 		AutoDownload: autoDownload,
 	}
-
-	l.logger.Info("About to create media record - TMDB ID:", metadataID, "TV Show ID:", tvShowID)
-
 	if err := l.mediaRepo.Create(media); err != nil {
-		l.logger.Error("CRITICAL: Failed to create media entry:", err)
-		l.logger.Error("Media details - Title:", media.Title, "Type:", media.Type, "TMDB ID:", media.TMDBId, "TV Show ID:", media.TVShowID)
+		l.logger.Error("Failed to create media entry:", err, "- Title:", media.Title, "Type:", media.Type, "TMDB ID:", media.TMDBId)
 		return nil, fmt.Errorf("failed to create media: %w", err)
 	}
-
 	l.logger.Info("Media ID:", media.ID, "Title:", media.Title, "Type:", media.Type)
-
 	return media, nil
+}
+
+func sortedSeasons(seasons map[int][]scout.Episode) []int {
+	nums := make([]int, 0, len(seasons))
+	for n := range seasons {
+		nums = append(nums, n)
+	}
+	sort.Ints(nums)
+	return nums
 }
 
 func (l *LibraryService) CheckForNewEpisodes() {
@@ -220,35 +213,34 @@ func (l *LibraryService) CheckForNewEpisodes() {
 	for _, item := range media {
 		if item.Type == models.MediaTypeTVShow || item.Type == models.MediaTypeAnime {
 			if item.Status == models.StatusMonitoring || item.Status == models.StatusPending {
-				provider := l.metadataClients[item.Type][0] // Assuming first provider
-				l.updateShowMetadata(&item, provider)
+				l.updateShowMetadata(&item)
 			}
 		}
 	}
 }
 
-func (l *LibraryService) updateShowMetadata(media *models.Media, provider metadata.Client) {
+func (l *LibraryService) updateShowMetadata(media *models.Media) {
 	l.logger.Info("Updating metadata for show:", media.Title)
-	remoteShowSlice, err := provider.SearchTVShow(media.Title)
+
+	localShow, err := l.mediaRepo.GetTVShowByMediaID(media.ID)
+	if err != nil || localShow == nil {
+		l.logger.Error("Failed to get local show data for", media.Title, ":", err)
+		return
+	}
+
+	// Shows added before scout have no provider stored: search by title, as
+	// Reel always did.
+	ctx, cancel := context.WithTimeout(context.Background(), metadataBudget)
+	defer cancel()
+	remoteShow, err := l.lookupItem(ctx, media.Type, localShow.Provider, localShow.TVmazeID, media.Title, 0)
 	if err != nil {
 		l.logger.Error("Failed to fetch remote show data for", media.Title, ":", err)
 		return
 	}
 
-	if len(remoteShowSlice) == 0 {
-		l.logger.Error("No remote show data found for", media.Title)
-		return
-	}
-	remoteShow := remoteShowSlice[0]
-
-	localShow, err := l.mediaRepo.GetTVShowByMediaID(media.ID)
-	if err != nil {
-		l.logger.Error("Failed to get local show data for", media.Title, ":", err)
-		return
-	}
-
 	// Logic to compare and update seasons and episodes
-	for seasonNum, episodes := range remoteShow.Seasons {
+	for _, seasonNum := range sortedSeasons(remoteShow.Seasons) {
+		episodes := remoteShow.Seasons[seasonNum]
 		var localSeason *models.Season
 		for i := range localShow.Seasons {
 			if localShow.Seasons[i].SeasonNumber == seasonNum {
@@ -260,7 +252,10 @@ func (l *LibraryService) updateShowMetadata(media *models.Media, provider metada
 		if localSeason == nil {
 			// New season
 			newSeason := &models.Season{ShowID: localShow.ID, SeasonNumber: seasonNum}
-			l.mediaRepo.CreateSeason(newSeason)
+			if err := l.mediaRepo.CreateSeason(newSeason); err != nil {
+				l.logger.Error("Failed to create season", seasonNum, "for", media.Title, ":", err)
+				continue
+			}
 			localShow.Seasons = append(localShow.Seasons, *newSeason)
 			localSeason = newSeason
 		}
@@ -268,7 +263,7 @@ func (l *LibraryService) updateShowMetadata(media *models.Media, provider metada
 		for _, remoteEpisode := range episodes {
 			var localEpisode *models.Episode
 			for i := range localSeason.Episodes {
-				if localSeason.Episodes[i].EpisodeNumber == remoteEpisode.EpisodeNumber {
+				if localSeason.Episodes[i].EpisodeNumber == remoteEpisode.Number {
 					localEpisode = &localSeason.Episodes[i]
 					break
 				}
@@ -285,7 +280,7 @@ func (l *LibraryService) updateShowMetadata(media *models.Media, provider metada
 				}
 				newEpisode := &models.Episode{
 					SeasonID:      localSeason.ID,
-					EpisodeNumber: remoteEpisode.EpisodeNumber,
+					EpisodeNumber: remoteEpisode.Number,
 					Title:         remoteEpisode.Title,
 					AirDate:       remoteEpisode.AirDate,
 					Status:        status,
@@ -421,67 +416,64 @@ func (l *LibraryService) GetPendingMediaForProcessing() []models.Media {
 	return result
 }
 
-// SearchMetadata searches for metadata using configured providers
+// SearchMetadata returns candidates for the add-media dialog. Movies, shows
+// and anime come from scout (no episode lists; see GetMetadataDetails);
+// ebooks from Reel's book providers.
 func (l *LibraryService) SearchMetadata(query string, mediaType string) ([]interface{}, error) {
-	providers := l.metadataClients[models.MediaType(mediaType)]
+	t := models.MediaType(mediaType)
+	var results []interface{}
+
+	if t == models.MediaTypeEbook {
+		if len(l.bookClients) == 0 {
+			return nil, fmt.Errorf("no ebook metadata provider configured")
+		}
+		var failures []string
+		for _, bc := range l.bookClients {
+			books, err := bc.SearchBook(query, "")
+			if err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", providerName(bc), err))
+				continue
+			}
+			for _, b := range books {
+				results = append(results, b)
+			}
+			return results, nil
+		}
+		return nil, fmt.Errorf("all ebook providers failed: %s", strings.Join(failures, "; "))
+	}
+
+	kind, ok := scoutclient.Kind(t)
+	if !ok {
+		return nil, fmt.Errorf("unsupported media type for metadata search: %s", mediaType)
+	}
+	if l.scout == nil {
+		return nil, errors.New("metadata is unavailable (see the startup log)")
+	}
+	providers := scoutclient.Providers(l.config, t)
 	if len(providers) == 0 {
-		return nil, fmt.Errorf("no metadata provider configured for '%s' (a listed provider may be disabled, e.g. TMDB without metadata.tmdb.api_key; see the startup log)", mediaType)
+		return nil, fmt.Errorf("no metadata provider configured for '%s'", mediaType)
 	}
-
-	// Try each provider in order, fall back to next on error
-	var failures []string
-	for _, client := range providers {
-		var results []interface{}
-		var err error
-
-		switch mediaType {
-		case string(models.MediaTypeMovie):
-			var res []*metadata.MovieResult
-			res, err = client.SearchMovie(query, 0)
-			if err == nil {
-				for _, r := range res {
-					results = append(results, r)
-				}
-			}
-		case string(models.MediaTypeTVShow), string(models.MediaTypeAnime):
-			var res []*metadata.TVShowResult
-			res, err = client.SearchTVShow(query)
-			if err == nil {
-				for _, r := range res {
-					results = append(results, r)
-				}
-			}
-		case string(models.MediaTypeEbook):
-			if bookClient, ok := client.(metadata.BookClient); ok {
-				var res []*metadata.BookResult
-				res, err = bookClient.SearchBook(query, "")
-				if err == nil {
-					for _, r := range res {
-						results = append(results, r)
-					}
-				}
-			} else {
-				continue // This provider doesn't support books, try next
-			}
-		default:
-			return nil, fmt.Errorf("unsupported media type for metadata search: %s", mediaType)
-		}
-
-		if err != nil {
-			l.logger.Warn("Metadata provider failed, trying next:", err)
-			failures = append(failures, fmt.Sprintf("%s: %v", providerName(client), err))
-			continue
-		}
-
-		return results, nil
+	ctx, cancel := context.WithTimeout(context.Background(), metadataBudget)
+	defer cancel()
+	items, err := l.scout.Search(ctx, scout.Query{Kind: kind, Title: query, Limit: 10, Providers: providers})
+	if errors.Is(err, scout.ErrNotFound) {
+		return []interface{}{}, nil
 	}
-
-	if len(failures) == 0 {
-		return nil, fmt.Errorf("no metadata provider for '%s' supports this search", mediaType)
+	if err != nil {
+		return nil, err
 	}
-	// Report every provider's reason: only showing the last one hid e.g. a
-	// missing TMDB key behind a later provider's unrelated error.
-	return nil, fmt.Errorf("all metadata providers failed: %s", strings.Join(failures, "; "))
+	for _, it := range items {
+		results = append(results, it)
+	}
+	return results, nil
+}
+
+// GetMetadataDetails returns one item with its episode list, for the season
+// and episode pickers in the add-media dialog.
+func (l *LibraryService) GetMetadataDetails(mediaType, provider, id string) (*scout.Item, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), metadataBudget)
+	defer cancel()
+	return l.lookupItem(ctx, models.MediaType(mediaType), provider, id, "", 0)
 }
 
 func (l *LibraryService) GetMediaFilePath(mediaID int, seasonNumber int, episodeNumber int) (string, error) {
@@ -828,7 +820,7 @@ func (l *LibraryService) DeleteAnimeSearchTerm(id int) error {
 // ScanMissingSubtitles iterates all downloaded media and downloads subtitles
 // for configured languages that are not yet present on disk.
 func (l *LibraryService) ScanMissingSubtitles() {
-	if !l.config.Subtitles.Enabled || l.subtitleClient == nil {
+	if !l.config.Subtitles.Enabled || l.scout == nil {
 		return
 	}
 
@@ -851,7 +843,10 @@ func (l *LibraryService) ScanMissingSubtitles() {
 		}
 
 		if media.Type == models.MediaTypeMovie {
-			l.scanSubtitlesForFile(&media, 0, 0, configuredLangs)
+			if l.scanSubtitlesForFile(&media, 0, 0, configuredLangs) != nil {
+				l.logger.Warn("Subtitle scan: download quota used up, stopping until the next scan")
+				return
+			}
 			continue
 		}
 
@@ -868,7 +863,10 @@ func (l *LibraryService) ScanMissingSubtitles() {
 				if ep.Status != models.StatusDownloaded {
 					continue
 				}
-				l.scanSubtitlesForFile(&media, season.SeasonNumber, ep.EpisodeNumber, configuredLangs)
+				if l.scanSubtitlesForFile(&media, season.SeasonNumber, ep.EpisodeNumber, configuredLangs) != nil {
+					l.logger.Warn("Subtitle scan: download quota used up, stopping until the next scan")
+					return
+				}
 			}
 		}
 	}
@@ -876,29 +874,28 @@ func (l *LibraryService) ScanMissingSubtitles() {
 	l.logger.Info("Subtitle scan: complete")
 }
 
-func (l *LibraryService) scanSubtitlesForFile(media *models.Media, season, episode int, configuredLangs []string) {
+// scanSubtitlesForFile returns scout.ErrQuotaExceeded when the scan should
+// stop for today.
+func (l *LibraryService) scanSubtitlesForFile(media *models.Media, season, episode int, configuredLangs []string) error {
 	videoPath, err := l.GetMediaFilePath(media.ID, season, episode)
 	if err != nil {
-		return // file not found on disk, skip silently
+		return nil // file not found on disk, skip silently
 	}
 
-	// Check which languages are already present
+	// Languages already on disk, in any of the names Reel recognises.
 	existing, _ := l.GetAllSubtitleFiles(media.ID, season, episode)
-	existingLangs := make(map[string]bool)
+	have := make(map[string]bool)
 	for _, sub := range existing {
-		existingLangs[sub.Language] = true
+		have[sub.Language] = true
 	}
-
-	// Find missing languages
 	var missing []string
 	for _, lang := range configuredLangs {
-		if !existingLangs[lang] {
+		if !have[lang] {
 			missing = append(missing, lang)
 		}
 	}
-
 	if len(missing) == 0 {
-		return
+		return nil
 	}
 
 	label := media.Title
@@ -907,32 +904,19 @@ func (l *LibraryService) scanSubtitlesForFile(media *models.Media, season, episo
 	}
 	l.logger.Info(fmt.Sprintf("Subtitle scan: %s missing [%s]", label, strings.Join(missing, ", ")))
 
-	subs, err := l.subtitleClient.Search(videoPath, media, season, episode)
-	if err != nil || len(subs) == 0 {
-		return
-	}
-
-	baseName := strings.TrimSuffix(videoPath, filepath.Ext(videoPath))
-	for i, lang := range missing {
-		if i > 0 {
-			time.Sleep(20 * time.Second)
-		}
-		for _, sub := range subs {
-			if sub.Language == lang {
-				subPath := fmt.Sprintf("%s.%s.srt", baseName, lang)
-				if err := l.subtitleClient.Download(sub, subPath); err != nil {
-					l.logger.Warn(fmt.Sprintf("Subtitle scan: failed to download %s sub for %s: %v", lang, label, err))
-				} else {
-					l.logger.Info(fmt.Sprintf("Subtitle scan: downloaded %s sub for %s", lang, label))
-				}
-				break
-			}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if _, err := scoutclient.FetchSubtitles(ctx, l.scout, media, videoPath, season, episode, missing, l.logger); err != nil {
+		l.logger.Warn(fmt.Sprintf("Subtitle scan: %s: %v", label, err))
+		if errors.Is(err, scout.ErrQuotaExceeded) {
+			return err
 		}
 	}
+	return nil
 }
 
-// providerName gives a short, readable name for a metadata client in errors,
-// e.g. *metadata.TMDBClient -> "TMDB".
+// providerName gives a short, readable name for a book client in errors,
+// e.g. *metadata.GutendexClient -> "Gutendex".
 func providerName(client interface{}) string {
 	name := fmt.Sprintf("%T", client)
 	if i := strings.LastIndex(name, "."); i >= 0 {
